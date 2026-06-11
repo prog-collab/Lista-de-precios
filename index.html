@@ -117,6 +117,14 @@
   .cdel{background:none; border:none; color:var(--muted); font-size:18px; cursor:pointer; padding:4px}
   .cclear{display:block; margin:14px auto 0; background:none; border:1px solid var(--line);
     color:var(--muted); border-radius:10px; padding:9px 18px; font-size:13px; cursor:pointer}
+  /* aviso de aumentos */
+  #aviso{display:none; align-items:center; gap:8px; margin:10px 10px 0; padding:11px 13px;
+    background:#33270d; border:1px solid var(--warn); border-radius:12px;
+    font-size:13.5px; line-height:1.45}
+  #aviso span{flex:1}
+  #aviso b{color:var(--warn)}
+  #aviso button{background:none; border:none; color:var(--text); font-size:17px;
+    cursor:pointer; padding:2px 6px; flex:none}
 </style>
 </head>
 <body>
@@ -133,6 +141,7 @@
   </div>
   <div class="count" id="count"></div>
 </header>
+<div id="aviso"></div>
 <main id="list"></main>
 
 <div class="overlay" id="ov">
@@ -189,6 +198,60 @@ fetch('productos.json')
   })
   .catch(()=>{ document.getElementById('list').innerHTML =
     '<div class="empty">No se pudo cargar productos.json.<br>Subí el archivo junto a index.html.</div>'; });
+
+/* ===== Aviso de aumentos (avisos.json) =====
+   Banner cerrable (✕) durante 5 días + notificación a las 9:30 y 17:00.
+   Las notificaciones se disparan cuando la app está abierta a esa hora,
+   o al abrirla más tarde ese mismo día (una sola vez por horario). */
+const AVISO_DIAS = 5, AVISO_HORAS = ['09:30', '17:00'];
+let AVISO = null;
+fetch('avisos.json', {cache:'no-store'})
+  .then(r=>r.json())
+  .then(a=>{
+    if(!a || !a.fecha || !Array.isArray(a.categorias) || !a.categorias.length) return;
+    const dias = (Date.now() - new Date(a.fecha+'T00:00:00')) / 86400000;
+    if(dias < 0 || dias >= AVISO_DIAS) return;
+    AVISO = a;
+    drawAviso();
+    checkNotifs();
+    setInterval(checkNotifs, 60000);
+  })
+  .catch(()=>{});
+
+function drawAviso(){
+  const el = document.getElementById('aviso');
+  if(!AVISO || getLS('aviso_cerrado','') === AVISO.fecha){ el.style.display='none'; return; }
+  const cats = AVISO.categorias.join(', ');
+  const bell = ('Notification' in window) && Notification.permission === 'default'
+    ? '<button id="avBell" title="Activar notificaciones">🔔</button>' : '';
+  el.innerHTML = `<span>📢 Subieron los precios en: <b>${esc(cats)}</b></span>${bell}
+    <button id="avX" title="Cerrar">✕</button>`;
+  el.style.display = 'flex';
+  document.getElementById('avX').onclick = ()=>{ setLS('aviso_cerrado', AVISO.fecha); drawAviso(); };
+  const nb = document.getElementById('avBell');
+  if(nb) nb.onclick = ()=> Notification.requestPermission().then(()=>{ drawAviso(); checkNotifs(); });
+}
+
+function checkNotifs(){
+  if(!AVISO || !('Notification' in window) || Notification.permission !== 'granted') return;
+  if((Date.now() - new Date(AVISO.fecha+'T00:00:00')) / 86400000 >= AVISO_DIAS) return;
+  const now = new Date();
+  const hoy = now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0')+'-'+String(now.getDate()).padStart(2,'0');
+  AVISO_HORAS.forEach(h=>{
+    const [hh, mm] = h.split(':').map(Number);
+    if(now.getHours()*60 + now.getMinutes() < hh*60 + mm) return;
+    const k = `notif_${AVISO.fecha}_${hoy}_${h}`;
+    if(getLS(k, false)) return;
+    setLS(k, true);
+    const msg = 'Subieron los precios en: ' + AVISO.categorias.join(', ');
+    if(navigator.serviceWorker && navigator.serviceWorker.controller){
+      navigator.serviceWorker.ready.then(reg=>
+        reg.showNotification('Lista de Precios', {body: msg, icon: 'icon-192.png', badge: 'icon-192.png'}));
+    } else {
+      try{ new Notification('Lista de Precios', {body: msg, icon: 'icon-192.png'}); }catch(e){}
+    }
+  });
+}
 
 const qEl = document.getElementById('q');
 const catEl = document.getElementById('cat');
