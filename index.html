@@ -62,9 +62,11 @@
   .sheet h2{margin:0 0 2px; font-size:20px; padding-right:36px}
   .sheet .scod{color:var(--accent); font-weight:700; font-size:14px}
   .sheet .scat{color:var(--muted); font-size:13px; margin-bottom:14px}
-  .topbtns{position:sticky; top:0; float:right; display:flex; gap:4px}
-  .close{font-size:26px; line-height:1; color:var(--muted); background:none;
-    border:none; cursor:pointer}
+  .dethead{display:flex; justify-content:space-between; align-items:center;
+    position:sticky; top:-18px; background:var(--bg); padding:8px 0; margin-bottom:6px; z-index:5}
+  .back{background:var(--card); border:1px solid var(--line); color:var(--text);
+    font-size:17px; font-weight:700; padding:12px 22px; border-radius:12px; cursor:pointer}
+  .back:active{background:var(--card2)}
   .label{font-size:12px; color:var(--muted); text-transform:uppercase;
     letter-spacing:.5px; margin:16px 0 7px}
   .talles{display:flex; flex-wrap:wrap; gap:8px}
@@ -261,9 +263,15 @@ function openDetail(p){
   curProd=p; curTalle=0;
   pushHist(p.codigo);
   document.getElementById('ov').classList.add('open');
+  history.pushState({detalle:1}, '');   // así el botón "atrás" del celular cierra el detalle
   drawDetail();
 }
-function closeDetail(){ document.getElementById('ov').classList.remove('open'); curProd=null; render(); }
+function hideDetail(){ document.getElementById('ov').classList.remove('open'); curProd=null; render(); }
+function closeDetail(){
+  if(history.state && history.state.detalle) history.back();
+  else hideDetail();
+}
+window.addEventListener('popstate', ()=>{ if(curProd) hideDetail(); });
 document.getElementById('ov').addEventListener('click',e=>{ if(e.target.id==='ov') closeDetail(); });
 
 // Interés DIRECTO (simple): recargo total = tasa × n; cuota = precio×(1+tasa×n)/n
@@ -296,9 +304,9 @@ function drawDetail(){
      <div class="b">${fmt(base*(1-promoSel/100))}</div></div>`;
 
   document.getElementById('sheet').innerHTML = `
-    <div class="topbtns">
+    <div class="dethead">
+      <button class="back" onclick="closeDetail()">← Atrás</button>
       <button class="star ${fav?'on':''}" onclick="toggleFav('${esc(p.codigo)}')" title="Favorito">${fav?'★':'☆'}</button>
-      <button class="close" onclick="closeDetail()">×</button>
     </div>
     <h2>${esc(p.nombre)||'(sin nombre)'}</h2>
     <div class="scod">Código ${esc(p.codigo)||'—'}</div>
