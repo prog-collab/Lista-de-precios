@@ -8,7 +8,7 @@
   :root{
     --bg:#0f172a; --card:#1e293b; --card2:#273449; --text:#f1f5f9;
     --muted:#94a3b8; --accent:#38bdf8; --accent2:#22c55e; --line:#334155;
-    --warn:#fbbf24;
+    --warn:#fbbf24; --star:#facc15;
   }
   *{box-sizing:border-box; -webkit-tap-highlight-color:transparent}
   body{margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
@@ -26,17 +26,25 @@
     border:1px solid var(--line); background:var(--card); color:var(--text)}
   .count{font-size:12px; color:var(--muted); margin-top:8px}
   main{padding:8px 10px}
+  .secttl{font-size:12px; color:var(--muted); text-transform:uppercase;
+    letter-spacing:.5px; margin:16px 4px 8px; display:flex; align-items:center;
+    justify-content:space-between}
+  .secttl button{background:none; border:none; color:var(--accent); font-size:12px; cursor:pointer}
   .item{background:var(--card); border:1px solid var(--line); border-radius:12px;
     padding:12px 14px; margin-bottom:8px; cursor:pointer; display:flex;
     justify-content:space-between; align-items:center; gap:10px}
   .item:active{background:var(--card2)}
-  .item .info{min-width:0}
+  .item .info{min-width:0; flex:1}
   .item .nombre{font-size:15px; font-weight:600; white-space:nowrap;
     overflow:hidden; text-overflow:ellipsis}
   .item .meta{font-size:12px; color:var(--muted); margin-top:3px}
   .item .cod{color:var(--accent); font-weight:700}
+  .item .right{display:flex; align-items:center; gap:10px}
   .item .precio{font-size:18px; font-weight:800; color:var(--accent2); white-space:nowrap}
-  .empty{text-align:center; color:var(--muted); padding:40px 20px}
+  .star{background:none; border:none; cursor:pointer; font-size:22px; line-height:1;
+    color:var(--muted); padding:4px}
+  .star.on{color:var(--star)}
+  .empty{text-align:center; color:var(--muted); padding:34px 20px; line-height:1.6}
   /* modal */
   .overlay{position:fixed; inset:0; background:rgba(0,0,0,.6); display:none;
     align-items:flex-end; justify-content:center; z-index:50}
@@ -44,11 +52,12 @@
   .sheet{background:var(--bg); width:100%; max-width:520px; max-height:92vh;
     overflow-y:auto; border-radius:18px 18px 0 0; border-top:1px solid var(--line);
     padding:18px 16px 28px}
-  .sheet h2{margin:0 0 2px; font-size:20px}
+  .sheet h2{margin:0 0 2px; font-size:20px; padding-right:36px}
   .sheet .scod{color:var(--accent); font-weight:700; font-size:14px}
   .sheet .scat{color:var(--muted); font-size:13px; margin-bottom:14px}
-  .close{position:sticky; top:0; float:right; font-size:26px; line-height:1;
-    color:var(--muted); background:none; border:none; cursor:pointer}
+  .topbtns{position:sticky; top:0; float:right; display:flex; gap:4px}
+  .close{font-size:26px; line-height:1; color:var(--muted); background:none;
+    border:none; cursor:pointer}
   .label{font-size:12px; color:var(--muted); text-transform:uppercase;
     letter-spacing:.5px; margin:16px 0 7px}
   .talles{display:flex; flex-wrap:wrap; gap:8px}
@@ -65,7 +74,6 @@
   .box .s{font-size:11px; color:var(--muted); margin-top:2px}
   .green .p{color:var(--accent2)}
   .blue .p{color:var(--accent)}
-  .gold .p{color:var(--warn)}
   .row{display:flex; justify-content:space-between; align-items:center;
     padding:11px 13px; background:var(--card); border:1px solid var(--line);
     border-radius:10px; margin-bottom:7px}
@@ -96,21 +104,27 @@
 </div>
 
 <script>
-const TASA_DEFAULT = 4;      // % mensual para 6/9/12 cuotas
+const TASA_DEFAULT = 4;      // % mensual para 6/9/12 cuotas (interés directo)
 const CUOTAS_INT = [6,9,12]; // con interés
 const DESC_CONTADO = 10;     // % efectivo
 const PROMOS = [15,20,25,30];// % descuento bancario
+const MAX_HIST = 15;
 
-let PRODS = [], filtered = [], tasaMensual = TASA_DEFAULT;
+let PRODS = [], BYCOD = {}, tasaMensual = TASA_DEFAULT;
+let FAV = getLS('fav_codigos', []);
+let HIST = getLS('hist_codigos', []);
 
 const fmt = n => '$' + Math.round(n).toLocaleString('es-AR');
 const norm = s => (s||'').toString().toLowerCase()
   .normalize('NFD').replace(/[̀-ͯ]/g,'');
+function getLS(k,def){ try{ return JSON.parse(localStorage.getItem(k)) ?? def }catch(e){ return def } }
+function setLS(k,v){ try{ localStorage.setItem(k, JSON.stringify(v)) }catch(e){} }
 
 fetch('productos.json')
   .then(r=>r.json())
   .then(data=>{
     PRODS = data;
+    data.forEach(p=>{ if(p.codigo && !(p.codigo in BYCOD)) BYCOD[p.codigo]=p; });
     const cats = [...new Set(data.map(p=>p.categoria).filter(Boolean))].sort();
     const sel = document.getElementById('cat');
     cats.forEach(c=>{ const o=document.createElement('option'); o.value=c; o.textContent=c; sel.appendChild(o); });
@@ -124,11 +138,68 @@ const catEl = document.getElementById('cat');
 qEl.addEventListener('input', render);
 catEl.addEventListener('change', render);
 
+function isFav(cod){ return FAV.includes(cod); }
+function toggleFav(cod){
+  if(!cod) return;
+  const i = FAV.indexOf(cod);
+  if(i>=0) FAV.splice(i,1); else FAV.unshift(cod);
+  setLS('fav_codigos', FAV);
+  render();
+  if(curProd) drawDetail();
+}
+function pushHist(cod){
+  if(!cod) return;
+  HIST = HIST.filter(c=>c!==cod);
+  HIST.unshift(cod);
+  if(HIST.length>MAX_HIST) HIST = HIST.slice(0,MAX_HIST);
+  setLS('hist_codigos', HIST);
+}
+
+function itemHtml(p){
+  const fav = isFav(p.codigo);
+  return `<div class="item" data-cod="${esc(p.codigo)}">
+      <div class="info">
+        <div class="nombre">${esc(p.nombre)||'(sin nombre)'}</div>
+        <div class="meta"><span class="cod">${esc(p.codigo)||'—'}</span> · ${esc(p.categoria)}</div>
+      </div>
+      <div class="right">
+        <div class="precio">${fmt(p.precio_lista)}</div>
+        <button class="star ${fav?'on':''}" data-fav="${esc(p.codigo)}" title="Favorito">${fav?'★':'☆'}</button>
+      </div>
+    </div>`;
+}
+
 function render(){
   const q = norm(qEl.value.trim());
   const cat = catEl.value;
+  const list = document.getElementById('list');
+  const countEl = document.getElementById('count');
+
+  // Pantalla de inicio: sin búsqueda ni filtro -> favoritos + historial
+  if(!q && !cat){
+    countEl.textContent = '';
+    let html = '';
+    const favProds = FAV.map(c=>BYCOD[c]).filter(Boolean);
+    const histProds = HIST.map(c=>BYCOD[c]).filter(Boolean);
+    if(favProds.length){
+      html += `<div class="secttl"><span>★ Favoritos</span></div>` + favProds.map(itemHtml).join('');
+    }
+    if(histProds.length){
+      html += `<div class="secttl"><span>Últimos consultados</span><button id="clrHist">Borrar</button></div>` + histProds.map(itemHtml).join('');
+    }
+    if(!html){
+      html = `<div class="empty">Buscá un producto por código o nombre.<br><br>
+        Tocá la estrella ☆ para guardar favoritos.<br>
+        Acá vas a ver tus favoritos y los últimos consultados.</div>`;
+    }
+    list.innerHTML = html;
+    const clr = document.getElementById('clrHist');
+    if(clr) clr.onclick = ()=>{ HIST=[]; setLS('hist_codigos',HIST); render(); };
+    return;
+  }
+
   const terms = q.split(/\s+/).filter(Boolean);
-  filtered = PRODS.filter(p=>{
+  let filtered = PRODS.filter(p=>{
     if(cat && p.categoria!==cat) return false;
     if(!terms.length) return true;
     const hay = norm(p.codigo+' '+p.nombre+' '+p.categoria);
@@ -139,39 +210,35 @@ function render(){
     if(!isNaN(na)&&!isNaN(nb)&&na!==nb) return na-nb;
     return (a.codigo||'').localeCompare(b.codigo||'');
   });
-  const list = document.getElementById('list');
-  document.getElementById('count').textContent =
-    filtered.length + ' producto' + (filtered.length!==1?'s':'');
+  countEl.textContent = filtered.length + ' producto' + (filtered.length!==1?'s':'');
   if(!filtered.length){ list.innerHTML='<div class="empty">Sin resultados.</div>'; return; }
   const shown = filtered.slice(0,300);
-  list.innerHTML = shown.map((p,i)=>`
-    <div class="item" data-i="${i}">
-      <div class="info">
-        <div class="nombre">${esc(p.nombre)||'(sin nombre)'}</div>
-        <div class="meta"><span class="cod">${esc(p.codigo)||'—'}</span> · ${esc(p.categoria)}</div>
-      </div>
-      <div class="precio">${fmt(p.precio_lista)}</div>
-    </div>`).join('') +
+  list.innerHTML = shown.map(itemHtml).join('') +
     (filtered.length>300?`<div class="empty">Mostrando 300 de ${filtered.length}. Afiná la búsqueda.</div>`:'');
-  [...list.querySelectorAll('.item')].forEach(el=>
-    el.onclick=()=>openDetail(shown[+el.dataset.i]));
 }
 
-function esc(s){ return (s||'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+// Delegación de clics: estrella o abrir detalle
+document.getElementById('list').addEventListener('click', e=>{
+  const star = e.target.closest('.star');
+  if(star){ e.stopPropagation(); toggleFav(star.dataset.fav); return; }
+  const item = e.target.closest('.item');
+  if(item){ const p = BYCOD[item.dataset.cod]; if(p) openDetail(p); }
+});
+
+function esc(s){ return (s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
 let curProd=null, curTalle=0;
 function openDetail(p){
   curProd=p; curTalle=0;
+  pushHist(p.codigo);
   document.getElementById('ov').classList.add('open');
   drawDetail();
 }
-function closeDetail(){ document.getElementById('ov').classList.remove('open'); }
+function closeDetail(){ document.getElementById('ov').classList.remove('open'); curProd=null; render(); }
 document.getElementById('ov').addEventListener('click',e=>{ if(e.target.id==='ov') closeDetail(); });
 
-function cuotaFrancesa(precio,n,r){ // r = tasa mensual decimal
-  if(r<=0) return precio/n;
-  return precio*(r*Math.pow(1+r,n))/(Math.pow(1+r,n)-1);
-}
+// Interés DIRECTO (simple): recargo total = tasa × n; cuota = precio×(1+tasa×n)/n
+function cuotaDirecta(precio,n,r){ return precio*(1+r*n)/n; }
 
 function drawDetail(){
   const p=curProd;
@@ -180,6 +247,7 @@ function drawDetail(){
   const r=tasaMensual/100;
   const contado=base*(1-DESC_CONTADO/100);
   const tres=base/3;
+  const fav=isFav(p.codigo);
 
   const tallesHtml = p.talles.length>1 ? `
     <div class="label">Talle</div>
@@ -187,8 +255,9 @@ function drawDetail(){
       `<button class="talle ${i===curTalle?'sel':''}" data-t="${i}">${esc(x.talle)}</button>`).join('')}</div>` : '';
 
   const cuotasIntHtml = CUOTAS_INT.map(n=>{
-    const c=cuotaFrancesa(base,n,r);
-    return `<div class="row"><div class="a">${n} cuotas<small>con ${tasaMensual}% mensual</small></div>
+    const c=cuotaDirecta(base,n,r);
+    const recargo=Math.round(r*n*100);
+    return `<div class="row"><div class="a">${n} cuotas<small>+${recargo}% (${tasaMensual}% × ${n})</small></div>
       <div class="b">${fmt(c)}<small>por cuota · total ${fmt(c*n)}</small></div></div>`;
   }).join('');
 
@@ -197,7 +266,10 @@ function drawDetail(){
      <div class="b">${fmt(base*(1-d/100))}</div></div>`).join('');
 
   document.getElementById('sheet').innerHTML = `
-    <button class="close" onclick="closeDetail()">×</button>
+    <div class="topbtns">
+      <button class="star ${fav?'on':''}" onclick="toggleFav('${esc(p.codigo)}')" title="Favorito">${fav?'★':'☆'}</button>
+      <button class="close" onclick="closeDetail()">×</button>
+    </div>
     <h2>${esc(p.nombre)||'(sin nombre)'}</h2>
     <div class="scod">Código ${esc(p.codigo)||'—'}</div>
     <div class="scat">${esc(p.categoria)}</div>
@@ -218,8 +290,9 @@ function drawDetail(){
     ${promosHtml}
     <div class="cfg">Interés mensual:
       <input id="tasa" type="number" value="${tasaMensual}" min="0" step="0.5"> %</div>
-    <div class="note">Precios de cuotas calculados con sistema francés.<br>
-      Cambiá el % de interés arriba si tu tasa cambió.</div>`;
+    <div class="note">Cuotas con <b>interés directo</b> (simple):
+      recargo = interés mensual × cantidad de cuotas.<br>
+      Cambiá el % arriba si tu tasa cambió.</div>`;
 
   [...document.querySelectorAll('.talle')].forEach(b=>
     b.onclick=()=>{ curTalle=+b.dataset.t; drawDetail(); });
