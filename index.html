@@ -96,6 +96,27 @@
   .cfg input{width:54px; padding:5px; border-radius:7px; border:1px solid var(--line);
     background:var(--card); color:var(--text); text-align:center; font-size:13px}
   .note{font-size:11px; color:var(--muted); text-align:center; margin-top:10px; line-height:1.5}
+  /* carrito */
+  .addcart{display:block; width:100%; margin:10px 0 2px; padding:14px;
+    background:var(--accent2); color:#04270f; border:none; border-radius:12px;
+    font-size:16px; font-weight:800; cursor:pointer}
+  .addcart:active{filter:brightness(.9)}
+  .cbadge{background:var(--accent2); color:#04270f; border-radius:20px;
+    font-size:12px; font-weight:800; padding:1px 7px; margin-left:2px}
+  .citem{display:flex; align-items:center; gap:10px; background:var(--card);
+    border:1px solid var(--line); border-radius:12px; padding:10px 12px; margin-bottom:8px}
+  .citem .cinfo{flex:1; min-width:0}
+  .citem .cname{font-size:14px; font-weight:600; white-space:nowrap;
+    overflow:hidden; text-overflow:ellipsis}
+  .citem .cmeta{font-size:11px; color:var(--muted); margin-top:2px}
+  .cqty{display:flex; align-items:center; gap:2px}
+  .cqty button{width:34px; height:34px; border-radius:9px; border:1px solid var(--line);
+    background:var(--card2); color:var(--text); font-size:18px; font-weight:700; cursor:pointer}
+  .cqty span{min-width:24px; text-align:center; font-size:15px; font-weight:700}
+  .csub{font-size:15px; font-weight:800; min-width:70px; text-align:right; color:var(--accent2)}
+  .cdel{background:none; border:none; color:var(--muted); font-size:18px; cursor:pointer; padding:4px}
+  .cclear{display:block; margin:14px auto 0; background:none; border:1px solid var(--line);
+    color:var(--muted); border-radius:10px; padding:9px 18px; font-size:13px; cursor:pointer}
 </style>
 </head>
 <body>
@@ -104,6 +125,7 @@
     <span style="flex:1"></span>
     <button id="fMinus" class="fbtn" title="Achicar letra">A−</button>
     <button id="fPlus" class="fbtn" title="Agrandar letra">A+</button>
+    <button id="cartBtn" class="fbtn" title="Carrito">🛒<span id="cartN" class="cbadge" style="display:none"></span></button>
   </h1>
   <input id="q" class="search" placeholder="Buscar por código, nombre…" autocomplete="off">
   <div class="filters">
@@ -115,6 +137,10 @@
 
 <div class="overlay" id="ov">
   <div class="sheet" id="sheet"></div>
+</div>
+
+<div class="overlay" id="ovCart">
+  <div class="sheet" id="sheetCart"></div>
 </div>
 
 <script>
@@ -130,6 +156,7 @@ const MAX_HIST = 15;
 let PRODS = [], BYCOD = {}, tasaMensual = TASA_DEFAULT;
 let FAV = getLS('fav_codigos', []);
 let HIST = getLS('hist_codigos', []);
+let CART = getLS('carrito', []);   // {cod, nombre, talle, precio, qty}
 
 const fmt = n => '$' + Math.round(n).toLocaleString('es-AR');
 const norm = s => (s||'').toString().toLowerCase()
@@ -270,8 +297,127 @@ function closeDetail(){
   if(history.state && history.state.detalle) history.back();
   else hideDetail();
 }
-window.addEventListener('popstate', ()=>{ if(curProd) hideDetail(); });
+window.addEventListener('popstate', ()=>{
+  if(cartOpen) hideCart();
+  else if(curProd) hideDetail();
+});
 document.getElementById('ov').addEventListener('click',e=>{ if(e.target.id==='ov') closeDetail(); });
+
+/* ===== Carrito ===== */
+let cartOpen=false;
+function saveCart(){ setLS('carrito', CART); updateCartBtn(); }
+function updateCartBtn(){
+  const n = CART.reduce((s,i)=>s+i.qty,0);
+  const el = document.getElementById('cartN');
+  el.style.display = n? '' : 'none';
+  el.textContent = n;
+}
+function addToCart(){
+  const p=curProd, t=p.talles[curTalle];
+  const found = CART.find(i=>i.cod===p.codigo && i.talle===t.talle && i.nombre===p.nombre);
+  if(found) found.qty++;
+  else CART.push({cod:p.codigo, nombre:p.nombre, talle:t.talle, precio:t.precio, qty:1});
+  saveCart();
+  const b=document.getElementById('addCart');
+  if(b){ b.textContent='✓ Agregado al carrito'; setTimeout(()=>{ if(curProd) drawDetail(); },700); }
+}
+function openCart(){
+  cartOpen=true;
+  document.getElementById('ovCart').classList.add('open');
+  history.pushState({carrito:1}, '');
+  drawCart();
+}
+function hideCart(){ cartOpen=false; document.getElementById('ovCart').classList.remove('open'); }
+function closeCart(){
+  if(history.state && history.state.carrito) history.back();
+  else hideCart();
+}
+document.getElementById('cartBtn').onclick = openCart;
+document.getElementById('ovCart').addEventListener('click',e=>{ if(e.target.id==='ovCart') closeCart(); });
+updateCartBtn();
+
+function drawCart(){
+  const sheet=document.getElementById('sheetCart');
+  if(!CART.length){
+    sheet.innerHTML = `
+      <div class="topbtns"><button class="backbtn" onclick="closeCart()">← Atrás</button></div>
+      <h2>🛒 Carrito</h2>
+      <div class="empty">El carrito está vacío.<br><br>
+        Abrí un producto, elegí el talle y tocá<br><b>"Agregar al carrito"</b>.</div>`;
+    return;
+  }
+  const total = CART.reduce((s,i)=>s+i.precio*i.qty,0);
+  const nItems = CART.reduce((s,i)=>s+i.qty,0);
+  const r=tasaMensual/100;
+  const contado=total*(1-DESC_CONTADO/100);
+  const tres=total/3;
+
+  const itemsHtml = CART.map((i,idx)=>`
+    <div class="citem">
+      <div class="cinfo">
+        <div class="cname">${esc(i.nombre)||'(sin nombre)'}</div>
+        <div class="cmeta">${esc(i.cod)||'—'} · talle ${esc(i.talle)} · ${fmt(i.precio)} c/u</div>
+      </div>
+      <div class="cqty">
+        <button data-q="-1" data-i="${idx}">−</button><span>${i.qty}</span><button data-q="1" data-i="${idx}">+</button>
+      </div>
+      <div class="csub">${fmt(i.precio*i.qty)}</div>
+      <button class="cdel" data-del="${idx}" title="Quitar">✕</button>
+    </div>`).join('');
+
+  const cuotasIntHtml = CUOTAS_INT.map(n=>{
+    const c=cuotaDirecta(total,n,r);
+    const recargo=Math.round(r*n*100);
+    return `<div class="row"><div class="a">${n} cuotas<small>+${recargo}% (${tasaMensual}% × ${n})</small></div>
+      <div class="b">${fmt(c)}<small>por cuota · total ${fmt(c*n)}</small></div></div>`;
+  }).join('');
+
+  sheet.innerHTML = `
+    <div class="topbtns"><button class="backbtn" onclick="closeCart()">← Atrás</button></div>
+    <h2>🛒 Carrito</h2>
+    <div class="scat">${nItems} artículo${nItems!==1?'s':''}</div>
+    ${itemsHtml}
+    <div class="lista">
+      <div class="l">TOTAL · DÉBITO / TRANSFERENCIA / CRED 1 PAGO</div>
+      <div class="v">${fmt(total)}</div>
+    </div>
+    <div class="grid">
+      <div class="box green"><div class="t">Contado efectivo</div>
+        <div class="p">${fmt(contado)}</div><div class="s">−${DESC_CONTADO}%</div></div>
+      <div class="box blue"><div class="t">3 cuotas s/interés</div>
+        <div class="p">${fmt(tres)}</div><div class="s">por cuota</div></div>
+    </div>
+    <div class="label">Cuotas con interés</div>
+    ${cuotasIntHtml}
+    <div class="label">Promociones bancarias</div>
+    <div class="row"><div class="a">Promo banco
+        <select id="promoPctC">${PROMOS.map(d=>
+          `<option value="${d}" ${d===promoSel?'selected':''}>−${d}%</option>`).join('')}</select></div>
+       <div class="b">${fmt(total*(1-promoSel/100))}</div></div>
+    <div class="cfg">Interés mensual:
+      <input id="tasaC" type="number" value="${tasaMensual}" min="0" step="0.5"> %</div>
+    <button class="cclear" id="clrCart">Vaciar carrito</button>`;
+
+  const tasaEl=document.getElementById('tasaC');
+  if(tasaEl) tasaEl.onchange=()=>{ tasaMensual=parseFloat(tasaEl.value)||0; drawCart(); };
+  const promoEl=document.getElementById('promoPctC');
+  if(promoEl) promoEl.onchange=()=>{ promoSel=parseInt(promoEl.value,10)||20; drawCart(); };
+  document.getElementById('clrCart').onclick=()=>{
+    if(confirm('¿Vaciar el carrito?')){ CART=[]; saveCart(); drawCart(); }
+  };
+}
+
+document.getElementById('sheetCart').addEventListener('click', e=>{
+  const q=e.target.closest('[data-q]');
+  if(q){
+    const i=+q.dataset.i, d=+q.dataset.q;
+    CART[i].qty+=d;
+    if(CART[i].qty<1) CART.splice(i,1);
+    saveCart(); drawCart(); return;
+  }
+  const del=e.target.closest('[data-del]');
+  if(del){ CART.splice(+del.dataset.del,1); saveCart(); drawCart(); }
+});
 
 // Interés DIRECTO (simple): recargo total = tasa × n; cuota = precio×(1+tasa×n)/n
 function cuotaDirecta(precio,n,r){ return precio*(1+r*n)/n; }
@@ -315,6 +461,7 @@ function drawDetail(){
       <div class="l">DÉBITO / TRANSFERENCIA / CRED 1 PAGO${p.talles.length>1?' · talle '+esc(t.talle):''}</div>
       <div class="v">${fmt(base)}</div>
     </div>
+    <button class="addcart" id="addCart" onclick="addToCart()">🛒 Agregar al carrito</button>
     <div class="grid">
       <div class="box green"><div class="t">Contado efectivo</div>
         <div class="p">${fmt(contado)}</div><div class="s">−${DESC_CONTADO}%</div></div>
