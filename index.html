@@ -18,6 +18,9 @@
   h1{font-size:18px; margin:0 0 10px; display:flex; align-items:center; gap:8px}
   h1 .tag{font-size:11px; background:var(--accent); color:#03283a; padding:2px 8px;
     border-radius:20px; font-weight:700}
+  .fbtn{background:var(--card); border:1px solid var(--line); color:var(--text);
+    border-radius:8px; padding:4px 11px; font-size:14px; font-weight:700; cursor:pointer}
+  .fbtn:active{background:var(--card2)}
   .search{width:100%; font-size:17px; padding:13px 14px; border-radius:12px;
     border:1px solid var(--line); background:var(--card); color:var(--text)}
   .search::placeholder{color:var(--muted)}
@@ -38,7 +41,7 @@
   .item .nombre{font-size:15px; font-weight:600; white-space:nowrap;
     overflow:hidden; text-overflow:ellipsis}
   .item .meta{font-size:12px; color:var(--muted); margin-top:3px}
-  .item .cod{color:var(--accent); font-weight:700}
+  .item .cod{color:var(--accent); font-weight:700; font-size:15px}
   .item .right{display:flex; align-items:center; gap:10px}
   .item .precio{font-size:18px; font-weight:800; color:var(--accent2); white-space:nowrap}
   .star{background:none; border:none; cursor:pointer; font-size:22px; line-height:1;
@@ -92,7 +95,11 @@
 </head>
 <body>
 <header>
-  <h1>Lista de Precios</h1>
+  <h1>Lista de Precios
+    <span style="flex:1"></span>
+    <button id="fMinus" class="fbtn" title="Achicar letra">A−</button>
+    <button id="fPlus" class="fbtn" title="Agrandar letra">A+</button>
+  </h1>
   <input id="q" class="search" placeholder="Buscar por código, nombre…" autocomplete="off">
   <div class="filters">
     <select id="cat"><option value="">Todas las categorías</option></select>
@@ -121,6 +128,19 @@ const norm = s => (s||'').toString().toLowerCase()
   .normalize('NFD').replace(/[̀-ͯ]/g,'');
 function getLS(k,def){ try{ return JSON.parse(localStorage.getItem(k)) ?? def }catch(e){ return def } }
 function setLS(k,v){ try{ localStorage.setItem(k, JSON.stringify(v)) }catch(e){} }
+
+// Tamaño de letra (A− / A+), se guarda en el navegador
+let fontScale = getLS('font_scale', 1);
+function applyScale(){ document.body.style.zoom = fontScale; }
+applyScale();
+document.getElementById('fMinus').onclick = ()=>{
+  fontScale = Math.max(0.8, Math.round((fontScale-0.1)*10)/10);
+  setLS('font_scale', fontScale); applyScale();
+};
+document.getElementById('fPlus').onclick = ()=>{
+  fontScale = Math.min(1.6, Math.round((fontScale+0.1)*10)/10);
+  setLS('font_scale', fontScale); applyScale();
+};
 
 fetch('productos.json')
   .then(r=>r.json())
@@ -278,7 +298,7 @@ function drawDetail(){
     <div class="scat">${esc(p.categoria)}</div>
     ${tallesHtml}
     <div class="lista">
-      <div class="l">DÉBITO / TRANSFERENCIA${p.talles.length>1?' · talle '+esc(t.talle):''}</div>
+      <div class="l">DÉBITO / TRANSFERENCIA / CRED 1 PAGO${p.talles.length>1?' · talle '+esc(t.talle):''}</div>
       <div class="v">${fmt(base)}</div>
     </div>
     <div class="grid">
