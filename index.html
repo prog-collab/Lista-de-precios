@@ -81,6 +81,8 @@
   .row .a small{color:var(--muted); display:block; font-size:11px}
   .row .b{font-size:17px; font-weight:700; text-align:right}
   .row .b small{display:block; font-size:11px; color:var(--muted); font-weight:400}
+  .row select{flex:none; width:auto; padding:6px 8px; margin-left:6px; font-size:14px;
+    border-radius:8px; border:1px solid var(--line); background:var(--card2); color:var(--text)}
   .cfg{font-size:12px; color:var(--muted); display:flex; align-items:center;
     gap:6px; margin-top:14px; justify-content:center}
   .cfg input{width:54px; padding:5px; border-radius:7px; border:1px solid var(--line);
@@ -90,7 +92,7 @@
 </head>
 <body>
 <header>
-  <h1>Lista de Precios <span class="tag">2025</span></h1>
+  <h1>Lista de Precios</h1>
   <input id="q" class="search" placeholder="Buscar por código, nombre…" autocomplete="off">
   <div class="filters">
     <select id="cat"><option value="">Todas las categorías</option></select>
@@ -227,7 +229,7 @@ document.getElementById('list').addEventListener('click', e=>{
 
 function esc(s){ return (s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
-let curProd=null, curTalle=0;
+let curProd=null, curTalle=0, promoSel=20;
 function openDetail(p){
   curProd=p; curTalle=0;
   pushHist(p.codigo);
@@ -261,9 +263,10 @@ function drawDetail(){
       <div class="b">${fmt(c)}<small>por cuota · total ${fmt(c*n)}</small></div></div>`;
   }).join('');
 
-  const promosHtml = PROMOS.map(d=>
-    `<div class="row"><div class="a">Promo banco −${d}%</div>
-     <div class="b">${fmt(base*(1-d/100))}</div></div>`).join('');
+  const promosHtml = `<div class="row"><div class="a">Promo banco
+      <select id="promoPct">${PROMOS.map(d=>
+        `<option value="${d}" ${d===promoSel?'selected':''}>−${d}%</option>`).join('')}</select></div>
+     <div class="b">${fmt(base*(1-promoSel/100))}</div></div>`;
 
   document.getElementById('sheet').innerHTML = `
     <div class="topbtns">
@@ -275,7 +278,7 @@ function drawDetail(){
     <div class="scat">${esc(p.categoria)}</div>
     ${tallesHtml}
     <div class="lista">
-      <div class="l">PRECIO DE LISTA${p.talles.length>1?' · talle '+esc(t.talle):''}</div>
+      <div class="l">DÉBITO / TRANSFERENCIA${p.talles.length>1?' · talle '+esc(t.talle):''}</div>
       <div class="v">${fmt(base)}</div>
     </div>
     <div class="grid">
@@ -298,6 +301,8 @@ function drawDetail(){
     b.onclick=()=>{ curTalle=+b.dataset.t; drawDetail(); });
   const tasaEl=document.getElementById('tasa');
   if(tasaEl) tasaEl.onchange=()=>{ tasaMensual=parseFloat(tasaEl.value)||0; drawDetail(); };
+  const promoEl=document.getElementById('promoPct');
+  if(promoEl) promoEl.onchange=()=>{ promoSel=parseInt(promoEl.value,10)||20; drawDetail(); };
 }
 </script>
 </body>
