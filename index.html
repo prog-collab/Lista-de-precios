@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lista de Precios</title>
+<style>
+  :root{
+    --bg:#0f172a; --card:#1e293b; --card2:#273449; --text:#f1f5f9;
+    --muted:#94a3b8; --accent:#38bdf8; --accent2:#22c55e; --line:#334155;
+    --warn:#fbbf24;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent}
+  body{margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+    background:var(--bg); color:var(--text); padding-bottom:40px}
+  header{position:sticky; top:0; z-index:10; background:var(--bg);
+    padding:12px 14px 10px; border-bottom:1px solid var(--line)}
+  h1{font-size:18px; margin:0 0 10px; display:flex; align-items:center; gap:8px}
+  h1 .tag{font-size:11px; background:var(--accent); color:#03283a; padding:2px 8px;
+    border-radius:20px; font-weight:700}
+  .search{width:100%; font-size:17px; padding:13px 14px; border-radius:12px;
+    border:1px solid var(--line); background:var(--card); color:var(--text)}
+  .search::placeholder{color:var(--muted)}
+  .filters{display:flex; gap:8px; margin-top:9px; align-items:center}
+  select{flex:1; font-size:14px; padding:10px; border-radius:10px;
+    border:1px solid var(--line); background:var(--card); color:var(--text)}
+  .count{font-size:12px; color:var(--muted); margin-top:8px}
+  main{padding:8px 10px}
+  .item{background:var(--card); border:1px solid var(--line); border-radius:12px;
+    padding:12px 14px; margin-bottom:8px; cursor:pointer; display:flex;
+    justify-content:space-between; align-items:center; gap:10px}
+  .item:active{background:var(--card2)}
+  .item .info{min-width:0}
+  .item .nombre{font-size:15px; font-weight:600; white-space:nowrap;
+    overflow:hidden; text-overflow:ellipsis}
+  .item .meta{font-size:12px; color:var(--muted); margin-top:3px}
+  .item .cod{color:var(--accent); font-weight:700}
+  .item .precio{font-size:18px; font-weight:800; color:var(--accent2); white-space:nowrap}
+  .empty{text-align:center; color:var(--muted); padding:40px 20px}
+  /* modal */
+  .overlay{position:fixed; inset:0; background:rgba(0,0,0,.6); display:none;
+    align-items:flex-end; justify-content:center; z-index:50}
+  .overlay.open{display:flex}
+  .sheet{background:var(--bg); width:100%; max-width:520px; max-height:92vh;
+    overflow-y:auto; border-radius:18px 18px 0 0; border-top:1px solid var(--line);
+    padding:18px 16px 28px}
+  .sheet h2{margin:0 0 2px; font-size:20px}
+  .sheet .scod{color:var(--accent); font-weight:700; font-size:14px}
+  .sheet .scat{color:var(--muted); font-size:13px; margin-bottom:14px}
+  .close{position:sticky; top:0; float:right; font-size:26px; line-height:1;
+    color:var(--muted); background:none; border:none; cursor:pointer}
+  .label{font-size:12px; color:var(--muted); text-transform:uppercase;
+    letter-spacing:.5px; margin:16px 0 7px}
+  .talles{display:flex; flex-wrap:wrap; gap:8px}
+  .talle{padding:9px 14px; border-radius:10px; border:1px solid var(--line);
+    background:var(--card); color:var(--text); font-size:14px; cursor:pointer}
+  .talle.sel{background:var(--accent); color:#03283a; border-color:var(--accent); font-weight:700}
+  .lista{background:var(--card2); border-radius:14px; padding:16px; text-align:center; margin:6px 0 4px}
+  .lista .l{font-size:13px; color:var(--muted)}
+  .lista .v{font-size:34px; font-weight:800; color:var(--text); margin-top:2px}
+  .grid{display:grid; grid-template-columns:1fr 1fr; gap:8px}
+  .box{background:var(--card); border:1px solid var(--line); border-radius:12px; padding:12px}
+  .box .t{font-size:12px; color:var(--muted)}
+  .box .p{font-size:20px; font-weight:800; margin-top:3px}
+  .box .s{font-size:11px; color:var(--muted); margin-top:2px}
+  .green .p{color:var(--accent2)}
+  .blue .p{color:var(--accent)}
+  .gold .p{color:var(--warn)}
+  .row{display:flex; justify-content:space-between; align-items:center;
+    padding:11px 13px; background:var(--card); border:1px solid var(--line);
+    border-radius:10px; margin-bottom:7px}
+  .row .a{font-size:14px}
+  .row .a small{color:var(--muted); display:block; font-size:11px}
+  .row .b{font-size:17px; font-weight:700; text-align:right}
+  .row .b small{display:block; font-size:11px; color:var(--muted); font-weight:400}
+  .cfg{font-size:12px; color:var(--muted); display:flex; align-items:center;
+    gap:6px; margin-top:14px; justify-content:center}
+  .cfg input{width:54px; padding:5px; border-radius:7px; border:1px solid var(--line);
+    background:var(--card); color:var(--text); text-align:center; font-size:13px}
+  .note{font-size:11px; color:var(--muted); text-align:center; margin-top:10px; line-height:1.5}
+</style>
+</head>
+<body>
+<header>
+  <h1>Lista de Precios <span class="tag">2025</span></h1>
+  <input id="q" class="search" placeholder="Buscar por código, nombre…" autocomplete="off">
+  <div class="filters">
+    <select id="cat"><option value="">Todas las categorías</option></select>
+  </div>
+  <div class="count" id="count"></div>
+</header>
+<main id="list"></main>
+
+<div class="overlay" id="ov">
+  <div class="sheet" id="sheet"></div>
+</div>
+
+<script>
+const TASA_DEFAULT = 4;      // % mensual para 6/9/12 cuotas
+const CUOTAS_INT = [6,9,12]; // con interés
+const DESC_CONTADO = 10;     // % efectivo
+const PROMOS = [15,20,25,30];// % descuento bancario
+
+let PRODS = [], filtered = [], tasaMensual = TASA_DEFAULT;
+
+const fmt = n => '$' + Math.round(n).toLocaleString('es-AR');
+const norm = s => (s||'').toString().toLowerCase()
+  .normalize('NFD').replace(/[̀-ͯ]/g,'');
+
+fetch('productos.json')
+  .then(r=>r.json())
+  .then(data=>{
+    PRODS = data;
+    const cats = [...new Set(data.map(p=>p.categoria).filter(Boolean))].sort();
+    const sel = document.getElementById('cat');
+    cats.forEach(c=>{ const o=document.createElement('option'); o.value=c; o.textContent=c; sel.appendChild(o); });
+    render();
+  })
+  .catch(()=>{ document.getElementById('list').innerHTML =
+    '<div class="empty">No se pudo cargar productos.json.<br>Subí el archivo junto a index.html.</div>'; });
+
+const qEl = document.getElementById('q');
+const catEl = document.getElementById('cat');
+qEl.addEventListener('input', render);
+catEl.addEventListener('change', render);
+
+function render(){
+  const q = norm(qEl.value.trim());
+  const cat = catEl.value;
+  const terms = q.split(/\s+/).filter(Boolean);
+  filtered = PRODS.filter(p=>{
+    if(cat && p.categoria!==cat) return false;
+    if(!terms.length) return true;
+    const hay = norm(p.codigo+' '+p.nombre+' '+p.categoria);
+    return terms.every(t=>hay.includes(t));
+  });
+  filtered.sort((a,b)=>{
+    const na=parseInt(a.codigo,10), nb=parseInt(b.codigo,10);
+    if(!isNaN(na)&&!isNaN(nb)&&na!==nb) return na-nb;
+    return (a.codigo||'').localeCompare(b.codigo||'');
+  });
+  const list = document.getElementById('list');
+  document.getElementById('count').textContent =
+    filtered.length + ' producto' + (filtered.length!==1?'s':'');
+  if(!filtered.length){ list.innerHTML='<div class="empty">Sin resultados.</div>'; return; }
+  const shown = filtered.slice(0,300);
+  list.innerHTML = shown.map((p,i)=>`
+    <div class="item" data-i="${i}">
+      <div class="info">
+        <div class="nombre">${esc(p.nombre)||'(sin nombre)'}</div>
+        <div class="meta"><span class="cod">${esc(p.codigo)||'—'}</span> · ${esc(p.categoria)}</div>
+      </div>
+      <div class="precio">${fmt(p.precio_lista)}</div>
+    </div>`).join('') +
+    (filtered.length>300?`<div class="empty">Mostrando 300 de ${filtered.length}. Afiná la búsqueda.</div>`:'');
+  [...list.querySelectorAll('.item')].forEach(el=>
+    el.onclick=()=>openDetail(shown[+el.dataset.i]));
+}
+
+function esc(s){ return (s||'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+
+let curProd=null, curTalle=0;
+function openDetail(p){
+  curProd=p; curTalle=0;
+  document.getElementById('ov').classList.add('open');
+  drawDetail();
+}
+function closeDetail(){ document.getElementById('ov').classList.remove('open'); }
+document.getElementById('ov').addEventListener('click',e=>{ if(e.target.id==='ov') closeDetail(); });
+
+function cuotaFrancesa(precio,n,r){ // r = tasa mensual decimal
+  if(r<=0) return precio/n;
+  return precio*(r*Math.pow(1+r,n))/(Math.pow(1+r,n)-1);
+}
+
+function drawDetail(){
+  const p=curProd;
+  const t=p.talles[curTalle];
+  const base=t.precio;
+  const r=tasaMensual/100;
+  const contado=base*(1-DESC_CONTADO/100);
+  const tres=base/3;
+
+  const tallesHtml = p.talles.length>1 ? `
+    <div class="label">Talle</div>
+    <div class="talles">${p.talles.map((x,i)=>
+      `<button class="talle ${i===curTalle?'sel':''}" data-t="${i}">${esc(x.talle)}</button>`).join('')}</div>` : '';
+
+  const cuotasIntHtml = CUOTAS_INT.map(n=>{
+    const c=cuotaFrancesa(base,n,r);
+    return `<div class="row"><div class="a">${n} cuotas<small>con ${tasaMensual}% mensual</small></div>
+      <div class="b">${fmt(c)}<small>por cuota · total ${fmt(c*n)}</small></div></div>`;
+  }).join('');
+
+  const promosHtml = PROMOS.map(d=>
+    `<div class="row"><div class="a">Promo banco −${d}%</div>
+     <div class="b">${fmt(base*(1-d/100))}</div></div>`).join('');
+
+  document.getElementById('sheet').innerHTML = `
+    <button class="close" onclick="closeDetail()">×</button>
+    <h2>${esc(p.nombre)||'(sin nombre)'}</h2>
+    <div class="scod">Código ${esc(p.codigo)||'—'}</div>
+    <div class="scat">${esc(p.categoria)}</div>
+    ${tallesHtml}
+    <div class="lista">
+      <div class="l">PRECIO DE LISTA${p.talles.length>1?' · talle '+esc(t.talle):''}</div>
+      <div class="v">${fmt(base)}</div>
+    </div>
+    <div class="grid">
+      <div class="box green"><div class="t">Contado efectivo</div>
+        <div class="p">${fmt(contado)}</div><div class="s">−${DESC_CONTADO}%</div></div>
+      <div class="box blue"><div class="t">3 cuotas s/interés</div>
+        <div class="p">${fmt(tres)}</div><div class="s">por cuota</div></div>
+    </div>
+    <div class="label">Cuotas con interés</div>
+    ${cuotasIntHtml}
+    <div class="label">Promociones bancarias</div>
+    ${promosHtml}
+    <div class="cfg">Interés mensual:
+      <input id="tasa" type="number" value="${tasaMensual}" min="0" step="0.5"> %</div>
+    <div class="note">Precios de cuotas calculados con sistema francés.<br>
+      Cambiá el % de interés arriba si tu tasa cambió.</div>`;
+
+  [...document.querySelectorAll('.talle')].forEach(b=>
+    b.onclick=()=>{ curTalle=+b.dataset.t; drawDetail(); });
+  const tasaEl=document.getElementById('tasa');
+  if(tasaEl) tasaEl.onchange=()=>{ tasaMensual=parseFloat(tasaEl.value)||0; drawDetail(); };
+}
+</script>
+</body>
+</html>
