@@ -134,6 +134,7 @@
     <button id="fMinus" class="fbtn" title="Achicar letra">A−</button>
     <button id="fPlus" class="fbtn" title="Agrandar letra">A+</button>
     <button id="cartBtn" class="fbtn" title="Carrito">🛒<span id="cartN" class="cbadge" style="display:none"></span></button>
+    <button id="helpBtn" class="fbtn" title="Ayuda">❓</button>
   </h1>
   <input id="q" class="search" placeholder="Buscar por código, nombre…" autocomplete="off">
   <div class="filters">
@@ -396,6 +397,48 @@ function closeCart(){
   else hideCart();
 }
 document.getElementById('cartBtn').onclick = openCart;
+
+/* ===== Ayuda ===== */
+let helpOpen=false;
+function openHelp(){
+  helpOpen=true;
+  document.getElementById('sheet').innerHTML = `
+    <div class="topbtns"><button class="backbtn" onclick="closeDetail()">← Atrás</button></div>
+    <h2>❓ Ayuda</h2>
+    <div class="label">Inicio</div>
+    <div class="note" style="text-align:left">
+      Sin buscar nada, ves tus <b>★ Favoritos</b> y los <b>últimos productos consultados</b>.
+      Tocá la estrella ☆ en cualquier producto para marcarlo como favorito.
+    </div>
+    <div class="label">Buscar</div>
+    <div class="note" style="text-align:left">
+      Escribí código, nombre o parte de cualquiera de los dos en el buscador.
+      Podés combinar con el filtro de <b>categoría</b> para acotar los resultados.
+      Usá <b>A−</b> / <b>A+</b> para achicar o agrandar la letra de toda la app.
+    </div>
+    <div class="label">Detalle del producto</div>
+    <div class="note" style="text-align:left">
+      Tocá un producto para ver sus precios. Si tiene varios talles, elegí el talle arriba.
+      Se muestran: precio de lista (débito/transferencia/1 pago), contado efectivo con descuento,
+      3 cuotas sin interés, y cuotas con interés (6/9/12) según la tasa mensual configurable.
+      También podés ver promociones bancarias eligiendo el % de descuento.
+      "🛒 Agregar al carrito" suma ese talle al carrito.
+    </div>
+    <div class="label">Carrito 🛒</div>
+    <div class="note" style="text-align:left">
+      Suma varios productos y mostrá el total con las mismas opciones de pago
+      (contado, cuotas, promos). Sumá/restá cantidades con + / −, quitá un ítem con ✕,
+      o vaciá todo con "Vaciar carrito".
+    </div>
+    <div class="label">Avisos 📢</div>
+    <div class="note" style="text-align:left">
+      Si subieron precios en alguna categoría, aparece un aviso arriba durante unos días.
+      Podés cerrarlo con ✕ o activar notificaciones con 🔔.
+    </div>`;
+  document.getElementById('ov').classList.add('open');
+  history.pushState({detalle:1}, '');
+}
+document.getElementById('helpBtn').onclick = openHelp;
 document.getElementById('ovCart').addEventListener('click',e=>{ if(e.target.id==='ovCart') closeCart(); });
 updateCartBtn();
 
