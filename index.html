@@ -151,6 +151,7 @@
       <button id="fMinus" class="fbtn" title="Achicar letra">A−</button>
       <button id="fPlus" class="fbtn" title="Agrandar letra">A+</button>
       <button id="themeBtn" class="fbtn" title="Cambiar tema">🌙</button>
+      <button id="addBtn" class="fbtn" title="Agregar producto">➕</button>
       <button id="helpBtn" class="fbtn" title="Ayuda">❓</button>
       <button id="cartBtn" class="fbtn" title="Carrito">🛒<span id="cartN" class="cbadge" style="display:none"></span></button>
     </div>
@@ -191,6 +192,12 @@ const CUOTAS_INT = [6,9,12]; // con interés
 const DESC_CONTADO = 10;     // % efectivo
 const PROMOS = [15,20,25,30];// % descuento bancario
 const MAX_HIST = 15;
+
+// === Agregar productos desde la app (sincroniza con la planilla) ===
+// Pegá acá la URL de tu Web App de Google Apps Script (ver apps-script.gs):
+const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyp9PHww-8zMlz6qobDM_j1seQeKnPNVdYDNiQ1p4jN_SVvkL6jzMXItmhYnyJpJ9GwgA/exec';
+const SHEET_ID = '1cg2fM1xGxzqBOoSv2mC68W3OcsKmNHAgQSthRxkOVDI';
+let ALTAS_KEYS = new Set();   // para no duplicar altas (local + planilla)
 
 let PRODS = [], BYCOD = {}, tasaMensual = TASA_DEFAULT;
 let FAV = getLS('fav_codigos', []);
@@ -233,13 +240,75 @@ fetch('productos.json')
   .then(data=>{
     PRODS = data;
     data.forEach(p=>{ if(p.codigo && !(p.codigo in BYCOD)) BYCOD[p.codigo]=p; });
-    const cats = [...new Set(data.map(p=>p.categoria).filter(Boolean))].sort();
-    const sel = document.getElementById('cat');
-    cats.forEach(c=>{ const o=document.createElement('option'); o.value=c; o.textContent=c; sel.appendChild(o); });
-    render();
+    ensureCats();
+    loadAltas();   // suma los productos agregados desde la app (local + planilla) y hace render
   })
   .catch(()=>{ document.getElementById('list').innerHTML =
     '<div class="empty">No se pudo cargar productos.json.<br>Subí el archivo junto a index.html.</div>'; });
+
+/* ===== Productos agregados desde la app ===== */
+function ensureCats(){
+  const sel = document.getElementById('cat');
+  const have = new Set([...sel.options].map(o=>o.value));
+  [...new Set(PRODS.map(p=>p.categoria).filter(Boolean))].sort().forEach(c=>{
+    if(!have.has(c)){ const o=document.createElement('option'); o.value=c; o.textContent=c; sel.appendChild(o); }
+  });
+}
+function mergeAlta(p){
+  if(!p || (!p.codigo && !p.nombre)) return;
+  const key = (p.codigo||'')+'|'+(p.nombre||'')+'|'+(p.categoria||'');
+  if(ALTAS_KEYS.has(key)) return;
+  ALTAS_KEYS.add(key);
+  PRODS.push(p);
+  if(p.codigo && !(p.codigo in BYCOD)) BYCOD[p.codigo]=p;
+}
+// Parser CSV simple (gviz devuelve campos con comillas para JSON con comas)
+function parseCSV(text){
+  const rows=[]; let i=0, field='', row=[], inq=false;
+  while(i<text.length){
+    const c=text[i];
+    if(inq){
+      if(c==='"'){ if(text[i+1]==='"'){ field+='"'; i+=2; continue; } inq=false; i++; continue; }
+      field+=c; i++; continue;
+    }
+    if(c==='"'){ inq=true; i++; continue; }
+    if(c===','){ row.push(field); field=''; i++; continue; }
+    if(c==='\n'){ row.push(field); rows.push(row); row=[]; field=''; i++; continue; }
+    if(c==='\r'){ i++; continue; }
+    field+=c; i++;
+  }
+  if(field.length||row.length){ row.push(field); rows.push(row); }
+  return rows;
+}
+function loadAltas(){
+  // 1) locales (se ven al instante y sin internet)
+  getLS('altas_local', []).forEach(mergeAlta);
+  ensureCats(); render();
+  // 2) de la planilla (las que cargó cualquier aparato)
+  const url = 'https://docs.google.com/spreadsheets/d/'+SHEET_ID+
+    '/gviz/tq?tqx=out:csv&sheet=AltasApp&t='+Date.now();
+  fetch(url, {cache:'no-store'})
+    .then(r=>r.text())
+    .then(txt=>{
+      const rows = parseCSV(txt);
+      if(rows.length < 2) return;
+      const head = rows[0].map(h=>h.trim().toLowerCase());
+      const ci = {}; head.forEach((h,idx)=>ci[h]=idx);
+      for(let r=1; r<rows.length; r++){
+        const row = rows[r];
+        const cod = (row[ci['codigo']]||'').trim();
+        const nom = (row[ci['nombre']]||'').trim();
+        if(!cod && !nom) continue;
+        let talles=[];
+        try{ talles = JSON.parse(row[ci['talles_json']]||'[]'); }catch(e){}
+        const pl = parseFloat(row[ci['precio_lista']]) || (talles[0] && talles[0].precio) || 0;
+        mergeAlta({codigo:cod, nombre:nom, categoria:(row[ci['categoria']]||'').trim(),
+          precio_lista:pl, talles: talles.length?talles:[{talle:'Único', precio:pl}]});
+      }
+      ensureCats(); render();
+    })
+    .catch(()=>{});
+}
 
 /* ===== Aviso de aumentos (avisos.json) =====
    Banner cerrable (✕) durante 5 días + notificación a las 9:30 y 17:00.
@@ -522,6 +591,12 @@ function openHelp(){
       También podés ver promociones bancarias eligiendo el % de descuento.
       "🛒 Agregar al carrito" suma ese talle al carrito.
     </div>
+    <div class="label">Agregar producto ➕</div>
+    <div class="note" style="text-align:left">
+      Cargá un producto nuevo (categoría, código, nombre y precios por talle).
+      Se guarda en este aparato al instante y se sincroniza con la planilla,
+      así aparece también en los otros aparatos.
+    </div>
     <div class="label">Carrito 🛒</div>
     <div class="note" style="text-align:left">
       Suma varios productos y mostrá el total con las mismas opciones de pago
@@ -537,6 +612,79 @@ function openHelp(){
   history.pushState({detalle:1}, '');
 }
 document.getElementById('helpBtn').onclick = openHelp;
+
+/* ===== Agregar producto ===== */
+function openAddProduct(){
+  const cats = [...new Set(PRODS.map(p=>p.categoria).filter(Boolean))].sort();
+  const inS = 'border:1px solid var(--line); background:var(--card); color:var(--text); border-radius:8px; padding:9px; font-size:14px';
+  document.getElementById('sheet').innerHTML = `
+    <div class="topbtns"><button class="backbtn" onclick="closeDetail()">← Atrás</button></div>
+    <h2>➕ Agregar producto</h2>
+    <div class="scat">Se guarda en este aparato y se sincroniza con la planilla.</div>
+    <div class="label">Categoría</div>
+    <select id="apCat" style="width:100%">
+      ${cats.map(c=>`<option>${esc(c)}</option>`).join('')}
+      <option value="__new">➕ Nueva categoría…</option>
+    </select>
+    <input id="apCatNew" class="search" placeholder="Nombre de la nueva categoría" style="margin-top:8px; display:none">
+    <div class="label">Código</div>
+    <input id="apCod" class="search" placeholder="Ej: 12345XXX" autocomplete="off">
+    <div class="label">Nombre</div>
+    <input id="apNom" class="search" placeholder="Ej: TAVERNITI BUZO" autocomplete="off">
+    <div class="label">Talles y precios</div>
+    <div id="apTalles"></div>
+    <button id="apAddRow" class="cclear" style="margin:6px auto 0">+ Agregar talle</button>
+    <div id="apMsg" class="note"></div>
+    <button id="apSave" class="addcart" style="margin-top:8px">💾 Guardar producto</button>`;
+  document.getElementById('ov').classList.add('open');
+  history.pushState({detalle:1}, '');
+  const cont = document.getElementById('apTalles');
+  function addRow(talle, precio){
+    const div = document.createElement('div'); div.className='row';
+    div.innerHTML = `<input class="apT" placeholder="Talle (ej: 1 AL 4)" value="${esc(talle||'')}" style="flex:1; ${inS}">
+      <input class="apP" type="number" placeholder="Precio" value="${precio||''}" style="width:108px; margin-left:6px; ${inS}">`;
+    cont.appendChild(div);
+  }
+  addRow('Único','');
+  document.getElementById('apAddRow').onclick = ()=> addRow('','');
+  const catSel = document.getElementById('apCat');
+  catSel.onchange = ()=>{ document.getElementById('apCatNew').style.display = catSel.value==='__new' ? 'block' : 'none'; };
+  document.getElementById('apSave').onclick = saveNewProduct;
+}
+document.getElementById('addBtn').onclick = openAddProduct;
+
+function saveNewProduct(){
+  const msg = document.getElementById('apMsg');
+  const catSel = document.getElementById('apCat');
+  const categoria = catSel.value==='__new' ? document.getElementById('apCatNew').value.trim() : catSel.value;
+  const codigo = document.getElementById('apCod').value.trim();
+  const nombre = document.getElementById('apNom').value.trim();
+  const talles = [];
+  document.querySelectorAll('#apTalles .row').forEach(r=>{
+    const t = r.querySelector('.apT').value.trim();
+    const p = parseFloat(r.querySelector('.apP').value);
+    if(!isNaN(p) && p>0) talles.push({talle: t||'Único', precio: Math.round(p)});
+  });
+  if(!codigo){ msg.textContent='Falta el código.'; return; }
+  if(!nombre){ msg.textContent='Falta el nombre.'; return; }
+  if(!categoria){ msg.textContent='Falta la categoría.'; return; }
+  if(!talles.length){ msg.textContent='Cargá al menos un precio.'; return; }
+  const prod = {codigo, nombre, categoria, precio_lista: talles[0].precio, talles};
+  // guardar local (instantáneo + offline)
+  const locals = getLS('altas_local', []); locals.push(prod); setLS('altas_local', locals);
+  mergeAlta(prod); ensureCats(); render();
+  // sincronizar con la planilla
+  if(SCRIPT_URL){
+    msg.textContent='Guardando…';
+    fetch(SCRIPT_URL, {method:'POST', mode:'no-cors',
+      headers:{'Content-Type':'text/plain;charset=utf-8'}, body: JSON.stringify(prod)})
+      .then(()=>{ msg.textContent='✓ Guardado'; setTimeout(closeDetail, 700); })
+      .catch(()=>{ msg.textContent='Guardado en este aparato. No se sincronizó (¿sin internet?).'; });
+  } else {
+    msg.textContent='Guardado en este aparato. (Falta configurar SCRIPT_URL para sincronizar.)';
+    setTimeout(closeDetail, 1100);
+  }
+}
 
 /* ===== Escaneo de código de barras =====
    El código de barras trae el código completo (8 díg + talle), pero en la
