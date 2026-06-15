@@ -24,7 +24,10 @@
     background:var(--bg); color:var(--text); padding-bottom:40px}
   header{position:sticky; top:0; z-index:10; background:var(--bg);
     padding:12px 14px 10px; border-bottom:1px solid var(--line)}
-  h1{font-size:18px; margin:0 0 10px; display:flex; align-items:center; gap:8px}
+  h1{font-size:18px; margin:0 0 10px; display:flex; align-items:center; gap:8px; flex-wrap:wrap}
+  h1 .ttl{flex:1 1 auto; white-space:nowrap}
+  h1 .sp{flex:1 1 auto; min-width:0}
+  .fbtn{padding:4px 9px}
   h1 .tag{font-size:11px; background:var(--accent); color:#03283a; padding:2px 8px;
     border-radius:20px; font-weight:700}
   .fbtn{background:var(--card); border:1px solid var(--line); color:var(--text);
@@ -134,8 +137,8 @@
 </head>
 <body>
 <header>
-  <h1>Lista de Precios
-    <span style="flex:1"></span>
+  <h1><span class="ttl">Lista de Precios</span>
+    <span class="sp"></span>
     <button id="fMinus" class="fbtn" title="Achicar letra">A−</button>
     <button id="fPlus" class="fbtn" title="Agrandar letra">A+</button>
     <button id="cartBtn" class="fbtn" title="Carrito">🛒<span id="cartN" class="cbadge" style="display:none"></span></button>
