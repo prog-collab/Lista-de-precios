@@ -59,14 +59,27 @@
   .star{background:none; border:none; cursor:pointer; font-size:22px; line-height:1;
     color:var(--muted); padding:4px}
   .star.on{color:var(--star)}
+  /* deslizar para agregar al carrito */
+  .swipe-wrap{position:relative; overflow:hidden; border-radius:12px; margin-bottom:8px}
+  .swipe-wrap .item{position:relative; z-index:1; margin-bottom:0;
+    transition:transform .18s ease; will-change:transform; touch-action:pan-y}
+  .swipe-add{position:absolute; top:0; right:0; height:100%; width:120px; z-index:0;
+    border:none; background:var(--accent2); color:#04270f; font-weight:800; font-size:20px;
+    cursor:pointer; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px}
+  .swipe-add span{font-size:12px}
+  #toast{position:fixed; left:50%; bottom:24px; transform:translateX(-50%) translateY(20px);
+    background:var(--accent2); color:#04270f; font-weight:700; padding:11px 20px; border-radius:22px;
+    font-size:14px; opacity:0; pointer-events:none; transition:.2s; z-index:100; box-shadow:0 4px 16px rgba(0,0,0,.3)}
+  #toast.show{opacity:1; transform:translateX(-50%) translateY(0)}
   .empty{text-align:center; color:var(--muted); padding:34px 20px; line-height:1.6}
   /* modal */
   .overlay{position:fixed; inset:0; background:rgba(0,0,0,.6); display:none;
-    align-items:flex-start; justify-content:center; z-index:50}
+    align-items:flex-start; justify-content:center; z-index:50;
+    overflow-y:auto; -webkit-overflow-scrolling:touch}
   .overlay.open{display:flex}
-  .sheet{background:var(--bg); width:100%; max-width:520px; max-height:100vh;
-    overflow-y:auto; border-radius:0 0 18px 18px; border-bottom:1px solid var(--line);
-    padding:18px 16px 28px}
+  .sheet{background:var(--bg); width:100%; max-width:520px; align-self:flex-start;
+    border-radius:0 0 18px 18px; border-bottom:1px solid var(--line);
+    padding:18px 16px 90px}
   .sheet h2{margin:0 0 2px; font-size:20px; padding-right:8px}
   .sheet .scod{color:var(--accent); font-weight:700; font-size:14px}
   .sheet .scat{color:var(--muted); font-size:13px; margin-bottom:14px}
@@ -482,7 +495,9 @@ function pushHist(cod){
 
 function itemHtml(p){
   const fav = isFav(p.codigo);
-  return `<div class="item" data-cod="${esc(p.codigo)}">
+  return `<div class="swipe-wrap">
+    <button class="swipe-add" data-add="${esc(p.codigo)}" title="Agregar al carrito">🛒<span>Agregar</span></button>
+    <div class="item" data-cod="${esc(p.codigo)}">
       <div class="info">
         <div class="nombre">${esc(p.nombre)||'(sin nombre)'}</div>
         <div class="meta"><span class="cod">${esc(p.codigo)||'—'}</span> · ${esc(p.categoria)}</div>
@@ -491,7 +506,8 @@ function itemHtml(p){
         <div class="precio">${fmt(p.precio_lista)}</div>
         <button class="star ${fav?'on':''}" data-fav="${esc(p.codigo)}" title="Favorito">${fav?'★':'☆'}</button>
       </div>
-    </div>`;
+    </div>
+  </div>`;
 }
 
 function render(){
@@ -546,8 +562,61 @@ function render(){
     (filtered.length>300?`<div class="empty">Mostrando 300 de ${filtered.length}. Afiná la búsqueda.</div>`:'');
 }
 
-// Delegación de clics: estrella o abrir detalle
-document.getElementById('list').addEventListener('click', e=>{
+// Agregar al carrito sin abrir el producto (primer talle / precio de lista)
+function addToCartQuick(cod){
+  const p = BYCOD[cod];
+  if(!p || !p.talles || !p.talles.length) return;
+  const t = p.talles[0];
+  const found = CART.find(i=>i.cod===p.codigo && i.talle===t.talle && i.nombre===p.nombre);
+  if(found) found.qty++;
+  else CART.push({cod:p.codigo, nombre:p.nombre, talle:t.talle, precio:t.precio, qty:1});
+  saveCart();
+  toast('✓ Agregado al carrito');
+}
+function toast(msg){
+  let t = document.getElementById('toast');
+  if(!t){ t = document.createElement('div'); t.id='toast'; document.body.appendChild(t); }
+  t.textContent = msg; t.classList.add('show');
+  clearTimeout(t._h); t._h = setTimeout(()=>t.classList.remove('show'), 1400);
+}
+
+// Deslizar un producto a la izquierda para revelar el botón "Agregar"
+const listEl = document.getElementById('list');
+let swItem=null, swX0=0, swY0=0, swDx=0, swDir=null, swSuppress=false, swOpen=null;
+function swReset(it){ if(it){ it.style.transform=''; } }
+listEl.addEventListener('touchstart', e=>{
+  const it = e.target.closest('.swipe-wrap .item');
+  if(swOpen && swOpen!==it){ swReset(swOpen); swOpen=null; }
+  if(!it) return;
+  swItem=it; swX0=e.touches[0].clientX; swY0=e.touches[0].clientY; swDx=0; swDir=null;
+}, {passive:true});
+listEl.addEventListener('touchmove', e=>{
+  if(!swItem) return;
+  const dx=e.touches[0].clientX-swX0, dy=e.touches[0].clientY-swY0;
+  if(swDir===null) swDir = Math.abs(dx)>Math.abs(dy) ? 'h' : 'v';
+  if(swDir==='v'){ swItem=null; return; }
+  swDx=dx;
+  const base = (swOpen===swItem) ? -120 : 0;
+  const tx = Math.min(0, Math.max(-120, base+dx));
+  swItem.style.transform = `translateX(${tx}px)`;
+  e.preventDefault();
+}, {passive:false});
+listEl.addEventListener('touchend', ()=>{
+  if(!swItem) return;
+  const base = (swOpen===swItem) ? -120 : 0;
+  const open = (base+swDx) < -60;
+  swItem.style.transform = open ? 'translateX(-120px)' : '';
+  swOpen = open ? swItem : (swOpen===swItem ? null : swOpen);
+  if(Math.abs(swDx)>8){ swSuppress=true; setTimeout(()=>swSuppress=false, 350); }
+  swItem=null; swDx=0; swDir=null;
+});
+
+// Clics: agregar rápido, estrella, o abrir detalle
+listEl.addEventListener('click', e=>{
+  const add = e.target.closest('.swipe-add');
+  if(add){ addToCartQuick(add.dataset.add); swReset(add.parentElement.querySelector('.item'));
+    if(swOpen===add.parentElement.querySelector('.item')) swOpen=null; return; }
+  if(swSuppress){ swSuppress=false; e.stopPropagation(); return; }
   const star = e.target.closest('.star');
   if(star){ e.stopPropagation(); toggleFav(star.dataset.fav); return; }
   const item = e.target.closest('.item');
@@ -617,6 +686,12 @@ function openHelp(){
     <div class="note" style="text-align:left">
       Sin buscar nada, ves tus <b>★ Favoritos</b> y los <b>últimos productos consultados</b>.
       Tocá la estrella ☆ en cualquier producto para marcarlo como favorito.
+    </div>
+    <div class="label">Agregar al carrito rápido 👉</div>
+    <div class="note" style="text-align:left">
+      En la lista (favoritos, historial o resultados de búsqueda),
+      <b>deslizá un producto hacia la izquierda</b> para que aparezca el botón
+      <b>🛒 Agregar</b> y sumarlo al carrito sin abrirlo.
     </div>
     <div class="label">Buscar</div>
     <div class="note" style="text-align:left">
