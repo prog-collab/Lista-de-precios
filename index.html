@@ -137,6 +137,15 @@
   #aviso b{color:var(--warn)}
   #aviso button{background:none; border:none; color:var(--text); font-size:17px;
     cursor:pointer; padding:2px 6px; flex:none}
+  /* aviso de funciones nuevas */
+  #novedad{display:none; align-items:center; gap:8px; margin:10px 10px 0; padding:11px 13px;
+    background:#0c2b3a; border:1px solid var(--accent); border-radius:12px;
+    font-size:13.5px; line-height:1.45}
+  body.light #novedad{background:#e0f2fe}
+  #novedad span{flex:1}
+  #novedad b{color:var(--accent)}
+  #novedad button{background:none; border:none; color:var(--text); font-size:17px;
+    cursor:pointer; padding:2px 6px; flex:none}
 </style>
 </head>
 <body>
@@ -166,6 +175,7 @@
   <div class="count" id="count"></div>
 </header>
 <div id="aviso"></div>
+<div id="novedad"></div>
 <main id="list"></main>
 
 <div class="overlay" id="ov">
@@ -239,7 +249,7 @@ fetch('productos.json')
    Banner cerrable (✕) durante 5 días + notificación a las 9:30 y 17:00.
    Las notificaciones se disparan cuando la app está abierta a esa hora,
    o al abrirla más tarde ese mismo día (una sola vez por horario). */
-const AVISO_DIAS = 5, AVISO_HORAS = ['09:30', '17:00'];
+const AVISO_DIAS = 5, NOVEDAD_DIAS = 2, AVISO_HORAS = ['09:00', '16:00'];
 let AVISO = null;
 fetch('avisos.json', {cache:'no-store'})
   .then(r=>r.json())
@@ -280,6 +290,56 @@ function checkNotifs(){
     if(getLS(k, false)) return;
     setLS(k, true);
     const msg = 'Subieron los precios en: ' + AVISO.categorias.join(', ');
+    if(navigator.serviceWorker && navigator.serviceWorker.controller){
+      navigator.serviceWorker.ready.then(reg=>
+        reg.showNotification('Lista de Precios', {body: msg, icon: 'icon-192.png', badge: 'icon-192.png'}));
+    } else {
+      try{ new Notification('Lista de Precios', {body: msg, icon: 'icon-192.png'}); }catch(e){}
+    }
+  });
+}
+
+/* ===== Aviso de funciones nuevas (novedades.json) =====
+   Igual que el aviso de aumentos pero solo 2 días, mismos horarios. */
+let NOVEDAD = null;
+fetch('novedades.json', {cache:'no-store'})
+  .then(r=>r.json())
+  .then(n=>{
+    if(!n || !n.fecha || !n.texto) return;
+    const dias = (Date.now() - new Date(n.fecha+'T00:00:00')) / 86400000;
+    if(dias < 0 || dias >= NOVEDAD_DIAS) return;
+    NOVEDAD = n;
+    drawNovedad();
+    checkNovedadNotifs();
+    setInterval(checkNovedadNotifs, 60000);
+  })
+  .catch(()=>{});
+
+function drawNovedad(){
+  const el = document.getElementById('novedad');
+  if(!NOVEDAD || getLS('novedad_cerrada','') === NOVEDAD.fecha){ el.style.display='none'; return; }
+  const bell = ('Notification' in window) && Notification.permission === 'default'
+    ? '<button id="nvBell" title="Activar notificaciones">🔔</button>' : '';
+  el.innerHTML = `<span>✨ Novedad: <b>${esc(NOVEDAD.texto)}</b></span>${bell}
+    <button id="nvX" title="Cerrar">✕</button>`;
+  el.style.display = 'flex';
+  document.getElementById('nvX').onclick = ()=>{ setLS('novedad_cerrada', NOVEDAD.fecha); drawNovedad(); };
+  const nb = document.getElementById('nvBell');
+  if(nb) nb.onclick = ()=> Notification.requestPermission().then(()=>{ drawNovedad(); checkNovedadNotifs(); });
+}
+
+function checkNovedadNotifs(){
+  if(!NOVEDAD || !('Notification' in window) || Notification.permission !== 'granted') return;
+  if((Date.now() - new Date(NOVEDAD.fecha+'T00:00:00')) / 86400000 >= NOVEDAD_DIAS) return;
+  const now = new Date();
+  const hoy = now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0')+'-'+String(now.getDate()).padStart(2,'0');
+  AVISO_HORAS.forEach(h=>{
+    const [hh, mm] = h.split(':').map(Number);
+    if(now.getHours()*60 + now.getMinutes() < hh*60 + mm) return;
+    const k = `notifnv_${NOVEDAD.fecha}_${hoy}_${h}`;
+    if(getLS(k, false)) return;
+    setLS(k, true);
+    const msg = 'Novedad: ' + NOVEDAD.texto;
     if(navigator.serviceWorker && navigator.serviceWorker.controller){
       navigator.serviceWorker.ready.then(reg=>
         reg.showNotification('Lista de Precios', {body: msg, icon: 'icon-192.png', badge: 'icon-192.png'}));
@@ -482,12 +542,32 @@ function openHelp(){
 }
 document.getElementById('helpBtn').onclick = openHelp;
 
-/* ===== Escaneo de código de barras ===== */
-document.getElementById('scanBtn').onclick = async ()=>{
-  if(!('BarcodeDetector' in window)){
-    alert('Tu navegador no soporta el escaneo de códigos. Probá escribir el código manualmente.');
-    return;
+/* ===== Escaneo de código de barras =====
+   El código de barras trae el código completo (8 díg + talle), pero en la
+   lista los productos están como prefijo de 5 díg + "XXX". Probamos de lo
+   más específico a lo más general: completo → 8 díg → 5 díg, y nos quedamos
+   con la primera variante que tenga resultados. */
+function searchByBarcode(raw){
+  const digits = (raw||'').replace(/\D/g,'');
+  const tries = [...new Set([digits, digits.slice(0,8), digits.slice(0,5), digits.slice(0,4)])].filter(Boolean);
+  for(const t of tries){
+    const nt = norm(t);
+    if(PRODS.some(p=>norm(p.codigo).includes(nt))){ qEl.value = t; render(); return; }
   }
+  qEl.value = digits.slice(0,5) || raw; render();
+}
+
+// Carga perezosa de Tesseract.js (OCR) solo cuando hace falta leer números.
+function loadTesseract(){
+  if(window.Tesseract) return Promise.resolve();
+  return new Promise((res,rej)=>{
+    const s=document.createElement('script');
+    s.src='https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
+    s.onload=res; s.onerror=rej; document.head.appendChild(s);
+  });
+}
+
+document.getElementById('scanBtn').onclick = async ()=>{
   let stream;
   try{
     stream = await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}});
@@ -498,34 +578,57 @@ document.getElementById('scanBtn').onclick = async ()=>{
   const video = document.createElement('video');
   video.srcObject = stream; video.setAttribute('playsinline','');
   video.style = 'width:100%; border-radius:12px; margin-top:6px';
+  const hayBarras = ('BarcodeDetector' in window);
   document.getElementById('sheet').innerHTML = `
     <div class="topbtns"><button class="backbtn" id="scanClose">✕ Cerrar</button></div>
     <h2>📷 Escanear código</h2>
-    <div class="scat">Apuntá la cámara al código de barras</div>`;
-  document.getElementById('sheet').appendChild(video);
+    <div class="scat">${hayBarras
+      ? 'Apuntá al código de barras, o tocá “Leer número” si no tiene.'
+      : 'Apuntá la cámara al número y tocá “Leer número”.'}</div>`;
+  const sheetEl = document.getElementById('sheet');
+  sheetEl.appendChild(video);
+  const ocrBtn = document.createElement('button');
+  ocrBtn.className='addcart'; ocrBtn.textContent='🔢 Leer número'; ocrBtn.style.marginTop='10px';
+  sheetEl.appendChild(ocrBtn);
+  const ocrMsg = document.createElement('div');
+  ocrMsg.className='note'; sheetEl.appendChild(ocrMsg);
   document.getElementById('ov').classList.add('open');
   history.pushState({detalle:1}, '');
   video.play();
-  const detector = new BarcodeDetector();
+
   let stopped = false;
-  document.getElementById('scanClose').onclick = ()=>{ stopped=true; stream.getTracks().forEach(t=>t.stop()); closeDetail(); };
-  (async function loop(){
-    while(!stopped){
-      try{
-        const codes = await detector.detect(video);
-        if(codes.length){
-          const val = codes[0].rawValue;
-          stopped = true;
-          stream.getTracks().forEach(t=>t.stop());
-          closeDetail();
-          qEl.value = val;
-          render();
-          return;
-        }
-      }catch(e){}
-      await new Promise(r=>setTimeout(r, 300));
-    }
-  })();
+  function stop(){ stopped=true; try{ stream.getTracks().forEach(t=>t.stop()); }catch(e){} }
+  function finish(val){ if(stopped) return; stop(); closeDetail(); searchByBarcode(val); }
+  document.getElementById('scanClose').onclick = ()=>{ stop(); closeDetail(); };
+
+  // Leer número impreso (sin código de barras) con OCR
+  ocrBtn.onclick = async ()=>{
+    ocrMsg.textContent='Leyendo número…';
+    try{
+      await loadTesseract();
+      const c=document.createElement('canvas');
+      c.width=video.videoWidth; c.height=video.videoHeight;
+      c.getContext('2d').drawImage(video,0,0);
+      const {data}=await Tesseract.recognize(c,'eng');
+      const num=(data.text||'').replace(/\D/g,'');
+      if(num) finish(num);
+      else ocrMsg.textContent='No se leyó ningún número. Acercá la cámara y reintentá.';
+    }catch(e){ ocrMsg.textContent='No se pudo leer (¿sin internet?). Escribí el número a mano.'; }
+  };
+
+  // Detección automática de código de barras
+  if(hayBarras){
+    const detector = new BarcodeDetector();
+    (async function loop(){
+      while(!stopped){
+        try{
+          const codes = await detector.detect(video);
+          if(codes.length){ finish(codes[0].rawValue); return; }
+        }catch(e){}
+        await new Promise(r=>setTimeout(r, 300));
+      }
+    })();
+  }
 };
 document.getElementById('ovCart').addEventListener('click',e=>{ if(e.target.id==='ovCart') closeCart(); });
 updateCartBtn();
