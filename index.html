@@ -197,7 +197,13 @@ const MAX_HIST = 15;
 // Pegá acá la URL de tu Web App de Google Apps Script (ver apps-script.gs):
 const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyp9PHww-8zMlz6qobDM_j1seQeKnPNVdYDNiQ1p4jN_SVvkL6jzMXItmhYnyJpJ9GwgA/exec';
 const SHEET_ID = '1cg2fM1xGxzqBOoSv2mC68W3OcsKmNHAgQSthRxkOVDI';
-let ALTAS_KEYS = new Set();   // para no duplicar altas (local + planilla)
+// PIN del dueño para EDITAR / BORRAR (agregar lo puede hacer cualquiera).
+// ⚠️ Cambiá este número por uno tuyo antes de subir.
+const ADMIN_PIN = '2580';
+let isAdmin = getLS('admin', false) === true;
+
+let CATALOG = [];             // catálogo original (productos.json), no se toca
+let OVERRIDES = {};           // codigo -> {accion:'alta'|'edit'|'baja', data:{...}}
 
 let PRODS = [], BYCOD = {}, tasaMensual = TASA_DEFAULT;
 let FAV = getLS('fav_codigos', []);
@@ -238,15 +244,13 @@ document.getElementById('themeBtn').onclick = ()=>{
 fetch('productos.json')
   .then(r=>r.json())
   .then(data=>{
-    PRODS = data;
-    data.forEach(p=>{ if(p.codigo && !(p.codigo in BYCOD)) BYCOD[p.codigo]=p; });
-    ensureCats();
-    loadAltas();   // suma los productos agregados desde la app (local + planilla) y hace render
+    CATALOG = data;
+    loadAltas();   // arma PRODS = catálogo + altas/ediciones/bajas y hace render
   })
   .catch(()=>{ document.getElementById('list').innerHTML =
     '<div class="empty">No se pudo cargar productos.json.<br>Subí el archivo junto a index.html.</div>'; });
 
-/* ===== Productos agregados desde la app ===== */
+/* ===== Altas / ediciones / bajas hechas desde la app ===== */
 function ensureCats(){
   const sel = document.getElementById('cat');
   const have = new Set([...sel.options].map(o=>o.value));
@@ -254,13 +258,39 @@ function ensureCats(){
     if(!have.has(c)){ const o=document.createElement('option'); o.value=c; o.textContent=c; sel.appendChild(o); }
   });
 }
-function mergeAlta(p){
-  if(!p || (!p.codigo && !p.nombre)) return;
-  const key = (p.codigo||'')+'|'+(p.nombre||'')+'|'+(p.categoria||'');
-  if(ALTAS_KEYS.has(key)) return;
-  ALTAS_KEYS.add(key);
-  PRODS.push(p);
-  if(p.codigo && !(p.codigo in BYCOD)) BYCOD[p.codigo]=p;
+// Registra un cambio (el último por código gana)
+function setOv(a){
+  if(!a || !a.codigo) return;
+  OVERRIDES[a.codigo] = {
+    accion: a.accion || 'alta',
+    data: {
+      nombre: a.nombre, categoria: a.categoria, precio_lista: a.precio_lista,
+      talles: (a.talles && a.talles.length) ? a.talles : [{talle:'Único', precio:a.precio_lista}]
+    }
+  };
+}
+// Reconstruye PRODS desde el catálogo aplicando los overrides
+function rebuild(){
+  PRODS = []; BYCOD = {};
+  CATALOG.forEach(p=>{
+    const ov = OVERRIDES[p.codigo];
+    if(ov && ov.accion==='baja') return;                 // producto borrado
+    PRODS.push(ov ? Object.assign({}, p, ov.data) : p);  // editado o tal cual
+  });
+  Object.keys(OVERRIDES).forEach(cod=>{                   // altas nuevas (no estaban)
+    const ov = OVERRIDES[cod];
+    if(ov.accion==='baja') return;
+    if(!CATALOG.some(p=>p.codigo===cod)) PRODS.push(Object.assign({codigo:cod}, ov.data));
+  });
+  PRODS.forEach(p=>{ if(p.codigo && !(p.codigo in BYCOD)) BYCOD[p.codigo]=p; });
+  ensureCats(); render();
+}
+// Aplica primero la planilla (de todos) y al final las locales (recién hechas, ganan)
+function applyAll(remoteRows){
+  OVERRIDES = {};
+  remoteRows.forEach(setOv);
+  getLS('altas_local', []).forEach(setOv);
+  rebuild();
 }
 // Parser CSV simple (gviz devuelve campos con comillas para JSON con comas)
 function parseCSV(text){
@@ -281,10 +311,7 @@ function parseCSV(text){
   return rows;
 }
 function loadAltas(){
-  // 1) locales (se ven al instante y sin internet)
-  getLS('altas_local', []).forEach(mergeAlta);
-  ensureCats(); render();
-  // 2) de la planilla (las que cargó cualquier aparato)
+  applyAll([]);   // instantáneo: solo cambios locales
   const url = 'https://docs.google.com/spreadsheets/d/'+SHEET_ID+
     '/gviz/tq?tqx=out:csv&sheet=AltasApp&t='+Date.now();
   fetch(url, {cache:'no-store'})
@@ -294,20 +321,34 @@ function loadAltas(){
       if(rows.length < 2) return;
       const head = rows[0].map(h=>h.trim().toLowerCase());
       const ci = {}; head.forEach((h,idx)=>ci[h]=idx);
+      const remote = [];
       for(let r=1; r<rows.length; r++){
         const row = rows[r];
         const cod = (row[ci['codigo']]||'').trim();
-        const nom = (row[ci['nombre']]||'').trim();
-        if(!cod && !nom) continue;
+        if(!cod) continue;
         let talles=[];
         try{ talles = JSON.parse(row[ci['talles_json']]||'[]'); }catch(e){}
         const pl = parseFloat(row[ci['precio_lista']]) || (talles[0] && talles[0].precio) || 0;
-        mergeAlta({codigo:cod, nombre:nom, categoria:(row[ci['categoria']]||'').trim(),
-          precio_lista:pl, talles: talles.length?talles:[{talle:'Único', precio:pl}]});
+        remote.push({
+          accion: ci['accion']!=null ? ((row[ci['accion']]||'alta').trim() || 'alta') : 'alta',
+          codigo: cod, nombre: (row[ci['nombre']]||'').trim(),
+          categoria: (row[ci['categoria']]||'').trim(), precio_lista: pl, talles: talles
+        });
       }
-      ensureCats(); render();
+      applyAll(remote);   // planilla + locales
     })
     .catch(()=>{});
+}
+// Guarda un cambio local y lo envía a la planilla
+function pushCambio(a){
+  const locals = getLS('altas_local', []);
+  locals.push(a); setLS('altas_local', locals);
+  setOv(a); rebuild();
+  if(SCRIPT_URL){
+    return fetch(SCRIPT_URL, {method:'POST', mode:'no-cors',
+      headers:{'Content-Type':'text/plain;charset=utf-8'}, body: JSON.stringify(a)});
+  }
+  return Promise.reject('sin SCRIPT_URL');
 }
 
 /* ===== Aviso de aumentos (avisos.json) =====
@@ -593,9 +634,17 @@ function openHelp(){
     </div>
     <div class="label">Agregar producto ➕</div>
     <div class="note" style="text-align:left">
-      Cargá un producto nuevo (categoría, código, nombre y precios por talle).
-      Se guarda en este aparato al instante y se sincroniza con la planilla,
+      Cualquiera puede cargar un producto nuevo (categoría, código, nombre y precios
+      por talle). Se guarda al instante en este aparato y se sincroniza con la planilla,
       así aparece también en los otros aparatos.
+    </div>
+    <div class="label">Editar / borrar (dueño) 🔒</div>
+    <div class="note" style="text-align:left">
+      Solo el dueño, con PIN, puede <b>editar</b> o <b>borrar</b> productos.
+      Activá el modo dueño abajo; al abrir un producto vas a ver "✏️ Editar" y "🗑 Borrar".
+    </div>
+    <div style="text-align:center; margin-top:6px">
+      <button class="fbtn" id="admToggle">${isAdmin?'🔓 Salir del modo dueño':'🔒 Activar modo dueño'}</button>
     </div>
     <div class="label">Carrito 🛒</div>
     <div class="note" style="text-align:left">
@@ -610,32 +659,51 @@ function openHelp(){
     </div>`;
   document.getElementById('ov').classList.add('open');
   history.pushState({detalle:1}, '');
+  const at = document.getElementById('admToggle');
+  if(at) at.onclick = ()=>{
+    if(isAdmin){ salirAdmin(); }
+    else if(!pedirAdmin()) return;
+    at.textContent = isAdmin ? '🔓 Salir del modo dueño' : '🔒 Activar modo dueño';
+  };
 }
 document.getElementById('helpBtn').onclick = openHelp;
 
-/* ===== Agregar producto ===== */
-function openAddProduct(){
+/* ===== Modo dueño (PIN) ===== */
+function pedirAdmin(){
+  if(isAdmin) return true;
+  const pin = prompt('PIN del dueño para editar:');
+  if(pin === null) return false;
+  if(pin === ADMIN_PIN){ isAdmin = true; setLS('admin', true); return true; }
+  alert('PIN incorrecto.');
+  return false;
+}
+function salirAdmin(){ isAdmin = false; setLS('admin', false); }
+
+/* ===== Agregar / Editar producto ===== */
+function openAddProduct(edit){
+  // edit = producto a editar (objeto) o nada para uno nuevo
   const cats = [...new Set(PRODS.map(p=>p.categoria).filter(Boolean))].sort();
   const inS = 'border:1px solid var(--line); background:var(--card); color:var(--text); border-radius:8px; padding:9px; font-size:14px';
+  const esEdit = !!edit;
   document.getElementById('sheet').innerHTML = `
     <div class="topbtns"><button class="backbtn" onclick="closeDetail()">← Atrás</button></div>
-    <h2>➕ Agregar producto</h2>
+    <h2>${esEdit?'✏️ Editar producto':'➕ Agregar producto'}</h2>
     <div class="scat">Se guarda en este aparato y se sincroniza con la planilla.</div>
     <div class="label">Categoría</div>
     <select id="apCat" style="width:100%">
-      ${cats.map(c=>`<option>${esc(c)}</option>`).join('')}
+      ${cats.map(c=>`<option ${esEdit&&c===edit.categoria?'selected':''}>${esc(c)}</option>`).join('')}
       <option value="__new">➕ Nueva categoría…</option>
     </select>
     <input id="apCatNew" class="search" placeholder="Nombre de la nueva categoría" style="margin-top:8px; display:none">
     <div class="label">Código</div>
-    <input id="apCod" class="search" placeholder="Ej: 12345XXX" autocomplete="off">
+    <input id="apCod" class="search" placeholder="Ej: 12345XXX" autocomplete="off" value="${esEdit?esc(edit.codigo):''}" ${esEdit?'readonly':''}>
     <div class="label">Nombre</div>
-    <input id="apNom" class="search" placeholder="Ej: TAVERNITI BUZO" autocomplete="off">
+    <input id="apNom" class="search" placeholder="Ej: TAVERNITI BUZO" autocomplete="off" value="${esEdit?esc(edit.nombre):''}">
     <div class="label">Talles y precios</div>
     <div id="apTalles"></div>
     <button id="apAddRow" class="cclear" style="margin:6px auto 0">+ Agregar talle</button>
     <div id="apMsg" class="note"></div>
-    <button id="apSave" class="addcart" style="margin-top:8px">💾 Guardar producto</button>`;
+    <button id="apSave" class="addcart" style="margin-top:8px">💾 ${esEdit?'Guardar cambios':'Guardar producto'}</button>`;
   document.getElementById('ov').classList.add('open');
   history.pushState({detalle:1}, '');
   const cont = document.getElementById('apTalles');
@@ -645,15 +713,16 @@ function openAddProduct(){
       <input class="apP" type="number" placeholder="Precio" value="${precio||''}" style="width:108px; margin-left:6px; ${inS}">`;
     cont.appendChild(div);
   }
-  addRow('Único','');
+  if(esEdit && edit.talles && edit.talles.length) edit.talles.forEach(t=>addRow(t.talle, t.precio));
+  else addRow('Único','');
   document.getElementById('apAddRow').onclick = ()=> addRow('','');
   const catSel = document.getElementById('apCat');
   catSel.onchange = ()=>{ document.getElementById('apCatNew').style.display = catSel.value==='__new' ? 'block' : 'none'; };
-  document.getElementById('apSave').onclick = saveNewProduct;
+  document.getElementById('apSave').onclick = ()=> guardarProducto(esEdit);
 }
-document.getElementById('addBtn').onclick = openAddProduct;
+document.getElementById('addBtn').onclick = ()=> openAddProduct();
 
-function saveNewProduct(){
+function guardarProducto(esEdit){
   const msg = document.getElementById('apMsg');
   const catSel = document.getElementById('apCat');
   const categoria = catSel.value==='__new' ? document.getElementById('apCatNew').value.trim() : catSel.value;
@@ -669,21 +738,24 @@ function saveNewProduct(){
   if(!nombre){ msg.textContent='Falta el nombre.'; return; }
   if(!categoria){ msg.textContent='Falta la categoría.'; return; }
   if(!talles.length){ msg.textContent='Cargá al menos un precio.'; return; }
-  const prod = {codigo, nombre, categoria, precio_lista: talles[0].precio, talles};
-  // guardar local (instantáneo + offline)
-  const locals = getLS('altas_local', []); locals.push(prod); setLS('altas_local', locals);
-  mergeAlta(prod); ensureCats(); render();
-  // sincronizar con la planilla
-  if(SCRIPT_URL){
-    msg.textContent='Guardando…';
-    fetch(SCRIPT_URL, {method:'POST', mode:'no-cors',
-      headers:{'Content-Type':'text/plain;charset=utf-8'}, body: JSON.stringify(prod)})
-      .then(()=>{ msg.textContent='✓ Guardado'; setTimeout(closeDetail, 700); })
-      .catch(()=>{ msg.textContent='Guardado en este aparato. No se sincronizó (¿sin internet?).'; });
-  } else {
-    msg.textContent='Guardado en este aparato. (Falta configurar SCRIPT_URL para sincronizar.)';
-    setTimeout(closeDetail, 1100);
-  }
+  // editar requiere PIN; agregar no
+  if(esEdit && !pedirAdmin()){ msg.textContent='Necesitás el PIN del dueño para editar.'; return; }
+  const a = {accion: esEdit?'edit':'alta', codigo, nombre, categoria, precio_lista: talles[0].precio, talles};
+  msg.textContent='Guardando…';
+  pushCambio(a)
+    .then(()=>{ msg.textContent='✓ Guardado'; setTimeout(closeDetail, 700); })
+    .catch(()=>{ msg.textContent = SCRIPT_URL
+      ? 'Guardado en este aparato. No se sincronizó (¿sin internet?).'
+      : 'Guardado en este aparato. (Falta configurar SCRIPT_URL.)'; });
+}
+
+function borrarProducto(cod){
+  const p = BYCOD[cod]; if(!p) return;
+  if(!pedirAdmin()) return;
+  if(!confirm('¿Borrar "'+(p.nombre||cod)+'"?')) return;
+  pushCambio({accion:'baja', codigo:cod, nombre:p.nombre, categoria:p.categoria,
+    precio_lista:p.precio_lista, talles:p.talles}).catch(()=>{});
+  closeDetail();
 }
 
 /* ===== Escaneo de código de barras =====
@@ -955,7 +1027,13 @@ function drawDetail(){
       <input id="tasa" type="number" value="${tasaMensual}" min="0" step="0.5"> %</div>
     <div class="note">Cuotas con <b>interés directo</b> (simple):
       recargo = interés mensual × cantidad de cuotas.<br>
-      Cambiá el % arriba si tu tasa cambió.</div>`;
+      Cambiá el % arriba si tu tasa cambió.</div>
+    ${isAdmin ? `<div style="display:flex; gap:8px; margin-top:14px">
+      <button class="addcart" style="margin:0; flex:1; background:var(--accent); color:#03283a"
+        onclick="openAddProduct(curProd)">✏️ Editar</button>
+      <button class="addcart" style="margin:0; flex:1; background:#ef4444; color:#fff"
+        onclick="borrarProducto('${esc(p.codigo)}')">🗑 Borrar</button>
+    </div>` : ''}`;
 
   [...document.querySelectorAll('.talle')].forEach(b=>
     b.onclick=()=>{ curTalle=+b.dataset.t; drawDetail(); });
