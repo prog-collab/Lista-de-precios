@@ -197,7 +197,7 @@ const MAX_HIST = 15;
 // Pegá acá la URL de tu Web App de Google Apps Script (ver apps-script.gs):
 const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyp9PHww-8zMlz6qobDM_j1seQeKnPNVdYDNiQ1p4jN_SVvkL6jzMXItmhYnyJpJ9GwgA/exec';
 const SHEET_ID = '1cg2fM1xGxzqBOoSv2mC68W3OcsKmNHAgQSthRxkOVDI';
-// PIN del dueño para EDITAR / BORRAR (agregar lo puede hacer cualquiera).
+// PIN del editor para EDITAR / BORRAR (agregar lo puede hacer cualquiera).
 // ⚠️ Cambiá este número por uno tuyo antes de subir.
 const ADMIN_PIN = '2580';
 let isAdmin = getLS('admin', false) === true;
@@ -638,13 +638,13 @@ function openHelp(){
       por talle). Se guarda al instante en este aparato y se sincroniza con la planilla,
       así aparece también en los otros aparatos.
     </div>
-    <div class="label">Editar / borrar (dueño) 🔒</div>
+    <div class="label">Editar / borrar (modo editor) 🔒</div>
     <div class="note" style="text-align:left">
-      Solo el dueño, con PIN, puede <b>editar</b> o <b>borrar</b> productos.
-      Activá el modo dueño abajo; al abrir un producto vas a ver "✏️ Editar" y "🗑 Borrar".
+      Solo el editor, con PIN, puede <b>editar</b> o <b>borrar</b> productos.
+      Activá el modo editor abajo; al abrir un producto vas a ver "✏️ Editar" y "🗑 Borrar".
     </div>
     <div style="text-align:center; margin-top:6px">
-      <button class="fbtn" id="admToggle">${isAdmin?'🔓 Salir del modo dueño':'🔒 Activar modo dueño'}</button>
+      <button class="fbtn" id="admToggle">${isAdmin?'🔓 Salir del modo editor':'🔒 Activar modo editor'}</button>
     </div>
     <div class="label">Carrito 🛒</div>
     <div class="note" style="text-align:left">
@@ -663,7 +663,7 @@ function openHelp(){
   if(at) at.onclick = ()=>{
     if(isAdmin){ salirAdmin(); }
     else if(!pedirAdmin()) return;
-    at.textContent = isAdmin ? '🔓 Salir del modo dueño' : '🔒 Activar modo dueño';
+    at.textContent = isAdmin ? '🔓 Salir del modo editor' : '🔒 Activar modo editor';
   };
 }
 document.getElementById('helpBtn').onclick = openHelp;
@@ -671,7 +671,7 @@ document.getElementById('helpBtn').onclick = openHelp;
 /* ===== Modo dueño (PIN) ===== */
 function pedirAdmin(){
   if(isAdmin) return true;
-  const pin = prompt('PIN del dueño para editar:');
+  const pin = prompt('PIN del editor:');
   if(pin === null) return false;
   if(pin === ADMIN_PIN){ isAdmin = true; setLS('admin', true); return true; }
   alert('PIN incorrecto.');
@@ -739,7 +739,7 @@ function guardarProducto(esEdit){
   if(!categoria){ msg.textContent='Falta la categoría.'; return; }
   if(!talles.length){ msg.textContent='Cargá al menos un precio.'; return; }
   // editar requiere PIN; agregar no
-  if(esEdit && !pedirAdmin()){ msg.textContent='Necesitás el PIN del dueño para editar.'; return; }
+  if(esEdit && !pedirAdmin()){ msg.textContent='Necesitás el PIN del editor para editar.'; return; }
   const a = {accion: esEdit?'edit':'alta', codigo, nombre, categoria, precio_lista: talles[0].precio, talles};
   msg.textContent='Guardando…';
   pushCambio(a)
