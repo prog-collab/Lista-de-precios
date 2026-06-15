@@ -62,15 +62,11 @@
   .empty{text-align:center; color:var(--muted); padding:34px 20px; line-height:1.6}
   /* modal */
   .overlay{position:fixed; inset:0; background:rgba(0,0,0,.6); display:none;
-    align-items:flex-end; justify-content:center; z-index:50}
+    align-items:flex-start; justify-content:center; z-index:50}
   .overlay.open{display:flex}
-  .sheet{background:var(--bg); width:100%; max-width:520px; max-height:92vh;
-    overflow-y:auto; border-radius:18px 18px 0 0; border-top:1px solid var(--line);
+  .sheet{background:var(--bg); width:100%; max-width:520px; max-height:100vh;
+    overflow-y:auto; border-radius:0 0 18px 18px; border-bottom:1px solid var(--line);
     padding:18px 16px 28px}
-  /* el carrito se ancla arriba */
-  #ovCart{align-items:flex-start}
-  #ovCart .sheet{max-height:100vh; border-radius:0 0 18px 18px;
-    border-top:none; border-bottom:1px solid var(--line)}
   .sheet h2{margin:0 0 2px; font-size:20px; padding-right:8px}
   .sheet .scod{color:var(--accent); font-weight:700; font-size:14px}
   .sheet .scat{color:var(--muted); font-size:13px; margin-bottom:14px}
