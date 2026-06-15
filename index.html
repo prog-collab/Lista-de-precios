@@ -594,7 +594,13 @@ document.getElementById('scanBtn').onclick = async ()=>{
 
   let stopped = false;
   function stop(){ stopped=true; try{ stream.getTracks().forEach(t=>t.stop()); }catch(e){} }
-  function finish(val){ if(stopped) return; stop(); closeDetail(); searchByBarcode(val); }
+  function finish(val){
+    if(stopped) return;
+    stop();                                   // apaga la cámara
+    document.getElementById('ov').classList.remove('open');  // cierra ya, sin depender del historial
+    if(history.state && history.state.detalle) history.back();
+    searchByBarcode(val);
+  }
   document.getElementById('scanClose').onclick = ()=>{ stop(); closeDetail(); };
 
   // Leer número impreso (sin código de barras) con OCR
