@@ -14,6 +14,11 @@
     --muted:#94a3b8; --accent:#38bdf8; --accent2:#22c55e; --line:#334155;
     --warn:#fbbf24; --star:#facc15;
   }
+  body.light{
+    --bg:#f1f5f9; --card:#ffffff; --card2:#e2e8f0; --text:#0f172a;
+    --muted:#64748b; --accent:#0284c7; --accent2:#16a34a; --line:#cbd5e1;
+    --warn:#b45309; --star:#ca8a04;
+  }
   *{box-sizing:border-box; -webkit-tap-highlight-color:transparent}
   body{margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
     background:var(--bg); color:var(--text); padding-bottom:40px}
@@ -134,11 +139,21 @@
     <button id="fMinus" class="fbtn" title="Achicar letra">A−</button>
     <button id="fPlus" class="fbtn" title="Agrandar letra">A+</button>
     <button id="cartBtn" class="fbtn" title="Carrito">🛒<span id="cartN" class="cbadge" style="display:none"></span></button>
+    <button id="themeBtn" class="fbtn" title="Cambiar tema">🌙</button>
     <button id="helpBtn" class="fbtn" title="Ayuda">❓</button>
   </h1>
-  <input id="q" class="search" placeholder="Buscar por código, nombre…" autocomplete="off">
+  <div class="filters" style="margin-top:0">
+    <input id="q" class="search" placeholder="Buscar por código, nombre…" autocomplete="off" style="flex:1">
+    <button id="scanBtn" class="fbtn" title="Escanear código de barras" style="font-size:18px; padding:11px 13px">📷</button>
+  </div>
   <div class="filters">
     <select id="cat"><option value="">Todas las categorías</option></select>
+    <select id="sort">
+      <option value="cod">Ordenar: código</option>
+      <option value="nombre">Ordenar: nombre</option>
+      <option value="precioAsc">Ordenar: precio ↑</option>
+      <option value="precioDesc">Ordenar: precio ↓</option>
+    </select>
   </div>
   <div class="count" id="count"></div>
 </header>
@@ -185,6 +200,18 @@ document.getElementById('fMinus').onclick = ()=>{
 document.getElementById('fPlus').onclick = ()=>{
   fontScale = Math.min(1.6, Math.round((fontScale+0.1)*10)/10);
   setLS('font_scale', fontScale); applyScale();
+};
+
+// Tema claro / oscuro
+let theme = getLS('theme', 'dark');
+function applyTheme(){
+  document.body.classList.toggle('light', theme==='light');
+  document.getElementById('themeBtn').textContent = theme==='light' ? '☀️' : '🌙';
+}
+applyTheme();
+document.getElementById('themeBtn').onclick = ()=>{
+  theme = theme==='light' ? 'dark' : 'light';
+  setLS('theme', theme); applyTheme();
 };
 
 fetch('productos.json')
@@ -256,8 +283,11 @@ function checkNotifs(){
 
 const qEl = document.getElementById('q');
 const catEl = document.getElementById('cat');
+const sortEl = document.getElementById('sort');
 qEl.addEventListener('input', render);
 catEl.addEventListener('change', render);
+sortEl.addEventListener('change', ()=>{ setLS('sort_order', sortEl.value); render(); });
+sortEl.value = getLS('sort_order', 'cod');
 
 function isFav(cod){ return FAV.includes(cod); }
 function toggleFav(cod){
@@ -326,7 +356,11 @@ function render(){
     const hay = norm(p.codigo+' '+p.nombre+' '+p.categoria);
     return terms.every(t=>hay.includes(t));
   });
+  const sortMode = sortEl.value;
   filtered.sort((a,b)=>{
+    if(sortMode==='nombre') return (a.nombre||'').localeCompare(b.nombre||'');
+    if(sortMode==='precioAsc') return a.precio_lista - b.precio_lista;
+    if(sortMode==='precioDesc') return b.precio_lista - a.precio_lista;
     const na=parseInt(a.codigo,10), nb=parseInt(b.codigo,10);
     if(!isNaN(na)&&!isNaN(nb)&&na!==nb) return na-nb;
     return (a.codigo||'').localeCompare(b.codigo||'');
@@ -439,6 +473,52 @@ function openHelp(){
   history.pushState({detalle:1}, '');
 }
 document.getElementById('helpBtn').onclick = openHelp;
+
+/* ===== Escaneo de código de barras ===== */
+document.getElementById('scanBtn').onclick = async ()=>{
+  if(!('BarcodeDetector' in window)){
+    alert('Tu navegador no soporta el escaneo de códigos. Probá escribir el código manualmente.');
+    return;
+  }
+  let stream;
+  try{
+    stream = await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}});
+  }catch(e){
+    alert('No se pudo acceder a la cámara.');
+    return;
+  }
+  const video = document.createElement('video');
+  video.srcObject = stream; video.setAttribute('playsinline','');
+  video.style = 'width:100%; border-radius:12px; margin-top:6px';
+  document.getElementById('sheet').innerHTML = `
+    <div class="topbtns"><button class="backbtn" id="scanClose">✕ Cerrar</button></div>
+    <h2>📷 Escanear código</h2>
+    <div class="scat">Apuntá la cámara al código de barras</div>`;
+  document.getElementById('sheet').appendChild(video);
+  document.getElementById('ov').classList.add('open');
+  history.pushState({detalle:1}, '');
+  video.play();
+  const detector = new BarcodeDetector();
+  let stopped = false;
+  document.getElementById('scanClose').onclick = ()=>{ stopped=true; stream.getTracks().forEach(t=>t.stop()); closeDetail(); };
+  (async function loop(){
+    while(!stopped){
+      try{
+        const codes = await detector.detect(video);
+        if(codes.length){
+          const val = codes[0].rawValue;
+          stopped = true;
+          stream.getTracks().forEach(t=>t.stop());
+          closeDetail();
+          qEl.value = val;
+          render();
+          return;
+        }
+      }catch(e){}
+      await new Promise(r=>setTimeout(r, 300));
+    }
+  })();
+};
 document.getElementById('ovCart').addEventListener('click',e=>{ if(e.target.id==='ovCart') closeCart(); });
 updateCartBtn();
 
@@ -502,6 +582,11 @@ function drawCart(){
        <div class="b">${fmt(total*(1-promoSel/100))}</div></div>
     <div class="cfg">Interés mensual:
       <input id="tasaC" type="number" value="${tasaMensual}" min="0" step="0.5"> %</div>
+    <div class="label">Calculadora de cambio (contado efectivo)</div>
+    <div class="row"><div class="a">Recibo<br>
+        <input id="recibido" type="number" min="0" step="100" placeholder="$"></div>
+       <div class="b" id="vuelto">—</div></div>
+    <button class="addcart" id="shareBtn" style="background:var(--accent); color:#03283a; margin-top:10px">📤 Compartir presupuesto</button>
     <button class="cclear" id="clrCart">Vaciar carrito</button>`;
 
   const tasaEl=document.getElementById('tasaC');
@@ -511,6 +596,33 @@ function drawCart(){
   document.getElementById('clrCart').onclick=()=>{
     if(confirm('¿Vaciar el carrito?')){ CART=[]; saveCart(); drawCart(); }
   };
+  const recEl=document.getElementById('recibido');
+  recEl.oninput=()=>{
+    const rec=parseFloat(recEl.value);
+    const vEl=document.getElementById('vuelto');
+    if(isNaN(rec)){ vEl.textContent='—'; return; }
+    const vuelto = rec - contado;
+    vEl.innerHTML = vuelto>=0 ? fmt(vuelto)+'<small>vuelto</small>' : '<span style="color:var(--warn)">Falta '+fmt(-vuelto)+'</span>';
+  };
+  document.getElementById('shareBtn').onclick = ()=> shareCart(total, contado, tres, nItems, itemsHtmlText());
+}
+
+function itemsHtmlText(){
+  return CART.map(i=>`• ${i.nombre||'(sin nombre)'} (${i.cod||'—'}, talle ${i.talle}) x${i.qty} = ${fmt(i.precio*i.qty)}`).join('\n');
+}
+
+function shareCart(total, contado, tres, nItems, itemsTxt){
+  const texto = `🛒 Presupuesto (${nItems} artículo${nItems!==1?'s':''})\n\n${itemsTxt}\n\n`+
+    `TOTAL: ${fmt(total)}\n`+
+    `Contado efectivo (−${DESC_CONTADO}%): ${fmt(contado)}\n`+
+    `3 cuotas sin interés: ${fmt(tres)} c/u`;
+  if(navigator.share){
+    navigator.share({title:'Presupuesto', text:texto}).catch(()=>{});
+  } else if(navigator.clipboard){
+    navigator.clipboard.writeText(texto).then(()=>alert('Presupuesto copiado al portapapeles.'));
+  } else {
+    alert(texto);
+  }
 }
 
 document.getElementById('sheetCart').addEventListener('click', e=>{
