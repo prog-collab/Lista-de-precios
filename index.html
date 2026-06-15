@@ -545,7 +545,7 @@ document.getElementById('helpBtn').onclick = openHelp;
    con la primera variante que tenga resultados. */
 function searchByBarcode(raw){
   const digits = (raw||'').replace(/\D/g,'');
-  const tries = [...new Set([digits, digits.slice(0,8), digits.slice(0,5), digits.slice(0,4)])].filter(Boolean);
+  const tries = [...new Set([digits, digits.slice(0,8), digits.slice(0,5)])].filter(Boolean);
   for(const t of tries){
     const nt = norm(t);
     if(PRODS.some(p=>norm(p.codigo).includes(nt))){ qEl.value = t; render(); return; }
