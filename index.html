@@ -210,7 +210,7 @@ const MAX_HIST = 15;
 // Pegá acá la URL de tu Web App de Google Apps Script (ver apps-script.gs):
 const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyp9PHww-8zMlz6qobDM_j1seQeKnPNVdYDNiQ1p4jN_SVvkL6jzMXItmhYnyJpJ9GwgA/exec';
 const SHEET_ID = '1cg2fM1xGxzqBOoSv2mC68W3OcsKmNHAgQSthRxkOVDI';
-// PIN del editor para EDITAR / BORRAR (agregar lo puede hacer cualquiera).
+// PIN del editor para AGREGAR / EDITAR / BORRAR.
 // ⚠️ Cambiá este número por uno tuyo antes de subir.
 const ADMIN_PIN = '2580';
 let isAdmin = getLS('admin', false) === true;
@@ -707,15 +707,11 @@ function openHelp(){
       También podés ver promociones bancarias eligiendo el % de descuento.
       "🛒 Agregar al carrito" suma ese talle al carrito.
     </div>
-    <div class="label">Agregar producto ➕</div>
+    <div class="label">Agregar / editar / borrar (modo editor) 🔒</div>
     <div class="note" style="text-align:left">
-      Cualquiera puede cargar un producto nuevo (categoría, código, nombre y precios
-      por talle). Se guarda al instante en este aparato y se sincroniza con la planilla,
-      así aparece también en los otros aparatos.
-    </div>
-    <div class="label">Editar / borrar (modo editor) 🔒</div>
-    <div class="note" style="text-align:left">
-      Solo el editor, con PIN, puede <b>editar</b> o <b>borrar</b> productos.
+      Solo el editor, con PIN, puede <b>agregar</b>, <b>editar</b> o <b>borrar</b> productos.
+      Al agregar hay una calculadora informativa: cargás el costo y un coeficiente
+      (default 2,42) y te sugiere el precio de venta; ese cálculo no queda guardado.
       Activá el modo editor abajo; al abrir un producto vas a ver "✏️ Editar" y "🗑 Borrar".
     </div>
     <div style="text-align:center; margin-top:6px">
@@ -774,6 +770,13 @@ function openAddProduct(edit){
     <input id="apCod" class="search" placeholder="Ej: 12345XXX" autocomplete="off" value="${esEdit?esc(edit.codigo):''}" ${esEdit?'readonly':''}>
     <div class="label">Nombre</div>
     <input id="apNom" class="search" placeholder="Ej: TAVERNITI BUZO" autocomplete="off" value="${esEdit?esc(edit.nombre):''}">
+    <div class="label">🧮 Calculadora de precio (informativa)</div>
+    <div class="scat">No se guarda. Multiplica el costo por el coeficiente.</div>
+    <div class="row">
+      <input id="apCosto" type="number" placeholder="Precio de costo" style="flex:1; ${inS}">
+      <input id="apCoef" type="number" step="0.01" value="2.42" title="Coeficiente" style="width:80px; margin-left:6px; ${inS}">
+    </div>
+    <div id="apCalc" class="note"></div>
     <div class="label">Talles y precios</div>
     <div id="apTalles"></div>
     <button id="apAddRow" class="cclear" style="margin:6px auto 0">+ Agregar talle</button>
@@ -791,11 +794,23 @@ function openAddProduct(edit){
   if(esEdit && edit.talles && edit.talles.length) edit.talles.forEach(t=>addRow(t.talle, t.precio));
   else addRow('Único','');
   document.getElementById('apAddRow').onclick = ()=> addRow('','');
+  const costoEl = document.getElementById('apCosto'), coefEl = document.getElementById('apCoef'), calcEl = document.getElementById('apCalc');
+  function recalc(){
+    const c = parseFloat(costoEl.value), k = parseFloat(coefEl.value);
+    if(!isNaN(c) && c>0 && !isNaN(k) && k>0){
+      const v = Math.round(c*k/100)*100;
+      calcEl.textContent = '→ Precio de venta sugerido: $'+v.toLocaleString('es-AR');
+    } else calcEl.textContent = '';
+  }
+  costoEl.oninput = recalc; coefEl.oninput = recalc;
   const catSel = document.getElementById('apCat');
   catSel.onchange = ()=>{ document.getElementById('apCatNew').style.display = catSel.value==='__new' ? 'block' : 'none'; };
   document.getElementById('apSave').onclick = ()=> guardarProducto(esEdit);
 }
-document.getElementById('addBtn').onclick = ()=> openAddProduct();
+document.getElementById('addBtn').onclick = ()=>{
+  if(!pedirAdmin()){ alert('Necesitás el PIN del editor para agregar productos.'); return; }
+  openAddProduct();
+};
 
 function guardarProducto(esEdit){
   const msg = document.getElementById('apMsg');
@@ -813,8 +828,8 @@ function guardarProducto(esEdit){
   if(!nombre){ msg.textContent='Falta el nombre.'; return; }
   if(!categoria){ msg.textContent='Falta la categoría.'; return; }
   if(!talles.length){ msg.textContent='Cargá al menos un precio.'; return; }
-  // editar requiere PIN; agregar no
-  if(esEdit && !pedirAdmin()){ msg.textContent='Necesitás el PIN del editor para editar.'; return; }
+  // agregar y editar requieren PIN del editor
+  if(!pedirAdmin()){ msg.textContent='Necesitás el PIN del editor.'; return; }
   const a = {accion: esEdit?'edit':'alta', codigo, nombre, categoria, precio_lista: talles[0].precio, talles};
   msg.textContent='Guardando…';
   pushCambio(a)
