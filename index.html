@@ -799,7 +799,9 @@ function openAddProduct(edit){
     const c = parseFloat(costoEl.value), k = parseFloat(coefEl.value);
     if(!isNaN(c) && c>0 && !isNaN(k) && k>0){
       const v = Math.round(c*k/100)*100;
-      calcEl.textContent = '→ Precio de venta sugerido: $'+v.toLocaleString('es-AR');
+      calcEl.textContent = '→ Precio de venta: $'+v.toLocaleString('es-AR');
+      const primP = document.querySelector('#apTalles .apP');
+      if(primP) primP.value = v;
     } else calcEl.textContent = '';
   }
   costoEl.oninput = recalc; coefEl.oninput = recalc;
