@@ -221,7 +221,7 @@ let isAdmin = getLS('admin', false) === true;
 let CATALOG = [];             // catálogo original (productos.json), no se toca
 let OVERRIDES = {};           // codigo -> {accion:'alta'|'edit'|'baja', data:{...}}
 
-let PRODS = [], BYCOD = {}, tasaMensual = TASA_DEFAULT;
+let PRODS = [], BYCOD = {}, tasaMensual = getLS('tasa_mensual', TASA_DEFAULT);
 let FAV = getLS('fav_codigos', []);
 let HIST = getLS('hist_codigos', []);
 let CART = getLS('carrito', []);   // {cod, nombre, talle, precio, qty}
@@ -265,6 +265,8 @@ fetch('productos.json')
   })
   .catch(()=>{ document.getElementById('list').innerHTML =
     '<div class="empty">No se pudo cargar productos.json.<br>Subí el archivo junto a index.html.</div>'; });
+
+loadConfig();   // interés mensual compartido entre todos los teléfonos
 
 /* ===== Altas / ediciones / bajas hechas desde la app ===== */
 function ensureCats(){
@@ -363,6 +365,39 @@ function pushCambio(a){
   if(SCRIPT_URL){
     return fetch(SCRIPT_URL, {method:'POST', mode:'no-cors',
       headers:{'Content-Type':'text/plain;charset=utf-8'}, body: JSON.stringify(a)});
+  }
+  return Promise.reject('sin SCRIPT_URL');
+}
+
+/* ===== Configuración compartida (pestaña Config de la planilla) =====
+   Guarda valores que deben ser iguales en todos los teléfonos, ej. el
+   interés mensual. Se lee al abrir la app; el editor lo cambia y se
+   sincroniza con la planilla por el mismo Apps Script. */
+function loadConfig(){
+  const url = 'https://docs.google.com/spreadsheets/d/'+SHEET_ID+
+    '/gviz/tq?tqx=out:csv&sheet=Config&t='+Date.now();
+  fetch(url, {cache:'no-store'})
+    .then(r=>r.text())
+    .then(txt=>{
+      const rows = parseCSV(txt);
+      if(rows.length < 2) return;
+      const head = rows[0].map(h=>h.trim().toLowerCase());
+      const ci = {}; head.forEach((h,idx)=>ci[h]=idx);
+      for(let r=1; r<rows.length; r++){
+        const k = (rows[r][ci['clave']]||'').trim();
+        const v = (rows[r][ci['valor']]||'').trim();
+        if(k==='tasa_mensual'){ const n=parseFloat(v); if(!isNaN(n)){ tasaMensual=n; setLS('tasa_mensual', n); } }
+      }
+    })
+    .catch(()=>{});
+}
+// Guarda un valor de configuración local y lo envía a la planilla
+function pushConfig(clave, valor){
+  setLS(clave, valor);
+  if(SCRIPT_URL){
+    return fetch(SCRIPT_URL, {method:'POST', mode:'no-cors',
+      headers:{'Content-Type':'text/plain;charset=utf-8'},
+      body: JSON.stringify({tipo:'config', clave, valor})});
   }
   return Promise.reject('sin SCRIPT_URL');
 }
@@ -1043,14 +1078,14 @@ function drawCart(){
         <select id="promoPctC">${PROMOS.map(d=>
           `<option value="${d}" ${d===promoSel?'selected':''}>−${d}%</option>`).join('')}</select></div>
        <div class="b">${fmt(total*(1-promoSel/100))}</div></div>
-    <div class="cfg">Interés mensual:
-      <input id="tasaC" type="number" value="${tasaMensual}" min="0" step="0.5"> %</div>
+    ${isAdmin ? `<div class="cfg">Interés mensual:
+      <input id="tasaC" type="number" value="${tasaMensual}" min="0" step="0.5"> %</div>` : ''}
     <button class="addcart" id="shareBtn" style="background:var(--accent); color:#03283a; margin-top:10px">📤 Compartir presupuesto</button>
     <button class="addcart" id="resumenBtn" style="background:var(--accent); color:#03283a">🧾 Compartir resumen</button>
     <button class="cclear" id="clrCart">Vaciar carrito</button>`;
 
   const tasaEl=document.getElementById('tasaC');
-  if(tasaEl) tasaEl.onchange=()=>{ tasaMensual=parseFloat(tasaEl.value)||0; drawCart(); };
+  if(tasaEl) tasaEl.onchange=()=>{ tasaMensual=parseFloat(tasaEl.value)||0; pushConfig('tasa_mensual', tasaMensual); drawCart(); };
   const promoEl=document.getElementById('promoPctC');
   if(promoEl) promoEl.onchange=()=>{ promoSel=parseInt(promoEl.value,10)||20; drawCart(); };
   document.getElementById('clrCart').onclick=()=>{
@@ -1238,11 +1273,11 @@ function drawDetail(){
     ${cuotasIntHtml}
     <div class="label">Promociones bancarias</div>
     ${promosHtml}
-    <div class="cfg">Interés mensual:
+    ${isAdmin ? `<div class="cfg">Interés mensual:
       <input id="tasa" type="number" value="${tasaMensual}" min="0" step="0.5"> %</div>
     <div class="note">Cuotas con <b>interés directo</b> (simple):
       recargo = interés mensual × cantidad de cuotas.<br>
-      Cambiá el % arriba si tu tasa cambió.</div>
+      Cambiá el % arriba si tu tasa cambió.</div>` : ''}
     ${isAdmin ? `<div style="display:flex; gap:8px; margin-top:14px">
       <button class="addcart" style="margin:0; flex:1; background:var(--accent); color:#03283a"
         onclick="openAddProduct(curProd)">✏️ Editar</button>
@@ -1253,7 +1288,7 @@ function drawDetail(){
   [...document.querySelectorAll('.talle')].forEach(b=>
     b.onclick=()=>{ curTalle=+b.dataset.t; drawDetail(); });
   const tasaEl=document.getElementById('tasa');
-  if(tasaEl) tasaEl.onchange=()=>{ tasaMensual=parseFloat(tasaEl.value)||0; drawDetail(); };
+  if(tasaEl) tasaEl.onchange=()=>{ tasaMensual=parseFloat(tasaEl.value)||0; pushConfig('tasa_mensual', tasaMensual); drawDetail(); };
   const promoEl=document.getElementById('promoPct');
   if(promoEl) promoEl.onchange=()=>{ promoSel=parseInt(promoEl.value,10)||20; drawDetail(); };
 }
