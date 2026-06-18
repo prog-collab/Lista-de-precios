@@ -1067,7 +1067,9 @@ function formasPago(total){
   const r=tasaMensual/100;
   const contado=total*(1-DESC_CONTADO/100);
   const arr=[
-    {k:'debito', label:'Débito / Transferencia / Crédito 1 pago', monto:total, detalle:''},
+    {k:'debito', label:'Débito', monto:total, detalle:''},
+    {k:'transferencia', label:'Transferencia', monto:total, detalle:''},
+    {k:'credito1', label:'Crédito 1 pago', monto:total, detalle:''},
     {k:'efectivo', label:'Contado efectivo (−'+DESC_CONTADO+'%)', monto:contado, detalle:''},
     {k:'3sin', label:'3 cuotas sin interés', monto:total, detalle:fmt(total/3)+' x3'}
   ];
