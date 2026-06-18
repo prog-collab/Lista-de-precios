@@ -719,7 +719,8 @@ function openHelp(){
     <div class="note" style="text-align:left">
       Suma varios productos y mostrá el total con las mismas opciones de pago
       (contado, cuotas, promos). Sumá/restá cantidades con + / −, quitá un ítem con ✕,
-      o vaciá todo con "Vaciar carrito".
+      o vaciá todo con "Vaciar carrito". Con <b>"Compartir resumen"</b> generás una
+      factura con los productos, la forma de pago y el total, para enviar por texto o imagen.
     </div>
     <div class="label">Avisos 📢</div>
     <div class="note" style="text-align:left">
@@ -1005,11 +1006,8 @@ function drawCart(){
        <div class="b">${fmt(total*(1-promoSel/100))}</div></div>
     <div class="cfg">Interés mensual:
       <input id="tasaC" type="number" value="${tasaMensual}" min="0" step="0.5"> %</div>
-    <div class="label">Calculadora de cambio (contado efectivo)</div>
-    <div class="row"><div class="a">Recibo<br>
-        <input id="recibido" type="number" min="0" step="100" placeholder="$"></div>
-       <div class="b" id="vuelto">—</div></div>
     <button class="addcart" id="shareBtn" style="background:var(--accent); color:#03283a; margin-top:10px">📤 Compartir presupuesto</button>
+    <button class="addcart" id="resumenBtn" style="background:var(--accent); color:#03283a">🧾 Compartir resumen</button>
     <button class="cclear" id="clrCart">Vaciar carrito</button>`;
 
   const tasaEl=document.getElementById('tasaC');
@@ -1019,15 +1017,101 @@ function drawCart(){
   document.getElementById('clrCart').onclick=()=>{
     if(confirm('¿Vaciar el carrito?')){ CART=[]; saveCart(); drawCart(); }
   };
-  const recEl=document.getElementById('recibido');
-  recEl.oninput=()=>{
-    const rec=parseFloat(recEl.value);
-    const vEl=document.getElementById('vuelto');
-    if(isNaN(rec)){ vEl.textContent='—'; return; }
-    const vuelto = rec - contado;
-    vEl.innerHTML = vuelto>=0 ? fmt(vuelto)+'<small>vuelto</small>' : '<span style="color:var(--warn)">Falta '+fmt(-vuelto)+'</span>';
-  };
   document.getElementById('shareBtn').onclick = ()=> shareCart(total, contado, tres, nItems, itemsHtmlText());
+  document.getElementById('resumenBtn').onclick = ()=> drawResumen();
+}
+
+/* ===== Resumen / factura de compra ===== */
+let resumenPago = 'debito';
+
+function formasPago(total){
+  const r=tasaMensual/100;
+  const contado=total*(1-DESC_CONTADO/100);
+  const arr=[
+    {k:'debito', label:'Débito / Transferencia / Crédito 1 pago', monto:total, detalle:''},
+    {k:'efectivo', label:'Contado efectivo (−'+DESC_CONTADO+'%)', monto:contado, detalle:''},
+    {k:'3sin', label:'3 cuotas sin interés', monto:total, detalle:fmt(total/3)+' x3'}
+  ];
+  CUOTAS_INT.forEach(n=>{ const c=cuotaDirecta(total,n,r); arr.push({k:'c'+n, label:n+' cuotas con interés', monto:c*n, detalle:fmt(c)+' x'+n}); });
+  arr.push({k:'promo', label:'Promo banco −'+promoSel+'%', monto:total*(1-promoSel/100), detalle:''});
+  return arr;
+}
+
+function drawResumen(){
+  const sheet=document.getElementById('sheetCart');
+  const total=CART.reduce((s,i)=>s+i.precio*i.qty,0);
+  const formas=formasPago(total);
+  const fp=formas.find(f=>f.k===resumenPago)||formas[0];
+  const fecha=new Date().toLocaleDateString('es-AR');
+  const filas=CART.map(i=>`<tr>
+      <td style="padding:3px 0;vertical-align:top">${i.qty}</td>
+      <td style="padding:3px 6px">${esc(i.nombre)||'(sin nombre)'}<br><span style="color:#777;font-size:11px">${esc(i.cod)||'—'} · talle ${esc(i.talle)}</span></td>
+      <td style="padding:3px 0;text-align:right;vertical-align:top;white-space:nowrap">${fmt(i.precio*i.qty)}</td></tr>`).join('');
+  sheet.innerHTML=`
+    <div class="topbtns"><button class="backbtn" onclick="drawCart()">← Volver al carrito</button></div>
+    <h2>🧾 Resumen de compra</h2>
+    <div class="label">Forma de pago</div>
+    <select id="fpSel" style="width:100%">${formas.map(f=>`<option value="${f.k}" ${f.k===resumenPago?'selected':''}>${f.label} — ${fmt(f.monto)}</option>`).join('')}</select>
+    <div id="factura" style="background:#fff;color:#111;padding:18px;border-radius:10px;margin-top:12px;font-family:'Segoe UI',system-ui,sans-serif">
+      <div style="text-align:center;margin-bottom:8px">
+        <div style="font-size:24px;font-weight:800;letter-spacing:3px">CAMERINO</div>
+        <div style="font-size:12px;color:#555">San Jerónimo 2362, Santa Fe</div>
+        <div style="font-size:12px;color:#555">${fecha}</div>
+      </div>
+      <div style="border-top:1px dashed #bbb;margin:8px 0"></div>
+      <table style="width:100%;border-collapse:collapse;font-size:13px">
+        <thead><tr style="border-bottom:1px solid #ddd;color:#666;font-size:11px;text-transform:uppercase">
+          <th style="text-align:left;padding-bottom:4px">Cant</th><th style="text-align:left;padding-bottom:4px">Producto</th><th style="text-align:right;padding-bottom:4px">Importe</th></tr></thead>
+        <tbody>${filas}</tbody>
+      </table>
+      <div style="border-top:1px dashed #bbb;margin:8px 0"></div>
+      <div style="display:flex;justify-content:space-between;font-size:13px"><span style="color:#555">Forma de pago</span><span style="text-align:right">${fp.label}</span></div>
+      ${fp.detalle?`<div style="text-align:right;font-size:12px;color:#777">${fp.detalle}</div>`:''}
+      <div style="display:flex;justify-content:space-between;align-items:baseline;font-weight:800;font-size:20px;margin-top:8px"><span>TOTAL</span><span>${fmt(fp.monto)}</span></div>
+      <div style="text-align:center;font-size:11px;color:#999;margin-top:12px">¡Gracias por su compra!</div>
+    </div>
+    <button class="addcart" id="resTxt" style="margin-top:12px">📋 Compartir texto</button>
+    <button class="addcart" id="resImg" style="background:var(--accent); color:#03283a">🖼 Compartir imagen</button>`;
+  document.getElementById('fpSel').onchange=e=>{ resumenPago=e.target.value; drawResumen(); };
+  document.getElementById('resTxt').onclick=()=>shareResumenTexto(fp);
+  document.getElementById('resImg').onclick=()=>shareResumenImagen();
+}
+
+function shareResumenTexto(fp){
+  const fecha=new Date().toLocaleDateString('es-AR');
+  const lineas=CART.map(i=>`${i.qty}x ${i.nombre||'(sin nombre)'} (talle ${i.talle}) — ${fmt(i.precio*i.qty)}`).join('\n');
+  const texto=`CAMERINO\nSan Jerónimo 2362, Santa Fe\n${fecha}\n\n${lineas}\n\nForma de pago: ${fp.label}${fp.detalle?' ('+fp.detalle+')':''}\nTOTAL: ${fmt(fp.monto)}\n\n¡Gracias por su compra!`;
+  if(navigator.share){ navigator.share({title:'Resumen de compra', text:texto}).catch(()=>{}); }
+  else if(navigator.clipboard){ navigator.clipboard.writeText(texto).then(()=>alert('Resumen copiado al portapapeles.')); }
+  else { alert(texto); }
+}
+
+function loadHtml2Canvas(){
+  if(window.html2canvas) return Promise.resolve();
+  return new Promise((res,rej)=>{
+    const s=document.createElement('script');
+    s.src='https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js';
+    s.onload=res; s.onerror=rej; document.head.appendChild(s);
+  });
+}
+
+async function shareResumenImagen(){
+  try{ await loadHtml2Canvas(); }
+  catch(e){ alert('No se pudo cargar el generador de imagen (¿sin internet?).'); return; }
+  const node=document.getElementById('factura');
+  let canvas;
+  try{ canvas=await html2canvas(node,{scale:2,backgroundColor:'#ffffff'}); }
+  catch(e){ alert('No se pudo generar la imagen.'); return; }
+  canvas.toBlob(async blob=>{
+    if(!blob){ alert('No se pudo generar la imagen.'); return; }
+    const file=new File([blob],'resumen-camerino.png',{type:'image/png'});
+    if(navigator.canShare && navigator.canShare({files:[file]})){
+      try{ await navigator.share({files:[file], title:'Resumen de compra'}); return; }catch(e){}
+    }
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a'); a.href=url; a.download='resumen-camerino.png'; a.click();
+    setTimeout(()=>URL.revokeObjectURL(url),2000);
+  },'image/png');
 }
 
 function itemsHtmlText(){
