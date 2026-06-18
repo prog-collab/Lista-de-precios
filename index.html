@@ -170,7 +170,10 @@
     </div>
   </h1>
   <div class="filters" style="margin-top:0">
-    <input id="q" class="search" placeholder="Buscar por código, nombre…" autocomplete="off" style="flex:1">
+    <div style="flex:1; position:relative; display:flex">
+      <input id="q" class="search" placeholder="Buscar por código, nombre…" autocomplete="off" style="flex:1; padding-right:34px">
+      <button id="qClear" type="button" title="Borrar búsqueda" style="display:none; position:absolute; right:6px; top:50%; transform:translateY(-50%); border:0; background:transparent; color:var(--text); font-size:18px; line-height:1; cursor:pointer; padding:4px 6px; opacity:.6">✕</button>
+    </div>
     <button id="scanBtn" class="fbtn" title="Escanear código de barras" style="font-size:18px; padding:11px 13px">📷</button>
   </div>
   <div class="filters">
@@ -472,6 +475,38 @@ const qEl = document.getElementById('q');
 const catEl = document.getElementById('cat');
 const sortEl = document.getElementById('sort');
 qEl.addEventListener('input', render);
+
+// Botón ✕ para vaciar el buscador de un toque
+const qClear = document.getElementById('qClear');
+function updQClear(){ qClear.style.display = qEl.value ? 'block' : 'none'; }
+qEl.addEventListener('input', updQClear);
+qClear.addEventListener('click', ()=>{ qEl.value=''; render(); updQClear(); qEl.focus(); });
+
+// Agrega un botón ✕ para vaciar cualquier campo de texto de un toque
+function makeClearable(input){
+  if(!input || input.dataset.clearable || input.readOnly) return;
+  input.dataset.clearable='1';
+  // Conservar el tamaño/posición original del input en el contenedor
+  const oFlex=input.style.flex, oWidth=input.style.width, oML=input.style.marginLeft;
+  const wrap=document.createElement('span');
+  wrap.style.cssText='position:relative; display:flex';
+  if(oFlex || oWidth){
+    if(oFlex) wrap.style.flex = oFlex;
+    if(oWidth) wrap.style.width = oWidth;
+    if(oML) wrap.style.marginLeft = oML;
+  } else { wrap.style.width='100%'; }
+  input.parentNode.insertBefore(wrap, input);
+  wrap.appendChild(input);
+  input.style.flex='1'; input.style.width='100%'; input.style.marginLeft='0'; input.style.paddingRight='30px';
+  const b=document.createElement('button');
+  b.type='button'; b.title='Borrar'; b.textContent='✕';
+  b.style.cssText='position:absolute; right:6px; top:50%; transform:translateY(-50%); border:0; background:transparent; color:var(--text); font-size:16px; line-height:1; cursor:pointer; padding:4px 6px; opacity:.55';
+  wrap.appendChild(b);
+  const upd=()=>{ b.style.display = input.value ? 'block':'none'; };
+  input.addEventListener('input', upd);
+  b.addEventListener('click', ()=>{ input.value=''; input.dispatchEvent(new Event('input',{bubbles:true})); input.focus(); });
+  upd();
+}
 catEl.addEventListener('change', render);
 sortEl.addEventListener('change', ()=>{ setLS('sort_order', sortEl.value); render(); });
 sortEl.value = getLS('sort_order', 'cod');
@@ -807,6 +842,10 @@ function openAddProduct(edit){
   const catSel = document.getElementById('apCat');
   catSel.onchange = ()=>{ document.getElementById('apCatNew').style.display = catSel.value==='__new' ? 'block' : 'none'; };
   document.getElementById('apSave').onclick = ()=> guardarProducto(esEdit);
+  // ✕ para vaciar de un toque en todos los campos de texto
+  ['apCatNew','apCod','apNom','apCosto'].forEach(id=> makeClearable(document.getElementById(id)));
+  cont.querySelectorAll('.apT, .apP').forEach(makeClearable);
+  document.getElementById('apAddRow').onclick = ()=>{ addRow('',''); const r=cont.lastElementChild; if(r) r.querySelectorAll('.apT, .apP').forEach(makeClearable); };
 }
 document.getElementById('addBtn').onclick = ()=>{
   if(!pedirAdmin()){ alert('Necesitás el PIN del editor para agregar productos.'); return; }
@@ -1056,7 +1095,7 @@ function drawResumen(){
       <div style="text-align:center;margin-bottom:8px">
         <div style="font-size:24px;font-weight:800;letter-spacing:3px">CAMERINO</div>
         <div style="font-size:12px;color:#555">San Jerónimo 2362, Santa Fe</div>
-        <div style="font-size:12px;color:#555">${fecha}</div>
+        <div style="font-size:12px;color:#555">Recibo X · ${fecha}</div>
       </div>
       <div style="border-top:1px dashed #bbb;margin:8px 0"></div>
       <table style="width:100%;border-collapse:collapse;font-size:13px">
@@ -1080,7 +1119,7 @@ function drawResumen(){
 function shareResumenTexto(fp){
   const fecha=new Date().toLocaleDateString('es-AR');
   const lineas=CART.map(i=>`${i.qty}x ${i.nombre||'(sin nombre)'} (talle ${i.talle}) — ${fmt(i.precio*i.qty)}`).join('\n');
-  const texto=`CAMERINO\nSan Jerónimo 2362, Santa Fe\n${fecha}\n\n${lineas}\n\nForma de pago: ${fp.label}${fp.detalle?' ('+fp.detalle+')':''}\nTOTAL: ${fmt(fp.monto)}\n\n¡Gracias por su compra!`;
+  const texto=`CAMERINO\nSan Jerónimo 2362, Santa Fe\nRecibo X · ${fecha}\n\n${lineas}\n\nForma de pago: ${fp.label}${fp.detalle?' ('+fp.detalle+')':''}\nTOTAL: ${fmt(fp.monto)}\n\n¡Gracias por su compra!`;
   if(navigator.share){ navigator.share({title:'Resumen de compra', text:texto}).catch(()=>{}); }
   else if(navigator.clipboard){ navigator.clipboard.writeText(texto).then(()=>alert('Resumen copiado al portapapeles.')); }
   else { alert(texto); }
