@@ -209,10 +209,10 @@ const DESC_CONTADO = 10;     // % efectivo
 const PROMOS = [15,20,25,30];// % descuento bancario
 const MAX_HIST = 15;
 
-// === Agregar productos desde la app (sincroniza con la planilla) ===
-// Pegá acá la URL de tu Web App de Google Apps Script (ver apps-script.gs):
-const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyp9PHww-8zMlz6qobDM_j1seQeKnPNVdYDNiQ1p4jN_SVvkL6jzMXItmhYnyJpJ9GwgA/exec';
-const SHEET_ID = '1cg2fM1xGxzqBOoSv2mC68W3OcsKmNHAgQSthRxkOVDI';
+// === Sin vínculo con Excel/planilla: la fuente de verdad es Supabase. ===
+// (Para agregar artículos, fotos o cambiar precios, se usa el panel web.)
+const SCRIPT_URL = '';
+const SHEET_ID = '';
 // PIN del editor para AGREGAR / EDITAR / BORRAR.
 // ⚠️ Cambiá este número por uno tuyo antes de subir.
 const ADMIN_PIN = '2580';
@@ -285,10 +285,8 @@ async function cargarCatalogo(){
     if(!all.length) throw new Error('sin datos');
     CATALOG = all; loadAltas();
   }catch(e){
-    // Respaldo: archivo estático (si no hay conexión o falla Supabase)
-    try{ const r=await fetch('productos.json'); CATALOG=await r.json(); loadAltas(); }
-    catch(_){ document.getElementById('list').innerHTML =
-      '<div class="empty">No se pudo cargar la lista de precios.<br>Revisá la conexión.</div>'; }
+    document.getElementById('list').innerHTML =
+      '<div class="empty">No se pudo cargar la lista de precios.<br>Revisá la conexión.</div>';
   }
 }
 cargarCatalogo();
@@ -354,33 +352,9 @@ function parseCSV(text){
   return rows;
 }
 function loadAltas(){
-  applyAll([]);   // instantáneo: solo cambios locales
-  const url = 'https://docs.google.com/spreadsheets/d/'+SHEET_ID+
-    '/gviz/tq?tqx=out:csv&sheet=AltasApp&t='+Date.now();
-  fetch(url, {cache:'no-store'})
-    .then(r=>r.text())
-    .then(txt=>{
-      const rows = parseCSV(txt);
-      if(rows.length < 2) return;
-      const head = rows[0].map(h=>h.trim().toLowerCase());
-      const ci = {}; head.forEach((h,idx)=>ci[h]=idx);
-      const remote = [];
-      for(let r=1; r<rows.length; r++){
-        const row = rows[r];
-        const cod = (row[ci['codigo']]||'').trim();
-        if(!cod) continue;
-        let talles=[];
-        try{ talles = JSON.parse(row[ci['talles_json']]||'[]'); }catch(e){}
-        const pl = parseFloat(row[ci['precio_lista']]) || (talles[0] && talles[0].precio) || 0;
-        remote.push({
-          accion: ci['accion']!=null ? ((row[ci['accion']]||'alta').trim() || 'alta') : 'alta',
-          codigo: cod, nombre: (row[ci['nombre']]||'').trim(),
-          categoria: (row[ci['categoria']]||'').trim(), precio_lista: pl, talles: talles
-        });
-      }
-      applyAll(remote);   // planilla + locales
-    })
-    .catch(()=>{});
+  // Supabase es la única fuente de verdad. Ya no se lee la planilla de Google ni el Excel.
+  OVERRIDES = {};
+  rebuild();
 }
 // Guarda un cambio local y lo envía a la planilla
 function pushCambio(a){
