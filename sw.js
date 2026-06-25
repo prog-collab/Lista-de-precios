@@ -1,7 +1,7 @@
 // Service worker — permite instalar como app y funcionar sin internet.
 // Estrategia: red primero (para que los precios nuevos lleguen),
 // y si no hay internet, usa la copia guardada.
-const CACHE = 'lista-precios-v2';
+const CACHE = 'lista-precios-v3';
 const FILES = ['./', './index.html', './productos.json', './avisos.json',
                './manifest.json', './icon-192.png', './icon-512.png'];
 

@@ -317,12 +317,10 @@ function setOv(a){
 // Reconstruye PRODS desde el catálogo aplicando los overrides
 function rebuild(){
   PRODS = []; BYCOD = {};
-  CATALOG.forEach(p=>{
-    const ov = OVERRIDES[p.codigo];
-    if(ov && ov.accion==='baja') return;                 // producto borrado
-    PRODS.push(ov ? Object.assign({}, p, ov.data) : p);  // editado o tal cual
-  });
-  Object.keys(OVERRIDES).forEach(cod=>{                   // altas nuevas (no estaban)
+  // Supabase (CATALOG) es la fuente de verdad: para los códigos que ya existen,
+  // se usa SIEMPRE el dato de Supabase (ignoramos ediciones viejas de la planilla/celular).
+  CATALOG.forEach(p=>{ PRODS.push(p); });
+  Object.keys(OVERRIDES).forEach(cod=>{                   // solo altas de códigos que NO están en la base
     const ov = OVERRIDES[cod];
     if(ov.accion==='baja') return;
     if(!CATALOG.some(p=>p.codigo===cod)) PRODS.push(Object.assign({codigo:cod}, ov.data));
