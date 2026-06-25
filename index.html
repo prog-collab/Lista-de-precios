@@ -257,14 +257,40 @@ document.getElementById('themeBtn').onclick = ()=>{
   setLS('theme', theme); applyTheme();
 };
 
-fetch('productos.json')
-  .then(r=>r.json())
-  .then(data=>{
-    CATALOG = data;
-    loadAltas();   // arma PRODS = catálogo + altas/ediciones/bajas y hace render
-  })
-  .catch(()=>{ document.getElementById('list').innerHTML =
-    '<div class="empty">No se pudo cargar productos.json.<br>Subí el archivo junto a index.html.</div>'; });
+/* ===== Catálogo: en vivo desde Supabase (fuente de verdad), con respaldo a productos.json ===== */
+const SB_URL = 'https://grswqigekcopfrozcxqj.supabase.co';
+const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imdyc3dxaWdla2NvcGZyb3pjeHFqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIzMTkxMDAsImV4cCI6MjA5Nzg5NTEwMH0.8jHhaYi9wC2D5OEixO3M3G8sN40h4ZjIksrfSiNWSVI';
+function normArt(p){
+  return {
+    codigo: String(p.codigo),
+    nombre: p.nombre,
+    categoria: p.categoria,
+    precio_lista: Number(p.precio_lista),
+    talles: (p.talles||[]).map(t=>({ talle: t.talle, precio: Number(t.precio) }))
+  };
+}
+async function cargarCatalogo(){
+  try{
+    const all=[]; const step=1000; let off=0;
+    for(;;){
+      const r = await fetch(`${SB_URL}/rest/v1/articulos?select=codigo,nombre,categoria,precio_lista,talles&order=codigo.asc&limit=${step}&offset=${off}`,
+        { headers:{ apikey:SB_KEY, Authorization:'Bearer '+SB_KEY }, cache:'no-store' });
+      if(!r.ok) throw new Error('HTTP '+r.status);
+      const page = await r.json();
+      all.push(...page.map(normArt));
+      if(page.length < step) break;
+      off += step;
+    }
+    if(!all.length) throw new Error('sin datos');
+    CATALOG = all; loadAltas();
+  }catch(e){
+    // Respaldo: archivo estático (si no hay conexión o falla Supabase)
+    try{ const r=await fetch('productos.json'); CATALOG=await r.json(); loadAltas(); }
+    catch(_){ document.getElementById('list').innerHTML =
+      '<div class="empty">No se pudo cargar la lista de precios.<br>Revisá la conexión.</div>'; }
+  }
+}
+cargarCatalogo();
 
 loadConfig();   // interés mensual compartido entre todos los teléfonos
 
