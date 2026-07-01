@@ -959,7 +959,12 @@ function loadTesseract(){
 document.getElementById('scanBtn').onclick = async ()=>{
   let stream;
   try{
-    stream = await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}});
+    // Resolución baja a propósito: el detector de códigos de barras es más rápido
+    // cuanto menos píxeles tiene que analizar por cuadro, y para leer un código de
+    // barras no hace falta más resolución que esta.
+    stream = await navigator.mediaDevices.getUserMedia({video:{
+      facingMode:'environment', width:{ideal:640}, height:{ideal:480},
+    }});
   }catch(e){
     alert('No se pudo acceder a la cámara.');
     return;
@@ -1011,16 +1016,24 @@ document.getElementById('scanBtn').onclick = async ()=>{
     }catch(e){ ocrMsg.textContent='No se pudo leer (¿sin internet?). Escribí el número a mano.'; }
   };
 
-  // Detección automática de código de barras
+  // Detección automática de código de barras.
+  // Limitamos los formatos a los que realmente usan las etiquetas de ropa (EAN/UPC y
+  // Code128) — sin esto, el detector prueba TODOS los formatos que soporta el celular
+  // en cada cuadro, que es la causa principal de que se sienta lento.
   if(hayBarras){
-    const detector = new BarcodeDetector();
+    const FORMATOS = ['ean_13','ean_8','upc_a','upc_e','code_128'];
+    let detector;
+    try{ detector = new BarcodeDetector({formats: FORMATOS}); }
+    catch(e){ detector = new BarcodeDetector(); } // por si el navegador no soporta filtrar formatos
     (async function loop(){
       while(!stopped){
-        try{
-          const codes = await detector.detect(video);
-          if(codes.length){ finish(codes[0].rawValue); return; }
-        }catch(e){}
-        await new Promise(r=>setTimeout(r, 300));
+        if(video.readyState >= 2){ // HAVE_CURRENT_DATA: recién ahí hay un cuadro real para analizar
+          try{
+            const codes = await detector.detect(video);
+            if(codes.length){ finish(codes[0].rawValue); return; }
+          }catch(e){}
+        }
+        await new Promise(r=>setTimeout(r, 120));
       }
     })();
   }
