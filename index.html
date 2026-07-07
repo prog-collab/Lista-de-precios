@@ -956,6 +956,21 @@ function loadTesseract(){
   });
 }
 
+// Worker de Tesseract reutilizable, configurado para leer solo dígitos en una
+// sola línea (mucho más preciso que el modo "texto en inglés" por defecto,
+// que es la razón principal por la que "Leer número" casi nunca funcionaba).
+let tessWorker = null;
+async function getTessWorker(){
+  if(tessWorker) return tessWorker;
+  await loadTesseract();
+  tessWorker = await Tesseract.createWorker('eng');
+  await tessWorker.setParameters({
+    tessedit_char_whitelist: '0123456789',
+    tessedit_pageseg_mode: '7', // trata la imagen como una sola línea de texto
+  });
+  return tessWorker;
+}
+
 document.getElementById('scanBtn').onclick = async ()=>{
   let stream;
   try{
@@ -1005,15 +1020,24 @@ document.getElementById('scanBtn').onclick = async ()=>{
   ocrBtn.onclick = async ()=>{
     ocrMsg.textContent='Leyendo número…';
     try{
-      await loadTesseract();
+      const worker = await getTessWorker();
       const c=document.createElement('canvas');
-      c.width=video.videoWidth; c.height=video.videoHeight;
-      c.getContext('2d').drawImage(video,0,0);
-      const {data}=await Tesseract.recognize(c,'eng');
+      // Ampliamos la imagen: a la resolución del video (640x480) el número
+      // suele quedar demasiado chico para que Tesseract lo lea bien.
+      const scale = 2;
+      c.width = video.videoWidth * scale;
+      c.height = video.videoHeight * scale;
+      const ctx = c.getContext('2d');
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(video, 0, 0, c.width, c.height);
+      const {data} = await worker.recognize(c);
       const num=(data.text||'').replace(/\D/g,'');
       if(num) finish(num);
       else ocrMsg.textContent='No se leyó ningún número. Acercá la cámara y reintentá.';
-    }catch(e){ ocrMsg.textContent='No se pudo leer (¿sin internet?). Escribí el número a mano.'; }
+    }catch(e){
+      console.error(e);
+      ocrMsg.textContent='No se pudo leer (¿sin internet?). Escribí el número a mano.';
+    }
   };
 
   // Detección automática de código de barras.
