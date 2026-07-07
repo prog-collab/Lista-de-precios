@@ -998,7 +998,7 @@ document.getElementById('scanBtn').onclick = async ()=>{
   }catch(e){}
   const video = document.createElement('video');
   video.srcObject = stream; video.setAttribute('playsinline','');
-  video.style = 'width:100%; border-radius:12px; margin-top:6px';
+  video.style = 'width:100%; border-radius:12px; display:block';
   const hayBarras = ('BarcodeDetector' in window);
   document.getElementById('sheet').innerHTML = `
     <div class="topbtns"><button class="backbtn" id="scanClose">✕ Cerrar</button></div>
@@ -1007,25 +1007,22 @@ document.getElementById('scanBtn').onclick = async ()=>{
       ? 'Apuntá al código de barras, o tocá “Leer número” si no tiene.'
       : 'Apuntá la cámara al número y tocá “Leer número”.'}</div>`;
   const sheetEl = document.getElementById('sheet');
-  sheetEl.appendChild(video);
 
-  // Control de zoom, si el celular lo permite (Android Chrome sí, iOS Safari no).
-  try{
-    const caps = track.getCapabilities ? track.getCapabilities() : {};
-    if(caps.zoom){
-      const zoomWrap = document.createElement('div');
-      zoomWrap.style = 'display:flex; align-items:center; gap:8px; margin-top:8px';
-      const zoomInput = document.createElement('input');
-      zoomInput.type='range'; zoomInput.min=caps.zoom.min; zoomInput.max=caps.zoom.max;
-      zoomInput.step = caps.zoom.step || 0.1;
-      zoomInput.value = track.getSettings().zoom || caps.zoom.min;
-      zoomInput.style='flex:1';
-      zoomWrap.innerHTML = '<span>🔍</span>';
-      zoomWrap.appendChild(zoomInput);
-      sheetEl.appendChild(zoomWrap);
-      zoomInput.oninput = ()=>{ track.applyConstraints({advanced:[{zoom:Number(zoomInput.value)}]}).catch(()=>{}); };
-    }
-  }catch(e){}
+  // Contenedor con un recuadro guía: acota qué parte del cuadro se manda a
+  // OCR, para que no confunda ruido de fondo (costuras, logos) con un dígito.
+  const videoWrap = document.createElement('div');
+  videoWrap.style = 'position:relative; margin-top:6px';
+  videoWrap.appendChild(video);
+  const guide = document.createElement('div');
+  // Recuadro: 82% de ancho, 26% de alto, centrado.
+  guide.style = 'position:absolute; left:9%; right:9%; top:37%; bottom:37%; '+
+    'border:2px solid #22c55e; border-radius:8px; pointer-events:none';
+  videoWrap.appendChild(guide);
+  sheetEl.appendChild(videoWrap);
+  const guideNote = document.createElement('div');
+  guideNote.className='note'; guideNote.style.marginTop='4px';
+  guideNote.textContent = 'Para leer el número, encuadrá solo esos dígitos dentro del recuadro verde.';
+  sheetEl.appendChild(guideNote);
 
   const ocrBtn = document.createElement('button');
   ocrBtn.className='addcart'; ocrBtn.textContent='🔢 Leer número'; ocrBtn.style.marginTop='10px';
@@ -1052,16 +1049,33 @@ document.getElementById('scanBtn').onclick = async ()=>{
     ocrMsg.textContent='Leyendo número…';
     try{
       const worker = await getTessWorker();
+
+      // Recortamos solo lo que queda dentro del recuadro guía (9%..91% de
+      // ancho, 37%..63% de alto, ver estilos de "guide" más arriba). Antes se
+      // mandaba el cuadro completo, así que cualquier logo, costura o borde
+      // de la etiqueta podía leerse como "un dígito suelto".
+      const sx = video.videoWidth * 0.09, sy = video.videoHeight * 0.37;
+      const sw = video.videoWidth * 0.82, sh = video.videoHeight * 0.26;
+      // Escalamos el recorte hacia arriba para que Tesseract tenga buena
+      // resolución aunque el recuadro guía sea chico en la imagen original.
+      const scale = 3;
       const c=document.createElement('canvas');
-      // Ampliamos la imagen solo si el video es chico: con la resolución
-      // actual (1280x720) ya alcanza; duplicarla de nuevo sería más lenta sin
-      // ganar nitidez real.
-      const scale = video.videoWidth < 800 ? 2 : 1;
-      c.width = video.videoWidth * scale;
-      c.height = video.videoHeight * scale;
+      c.width = sw * scale; c.height = sh * scale;
       const ctx = c.getContext('2d');
       ctx.imageSmoothingEnabled = false;
-      ctx.drawImage(video, 0, 0, c.width, c.height);
+      ctx.drawImage(video, sx, sy, sw, sh, 0, 0, c.width, c.height);
+
+      // Blanco y negro con umbral: mejora mucho la lectura de números
+      // impresos chicos frente a dejarle la imagen a color tal cual.
+      const img = ctx.getImageData(0,0,c.width,c.height);
+      const d = img.data;
+      for(let i=0;i<d.length;i+=4){
+        const gray = 0.299*d[i] + 0.587*d[i+1] + 0.114*d[i+2];
+        const v = gray < 140 ? 0 : 255;
+        d[i]=d[i+1]=d[i+2]=v;
+      }
+      ctx.putImageData(img,0,0);
+
       const {data} = await worker.recognize(c);
       const num=(data.text||'').replace(/\D/g,'');
       if(num) finish(num);
