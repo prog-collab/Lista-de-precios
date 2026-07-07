@@ -974,16 +974,28 @@ async function getTessWorker(){
 document.getElementById('scanBtn').onclick = async ()=>{
   let stream;
   try{
-    // Resolución baja a propósito: el detector de códigos de barras es más rápido
-    // cuanto menos píxeles tiene que analizar por cuadro, y para leer un código de
-    // barras no hace falta más resolución que esta.
+    // Resolución media (antes 640x480): muy baja para que el foco automático
+    // tenga suficiente detalle para trabajar, y para leer números a mano.
+    // El detector de código de barras sigue andando rápido igual a esta resolución.
     stream = await navigator.mediaDevices.getUserMedia({video:{
-      facingMode:'environment', width:{ideal:640}, height:{ideal:480},
+      facingMode:'environment', width:{ideal:1280}, height:{ideal:720},
+      // Pedimos foco automático continuo: sin esto, varios Android arrancan
+      // con un solo autofoco al abrir la cámara y después quedan fijos.
+      advanced:[{focusMode:'continuous'}],
     }});
   }catch(e){
     alert('No se pudo acceder a la cámara.');
     return;
   }
+  const track = stream.getVideoTracks()[0];
+  // Si el navegador soporta foco continuo pero no lo tomó de los constraints
+  // iniciales (pasa en algunos Android), lo reforzamos con applyConstraints.
+  try{
+    const caps = track.getCapabilities ? track.getCapabilities() : {};
+    if(caps.focusMode && caps.focusMode.includes('continuous')){
+      await track.applyConstraints({advanced:[{focusMode:'continuous'}]});
+    }
+  }catch(e){}
   const video = document.createElement('video');
   video.srcObject = stream; video.setAttribute('playsinline','');
   video.style = 'width:100%; border-radius:12px; margin-top:6px';
@@ -996,6 +1008,25 @@ document.getElementById('scanBtn').onclick = async ()=>{
       : 'Apuntá la cámara al número y tocá “Leer número”.'}</div>`;
   const sheetEl = document.getElementById('sheet');
   sheetEl.appendChild(video);
+
+  // Control de zoom, si el celular lo permite (Android Chrome sí, iOS Safari no).
+  try{
+    const caps = track.getCapabilities ? track.getCapabilities() : {};
+    if(caps.zoom){
+      const zoomWrap = document.createElement('div');
+      zoomWrap.style = 'display:flex; align-items:center; gap:8px; margin-top:8px';
+      const zoomInput = document.createElement('input');
+      zoomInput.type='range'; zoomInput.min=caps.zoom.min; zoomInput.max=caps.zoom.max;
+      zoomInput.step = caps.zoom.step || 0.1;
+      zoomInput.value = track.getSettings().zoom || caps.zoom.min;
+      zoomInput.style='flex:1';
+      zoomWrap.innerHTML = '<span>🔍</span>';
+      zoomWrap.appendChild(zoomInput);
+      sheetEl.appendChild(zoomWrap);
+      zoomInput.oninput = ()=>{ track.applyConstraints({advanced:[{zoom:Number(zoomInput.value)}]}).catch(()=>{}); };
+    }
+  }catch(e){}
+
   const ocrBtn = document.createElement('button');
   ocrBtn.className='addcart'; ocrBtn.textContent='🔢 Leer número'; ocrBtn.style.marginTop='10px';
   sheetEl.appendChild(ocrBtn);
@@ -1022,9 +1053,10 @@ document.getElementById('scanBtn').onclick = async ()=>{
     try{
       const worker = await getTessWorker();
       const c=document.createElement('canvas');
-      // Ampliamos la imagen: a la resolución del video (640x480) el número
-      // suele quedar demasiado chico para que Tesseract lo lea bien.
-      const scale = 2;
+      // Ampliamos la imagen solo si el video es chico: con la resolución
+      // actual (1280x720) ya alcanza; duplicarla de nuevo sería más lenta sin
+      // ganar nitidez real.
+      const scale = video.videoWidth < 800 ? 2 : 1;
       c.width = video.videoWidth * scale;
       c.height = video.videoHeight * scale;
       const ctx = c.getContext('2d');
