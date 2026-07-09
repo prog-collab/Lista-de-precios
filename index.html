@@ -1179,6 +1179,12 @@ function guardarMap(tipo, codigo, nombre){
 }
 const stLocal = ()=> getLS('stock_local', 'camerino');
 const stLocalNombre = l => l==='camerino' ? 'Camerino' : 'Giustozzi';
+const stModo = ()=> getLS('stock_modo', 'carga');   // 'carga' (+1) o 'venta' (-1)
+const stStockDe = (p, color, talle) => {
+  const t = (p.talles||[]).find(x=>x.talle===talle);
+  const c = t && (t.stock||[]).find(s=>s.color===color);
+  return c ? (Number(c.camerino)||0) + (Number(c.giustozzi)||0) : 0;
+};
 const stMapTalles = ret => ret.map(t=>({ talle:t.talle, precio:Number(t.precio),
   stock: Array.isArray(t.stock) ? t.stock : [] }));
 
@@ -1234,11 +1240,17 @@ function drawStock(){
     };
     return;
   }
+  const modoInicial = stModo();
   sheet.innerHTML = `
     <div class="topbtns"><button class="backbtn" id="stClose">✕ Cerrar</button></div>
-    <h2>📦 Cargar stock</h2>
+    <h2 id="stTitulo">${modoInicial==='venta' ? '🛍️ Vender (POS)' : '📦 Cargar stock'}</h2>
     <div class="scat">Sesión: ${esc(sbSession.email||'')} · <a href="#" id="stLogout" style="color:var(--accent)">salir</a></div>
-    <div class="label">Sumar stock al local</div>
+    <div class="label">¿Qué estás haciendo?</div>
+    <div class="talles">
+      <button class="talle" id="stModoCarga">📦 Cargar (+1)</button>
+      <button class="talle" id="stModoVenta">🛍️ Vender (−1)</button>
+    </div>
+    <div class="label" id="stLocLabel">Local</div>
     <div class="talles">
       <button class="talle" id="stLocCam">Camerino</button>
       <button class="talle" id="stLocGiu">Giustozzi</button>
@@ -1249,11 +1261,20 @@ function drawStock(){
       <button id="stManualGo" class="fbtn" style="font-size:16px">OK</button>
     </div>
     <div id="stCard"></div>
-    <div class="note">Escaneadas en esta sesión: <b id="stN">${stCount}</b></div>
+    <div class="note" id="stNLabel">Escaneadas en esta sesión: <b id="stN">${stCount}</b></div>
     <button id="stUndo" class="fbtn" style="width:100%; margin-top:6px; display:${stLast?'':'none'}">↩ Deshacer último</button>`;
   document.getElementById('stClose').onclick = ()=> stCerrar(false);
   document.getElementById('stLogout').onclick = (e)=>{ e.preventDefault();
     sbSession=null; setLS('sb_session', null); drawStock(); };
+  const bMC=document.getElementById('stModoCarga'), bMV=document.getElementById('stModoVenta');
+  const refModo=()=>{ const m=stModo();
+    bMC.classList.toggle('sel', m!=='venta'); bMV.classList.toggle('sel', m==='venta');
+    document.getElementById('stTitulo').textContent = m==='venta' ? '🛍️ Vender (POS)' : '📦 Cargar stock';
+    document.getElementById('stLocLabel').textContent = m==='venta' ? 'Local donde se vende' : 'Sumar stock al local';
+    document.getElementById('stNLabel').firstChild.textContent = (m==='venta' ? 'Vendidas' : 'Cargadas')+' en esta sesión: '; };
+  bMC.onclick=()=>{ setLS('stock_modo','carga'); refModo(); };
+  bMV.onclick=()=>{ setLS('stock_modo','venta'); refModo(); };
+  refModo();
   const bC=document.getElementById('stLocCam'), bG=document.getElementById('stLocGiu');
   const refLoc=()=>{ const l=stLocal();
     bC.classList.toggle('sel', l==='camerino'); bG.classList.toggle('sel', l==='giustozzi'); };
@@ -1356,6 +1377,9 @@ function stCardConfirm(p, digits){
     if(hits.length===1) sel = hits[0].i;
   }
   const localSel = stLocal();
+  const modo = stModo();
+  const delta = modo==='venta' ? -1 : 1;
+  const btnTxt = modo==='venta' ? `➖ Restar 1 de ${stLocalNombre(localSel)}` : `➕ Sumar 1 a ${stLocalNombre(localSel)}`;
   const colores = [...new Set([].concat(Object.values(MAPS.color),
     ...p.talles.map(t=>(t.stock||[]).map(s=>s.color))))].filter(c=>c && c!=='Único').sort();
   const card = document.getElementById('stCard');
@@ -1371,14 +1395,27 @@ function stCardConfirm(p, digits){
     <div class="label">Talle${tal3?` (código ${esc(tal3)})`:''}</div>
     <div class="talles" id="stTalles">${p.talles.map((x,i)=>
       `<button class="talle ${i===sel?'sel':''}" data-i="${i}">${esc(x.talle)}</button>`).join('')}</div>
-    <button class="addcart" id="stOk">➕ Sumar 1 a ${stLocalNombre(localSel)}</button>
+    <div class="note" id="stStockActual"></div>
+    <button class="addcart" id="stOk">${btnTxt}</button>
     <button class="fbtn" id="stCancel" style="width:100%; margin-top:6px">Cancelar</button>
     <div class="note" id="stErr"></div>`;
+  const stockInfo = card.querySelector('#stStockActual');
+  const refStockInfo = ()=>{
+    if(modo!=='venta' || sel<0){ stockInfo.textContent=''; return; }
+    const color = (card.querySelector('#stColor').value||'').trim() || 'Único';
+    const actual = stStockDe(p, color, p.talles[sel].talle);
+    stockInfo.innerHTML = actual>0
+      ? `Stock actual en ${stLocalNombre(localSel)}: <b>${actual}</b>`
+      : `⚠ No hay stock cargado de este color/talle en ${stLocalNombre(localSel)} — igual se puede descontar.`;
+  };
   [...card.querySelectorAll('#stTalles .talle')].forEach(b=> b.onclick=()=>{
     sel = +b.dataset.i;
     [...card.querySelectorAll('#stTalles .talle')].forEach(x=>x.classList.remove('sel'));
     b.classList.add('sel');
+    refStockInfo();
   });
+  card.querySelector('#stColor').addEventListener('input', refStockInfo);
+  refStockInfo();
   card.querySelector('#stCancel').onclick = ()=>{ card.innerHTML=''; stBusy=false; };
   card.querySelector('#stOk').onclick = async ()=>{
     const err = card.querySelector('#stErr');
@@ -1388,19 +1425,19 @@ function stCardConfirm(p, digits){
     const ok = card.querySelector('#stOk');
     ok.disabled = true; ok.textContent = 'Guardando…';
     try{
-      const ret = await rpcAjustarStock(p.codigo, talle, color, localSel, 1);
+      const ret = await rpcAjustarStock(p.codigo, talle, color, localSel, delta);
       if(Array.isArray(ret)) p.talles = stMapTalles(ret);
       if(col3 && MAPS.color[col3]!==color) guardarMap('color', col3, color);
       if(tal3 && MAPS.talle[tal3]!==talle) guardarMap('talle', tal3, talle);
-      stLast = {codigo:p.codigo, talle, color, local:localSel, nombre:p.nombre, prod:p};
+      stLast = {codigo:p.codigo, talle, color, local:localSel, nombre:p.nombre, prod:p, delta};
       stCount++;
       const nEl=document.getElementById('stN'); if(nEl) nEl.textContent=stCount;
       const u=document.getElementById('stUndo'); if(u) u.style.display='';
-      toast(`✓ +1 ${p.nombre} · ${color} · ${talle}`);
+      toast(`✓ ${delta>0?'+1':'−1'} ${p.nombre} · ${color} · ${talle}`);
       card.innerHTML=''; stBusy=false;
     }catch(e){
       if(String(e.message)==='login'){ card.innerHTML=''; drawStock(); return; }
-      ok.disabled=false; ok.textContent=`➕ Sumar 1 a ${stLocalNombre(localSel)}`;
+      ok.disabled=false; ok.textContent=btnTxt;
       err.textContent = e.message || 'No se pudo guardar.';
     }
   };
@@ -1411,11 +1448,12 @@ async function stDeshacer(){
   const u=document.getElementById('stUndo');
   try{
     if(u){ u.disabled=true; u.textContent='Deshaciendo…'; }
-    const ret = await rpcAjustarStock(stLast.codigo, stLast.talle, stLast.color, stLast.local, -1);
+    const deltaDeshacer = -(stLast.delta || 1);
+    const ret = await rpcAjustarStock(stLast.codigo, stLast.talle, stLast.color, stLast.local, deltaDeshacer);
     if(Array.isArray(ret) && stLast.prod) stLast.prod.talles = stMapTalles(ret);
     stCount = Math.max(0, stCount-1);
     const nEl=document.getElementById('stN'); if(nEl) nEl.textContent=stCount;
-    toast('↩ Deshecho: −1 '+stLast.nombre);
+    toast(`↩ Deshecho: ${deltaDeshacer>0?'+1':'−1'} `+stLast.nombre);
     stLast=null;
     if(u){ u.disabled=false; u.textContent='↩ Deshacer último'; u.style.display='none'; }
   }catch(e){
