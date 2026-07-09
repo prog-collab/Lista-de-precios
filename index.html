@@ -165,6 +165,7 @@
       <button id="fPlus" class="fbtn" title="Agrandar letra">A+</button>
       <button id="themeBtn" class="fbtn" title="Cambiar tema">🌙</button>
       <button id="addBtn" class="fbtn" title="Agregar producto">➕</button>
+      <button id="stockBtn" class="fbtn" title="Cargar stock (escaneo)">📦</button>
       <button id="helpBtn" class="fbtn" title="Ayuda">❓</button>
       <button id="cartBtn" class="fbtn" title="Carrito">🛒<span id="cartN" class="cbadge" style="display:none"></span></button>
     </div>
@@ -267,7 +268,8 @@ function normArt(p){
     categoria: p.categoria,
     precio_lista: Number(p.precio_lista),
     foto_url: p.foto_url || null,
-    talles: (p.talles||[]).map(t=>({ talle: t.talle, precio: Number(t.precio) }))
+    talles: (p.talles||[]).map(t=>({ talle: t.talle, precio: Number(t.precio),
+      stock: Array.isArray(t.stock) ? t.stock : [] }))
   };
 }
 async function cargarCatalogo(){
@@ -1108,6 +1110,371 @@ document.getElementById('scanBtn').onclick = async ()=>{
     })();
   }
 };
+
+/* ===== 📦 Modo Stock: escanear prendas para cargar inventario =====
+   Código de barras Taverniti: 11 dígitos = 5 artículo + 3 color + 3 talle.
+   Cada lectura suma +1 al stock del color+talle en el local elegido
+   (articulos.talles[].stock[], vía el RPC ajustar_stock de Supabase).
+   Escribir stock exige iniciar sesión con una cuenta del panel (RLS is_admin);
+   el PIN del modo editor NO alcanza. */
+let sbSession = getLS('sb_session', null);
+let stOpen=false, stStream=null, stStopped=true, stBusy=false, stCount=0, stLast=null;
+let stCoolCode='', stCoolUntil=0;
+let MAPS = {color:{}, talle:{}};   // código de barras → nombre (compartido, tabla barcode_maps)
+
+async function sbLogin(email, pass){
+  const r = await fetch(`${SB_URL}/auth/v1/token?grant_type=password`, {
+    method:'POST', headers:{ apikey:SB_KEY, 'Content-Type':'application/json' },
+    body: JSON.stringify({email, password: pass}),
+  });
+  const d = await r.json().catch(()=>({}));
+  if(!r.ok || !d.access_token) throw new Error(d.error_description || d.msg || 'Email o contraseña incorrectos.');
+  sbSession = { access_token: d.access_token, refresh_token: d.refresh_token,
+    expires_at: Math.floor(Date.now()/1000) + (d.expires_in||3600), email };
+  setLS('sb_session', sbSession);
+}
+// Token vigente; renueva con el refresh_token si está por vencer. Si no se
+// puede renovar, tira 'login' para que la vista vuelva a pedir la sesión.
+async function sbToken(){
+  if(!sbSession) throw new Error('login');
+  if(sbSession.expires_at - 60 > Math.floor(Date.now()/1000)) return sbSession.access_token;
+  const r = await fetch(`${SB_URL}/auth/v1/token?grant_type=refresh_token`, {
+    method:'POST', headers:{ apikey:SB_KEY, 'Content-Type':'application/json' },
+    body: JSON.stringify({refresh_token: sbSession.refresh_token}),
+  });
+  const d = await r.json().catch(()=>({}));
+  if(!r.ok || !d.access_token){ sbSession=null; setLS('sb_session', null); throw new Error('login'); }
+  sbSession = { access_token: d.access_token, refresh_token: d.refresh_token,
+    expires_at: Math.floor(Date.now()/1000) + (d.expires_in||3600), email: sbSession.email };
+  setLS('sb_session', sbSession);
+  return sbSession.access_token;
+}
+async function sbAuthed(path, opts={}){
+  const token = await sbToken();
+  const headers = Object.assign({ apikey: SB_KEY, Authorization: 'Bearer '+token,
+    'Content-Type':'application/json' }, opts.headers||{});
+  return fetch(`${SB_URL}${path}`, Object.assign({}, opts, {headers}));
+}
+async function rpcAjustarStock(codigo, talle, color, local, delta){
+  const r = await sbAuthed('/rest/v1/rpc/ajustar_stock', { method:'POST',
+    body: JSON.stringify({p_codigo:codigo, p_talle:talle, p_color:color, p_local:local, p_delta:delta}) });
+  const d = await r.json().catch(()=>null);
+  if(!r.ok) throw new Error((d && (d.message||d.hint)) || 'No se pudo actualizar el stock.');
+  return d;   // el array `talles` ya actualizado
+}
+async function cargarMaps(){
+  try{
+    const r = await fetch(`${SB_URL}/rest/v1/barcode_maps?select=tipo,codigo,nombre`,
+      { headers:{ apikey:SB_KEY, Authorization:'Bearer '+SB_KEY }, cache:'no-store' });
+    const rows = r.ok ? await r.json() : [];
+    MAPS = {color:{}, talle:{}};
+    rows.forEach(m=>{ if(MAPS[m.tipo]) MAPS[m.tipo][m.codigo]=m.nombre; });
+  }catch(e){}
+}
+function guardarMap(tipo, codigo, nombre){
+  MAPS[tipo][codigo]=nombre;   // el mapeo queda para todos los celulares
+  sbAuthed('/rest/v1/barcode_maps', { method:'POST',
+    headers:{ Prefer:'resolution=merge-duplicates' },
+    body: JSON.stringify({tipo, codigo, nombre}) }).catch(()=>{});
+}
+const stLocal = ()=> getLS('stock_local', 'camerino');
+const stLocalNombre = l => l==='camerino' ? 'Camerino' : 'Giustozzi';
+const stMapTalles = ret => ret.map(t=>({ talle:t.talle, precio:Number(t.precio),
+  stock: Array.isArray(t.stock) ? t.stock : [] }));
+
+// Busca el artículo por el código de barras, de lo más específico a lo más
+// general: completo → 8 díg (artículo+color) → 5 díg + 'XXX' → 5 díg.
+function buscarArticuloBarcode(digits){
+  const art5 = digits.slice(0,5);
+  const tries = [...new Set([digits, digits.slice(0,8), art5+'XXX', art5])].filter(Boolean);
+  for(const c of tries){ if(BYCOD[c]) return BYCOD[c]; }
+  return null;
+}
+
+document.getElementById('stockBtn').onclick = ()=>{
+  stOpen = true; stCount = 0; stLast = null; stBusy = false;
+  document.getElementById('ov').classList.add('open');
+  history.pushState({detalle:1}, '');
+  cargarMaps();
+  drawStock();
+};
+function stCerrar(viaHistory){
+  if(!stOpen) return;
+  stOpen=false; stStopped=true; stBusy=false;
+  try{ if(stStream) stStream.getTracks().forEach(t=>t.stop()); }catch(e){}
+  stStream=null;
+  document.getElementById('ov').classList.remove('open');
+  if(!viaHistory && history.state && history.state.detalle) history.back();
+}
+window.addEventListener('popstate', ()=>{ if(stOpen) stCerrar(true); });
+
+function drawStock(){
+  const sheet = document.getElementById('sheet');
+  if(!sbSession){
+    sheet.innerHTML = `
+      <div class="topbtns"><button class="backbtn" id="stClose">✕ Cerrar</button></div>
+      <h2>📦 Cargar stock</h2>
+      <div class="scat">Iniciá sesión con tu usuario del panel para poder cargar stock.</div>
+      <div class="label">Email</div>
+      <input id="stEmail" class="search" type="email" autocomplete="username">
+      <div class="label">Contraseña</div>
+      <input id="stPass" class="search" type="password" autocomplete="current-password">
+      <button class="addcart" id="stLoginBtn">Ingresar</button>
+      <div class="note" id="stLoginErr"></div>`;
+    document.getElementById('stClose').onclick = ()=> stCerrar(false);
+    document.getElementById('stLoginBtn').onclick = async ()=>{
+      const err = document.getElementById('stLoginErr');
+      const b = document.getElementById('stLoginBtn');
+      b.disabled = true; b.textContent = 'Ingresando…';
+      try{
+        await sbLogin(document.getElementById('stEmail').value.trim(),
+                      document.getElementById('stPass').value);
+        drawStock();
+      }catch(e){ b.disabled=false; b.textContent='Ingresar'; err.textContent = e.message; }
+    };
+    return;
+  }
+  sheet.innerHTML = `
+    <div class="topbtns"><button class="backbtn" id="stClose">✕ Cerrar</button></div>
+    <h2>📦 Cargar stock</h2>
+    <div class="scat">Sesión: ${esc(sbSession.email||'')} · <a href="#" id="stLogout" style="color:var(--accent)">salir</a></div>
+    <div class="label">Sumar stock al local</div>
+    <div class="talles">
+      <button class="talle" id="stLocCam">Camerino</button>
+      <button class="talle" id="stLocGiu">Giustozzi</button>
+    </div>
+    <div id="stVideoBox"></div>
+    <div class="filters" style="margin-top:8px">
+      <input id="stManual" class="search" placeholder="O escribí el código a mano…" inputmode="numeric" autocomplete="off" style="flex:1">
+      <button id="stManualGo" class="fbtn" style="font-size:16px">OK</button>
+    </div>
+    <div id="stCard"></div>
+    <div class="note">Escaneadas en esta sesión: <b id="stN">${stCount}</b></div>
+    <button id="stUndo" class="fbtn" style="width:100%; margin-top:6px; display:${stLast?'':'none'}">↩ Deshacer último</button>`;
+  document.getElementById('stClose').onclick = ()=> stCerrar(false);
+  document.getElementById('stLogout').onclick = (e)=>{ e.preventDefault();
+    sbSession=null; setLS('sb_session', null); drawStock(); };
+  const bC=document.getElementById('stLocCam'), bG=document.getElementById('stLocGiu');
+  const refLoc=()=>{ const l=stLocal();
+    bC.classList.toggle('sel', l==='camerino'); bG.classList.toggle('sel', l==='giustozzi'); };
+  bC.onclick=()=>{ setLS('stock_local','camerino'); refLoc(); };
+  bG.onclick=()=>{ setLS('stock_local','giustozzi'); refLoc(); };
+  refLoc();
+  const man=document.getElementById('stManual');
+  const go=()=>{ if(man.value.trim()){ stProcesar(man.value); man.value=''; } };
+  document.getElementById('stManualGo').onclick = go;
+  man.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); go(); } });
+  document.getElementById('stUndo').onclick = stDeshacer;
+  stCamara();
+}
+
+// Cámara continua: no se cierra tras cada lectura — se escanea prenda tras prenda.
+async function stCamara(){
+  stStopped=false;
+  let stream;
+  try{
+    stream = await navigator.mediaDevices.getUserMedia({video:{
+      facingMode:'environment', width:{ideal:1280}, height:{ideal:720},
+      advanced:[{focusMode:'continuous'}],
+    }});
+  }catch(e){
+    const box=document.getElementById('stVideoBox');
+    if(box) box.innerHTML='<div class="note">Sin cámara: escribí el código a mano abajo.</div>';
+    return;
+  }
+  if(!stOpen){ try{ stream.getTracks().forEach(t=>t.stop()); }catch(e){} return; }
+  stStream = stream;
+  try{
+    const track = stream.getVideoTracks()[0];
+    const caps = track.getCapabilities ? track.getCapabilities() : {};
+    if(caps.focusMode && caps.focusMode.includes('continuous')){
+      await track.applyConstraints({advanced:[{focusMode:'continuous'}]});
+    }
+  }catch(e){}
+  const video=document.createElement('video');
+  video.srcObject=stream; video.setAttribute('playsinline','');
+  video.style='width:100%; border-radius:12px; display:block';
+  const wrap=document.createElement('div'); wrap.style='position:relative; margin-top:6px';
+  wrap.appendChild(video);
+  const guide=document.createElement('div');
+  guide.style='position:absolute; left:9%; right:9%; top:37%; bottom:37%; '+
+    'border:2px solid #22c55e; border-radius:8px; pointer-events:none';
+  wrap.appendChild(guide);
+  const box=document.getElementById('stVideoBox');
+  if(!box) return;
+  box.innerHTML=''; box.appendChild(wrap);
+  video.play();
+  if('BarcodeDetector' in window){
+    const FORMATOS = ['ean_13','ean_8','upc_a','upc_e','code_128','itf'];
+    let detector;
+    try{ detector = new BarcodeDetector({formats: FORMATOS}); }
+    catch(e){ detector = new BarcodeDetector(); }
+    (async function loop(){
+      while(!stStopped){
+        if(!stBusy && video.readyState >= 2){
+          try{
+            const codes = await detector.detect(video);
+            if(codes.length){
+              const digits = (codes[0].rawValue||'').replace(/\D/g,'');
+              const now = Date.now();
+              // no re-leer la misma prenda apenas confirmada
+              if(digits && !(digits===stCoolCode && now<stCoolUntil)){
+                stCoolCode=digits; stCoolUntil=now+2500;
+                stProcesar(digits);
+              }
+            }
+          }catch(e){}
+        }
+        await new Promise(r=>setTimeout(r, 150));
+      }
+    })();
+  }else{
+    const n=document.createElement('div'); n.className='note';
+    n.textContent='Este navegador no lee códigos de barras solo: escribí el código a mano abajo.';
+    box.appendChild(n);
+  }
+}
+
+function stProcesar(raw){
+  const digits = (raw||'').replace(/\D/g,'');
+  if(!digits) return;
+  stBusy = true;   // pausa la detección mientras la tarjeta está abierta
+  const p = buscarArticuloBarcode(digits);
+  if(!p){ stCardNuevo(digits); return; }
+  stCardConfirm(p, digits);
+}
+
+// Tarjeta de confirmación: color + talle preseleccionados si ya hay mapeo.
+function stCardConfirm(p, digits){
+  const col3 = digits.length>=8  ? digits.slice(5,8)  : '';
+  const tal3 = digits.length>=11 ? digits.slice(8,11) : '';
+  const colorSug = col3 ? (MAPS.color[col3]||'') : 'Único';
+  let sel = p.talles.length===1 ? 0 : -1;
+  if(sel<0 && tal3 && MAPS.talle[tal3]){
+    const m = norm(MAPS.talle[tal3]);
+    const hits = p.talles.map((t,i)=>({i, ok: norm(t.talle)===m || norm(t.talle).includes(m)})).filter(x=>x.ok);
+    if(hits.length===1) sel = hits[0].i;
+  }
+  const localSel = stLocal();
+  const colores = [...new Set([].concat(Object.values(MAPS.color),
+    ...p.talles.map(t=>(t.stock||[]).map(s=>s.color))))].filter(c=>c && c!=='Único').sort();
+  const card = document.getElementById('stCard');
+  card.innerHTML = `
+    <div class="lista" style="margin-top:10px">
+      <div class="l">${esc(p.nombre)||'(sin nombre)'} · Código ${esc(p.codigo)}</div>
+      <div class="v" style="font-size:15px">${digits.length>=11
+        ? `Barra ${esc(digits.slice(0,5))}-${esc(col3)}-${esc(tal3)}` : 'Barra '+esc(digits)}</div>
+    </div>
+    <div class="label">Color${col3?` (código ${esc(col3)})`:''}</div>
+    <input id="stColor" class="search" list="stColores" placeholder="ej. Negro" value="${esc(colorSug)}" autocomplete="off">
+    <datalist id="stColores">${colores.map(c=>`<option value="${esc(c)}">`).join('')}</datalist>
+    <div class="label">Talle${tal3?` (código ${esc(tal3)})`:''}</div>
+    <div class="talles" id="stTalles">${p.talles.map((x,i)=>
+      `<button class="talle ${i===sel?'sel':''}" data-i="${i}">${esc(x.talle)}</button>`).join('')}</div>
+    <button class="addcart" id="stOk">➕ Sumar 1 a ${stLocalNombre(localSel)}</button>
+    <button class="fbtn" id="stCancel" style="width:100%; margin-top:6px">Cancelar</button>
+    <div class="note" id="stErr"></div>`;
+  [...card.querySelectorAll('#stTalles .talle')].forEach(b=> b.onclick=()=>{
+    sel = +b.dataset.i;
+    [...card.querySelectorAll('#stTalles .talle')].forEach(x=>x.classList.remove('sel'));
+    b.classList.add('sel');
+  });
+  card.querySelector('#stCancel').onclick = ()=>{ card.innerHTML=''; stBusy=false; };
+  card.querySelector('#stOk').onclick = async ()=>{
+    const err = card.querySelector('#stErr');
+    const color = (card.querySelector('#stColor').value||'').trim() || 'Único';
+    if(sel<0){ err.textContent='Elegí el talle.'; return; }
+    const talle = p.talles[sel].talle;
+    const ok = card.querySelector('#stOk');
+    ok.disabled = true; ok.textContent = 'Guardando…';
+    try{
+      const ret = await rpcAjustarStock(p.codigo, talle, color, localSel, 1);
+      if(Array.isArray(ret)) p.talles = stMapTalles(ret);
+      if(col3 && MAPS.color[col3]!==color) guardarMap('color', col3, color);
+      if(tal3 && MAPS.talle[tal3]!==talle) guardarMap('talle', tal3, talle);
+      stLast = {codigo:p.codigo, talle, color, local:localSel, nombre:p.nombre, prod:p};
+      stCount++;
+      const nEl=document.getElementById('stN'); if(nEl) nEl.textContent=stCount;
+      const u=document.getElementById('stUndo'); if(u) u.style.display='';
+      toast(`✓ +1 ${p.nombre} · ${color} · ${talle}`);
+      card.innerHTML=''; stBusy=false;
+    }catch(e){
+      if(String(e.message)==='login'){ card.innerHTML=''; drawStock(); return; }
+      ok.disabled=false; ok.textContent=`➕ Sumar 1 a ${stLocalNombre(localSel)}`;
+      err.textContent = e.message || 'No se pudo guardar.';
+    }
+  };
+}
+
+async function stDeshacer(){
+  if(!stLast) return;
+  const u=document.getElementById('stUndo');
+  try{
+    if(u){ u.disabled=true; u.textContent='Deshaciendo…'; }
+    const ret = await rpcAjustarStock(stLast.codigo, stLast.talle, stLast.color, stLast.local, -1);
+    if(Array.isArray(ret) && stLast.prod) stLast.prod.talles = stMapTalles(ret);
+    stCount = Math.max(0, stCount-1);
+    const nEl=document.getElementById('stN'); if(nEl) nEl.textContent=stCount;
+    toast('↩ Deshecho: −1 '+stLast.nombre);
+    stLast=null;
+    if(u){ u.disabled=false; u.textContent='↩ Deshacer último'; u.style.display='none'; }
+  }catch(e){
+    if(u){ u.disabled=false; u.textContent='↩ Deshacer último'; }
+    if(String(e.message)==='login'){ drawStock(); return; }
+    toast(e.message || 'No se pudo deshacer');
+  }
+}
+
+// Artículo cuyo prefijo no está en la lista: alta mínima y se sigue cargando.
+function stCardNuevo(digits){
+  const art5 = digits.slice(0,5);
+  const cats = [...new Set(PRODS.map(p=>p.categoria).filter(Boolean))].sort();
+  const card = document.getElementById('stCard');
+  card.innerHTML = `
+    <div class="lista" style="margin-top:10px">
+      <div class="l">Artículo nuevo — no está en la lista</div>
+      <div class="v" style="font-size:16px">Código ${esc(art5)}</div>
+    </div>
+    <div class="label">Nombre</div>
+    <input id="stNvNombre" class="search" placeholder="ej. TAVERNITI BUZO" autocomplete="off">
+    <div class="label">Categoría</div>
+    <input id="stNvCat" class="search" list="stCats" placeholder="ej. BUZOS HOMBRE" autocomplete="off">
+    <datalist id="stCats">${cats.map(c=>`<option value="${esc(c)}">`).join('')}</datalist>
+    <div class="label">Precio de lista</div>
+    <input id="stNvPrecio" class="search" type="number" inputmode="numeric" placeholder="ej. 85000">
+    <button class="addcart" id="stNvOk">Crear artículo y seguir</button>
+    <button class="fbtn" id="stNvCancel" style="width:100%; margin-top:6px">Cancelar</button>
+    <div class="note" id="stNvErr"></div>`;
+  card.querySelector('#stNvCancel').onclick = ()=>{ card.innerHTML=''; stBusy=false; };
+  card.querySelector('#stNvOk').onclick = async ()=>{
+    const err = card.querySelector('#stNvErr');
+    const nombre = (card.querySelector('#stNvNombre').value||'').trim();
+    const categoria = (card.querySelector('#stNvCat').value||'').trim();
+    const precio = Number(card.querySelector('#stNvPrecio').value);
+    if(!nombre || !(precio>0)){ err.textContent='Completá el nombre y el precio.'; return; }
+    const codigo = digits.length>=8 ? art5+'XXX' : digits;   // convención de la lista
+    const ok = card.querySelector('#stNvOk');
+    ok.disabled = true; ok.textContent = 'Creando…';
+    try{
+      const r = await sbAuthed('/rest/v1/articulos', { method:'POST',
+        headers:{ Prefer:'return=representation' },
+        body: JSON.stringify({ codigo, nombre, categoria: categoria||null,
+          precio_lista: precio, talles: [{talle:'Único', precio, stock: []}] }) });
+      const d = await r.json().catch(()=>null);
+      if(!r.ok) throw new Error((d && d.message) || 'No se pudo crear el artículo.');
+      const nuevo = normArt(Array.isArray(d) && d[0] ? d[0] :
+        {codigo, nombre, categoria, precio_lista: precio, talles:[{talle:'Único', precio, stock:[]}]});
+      CATALOG.push(nuevo); rebuild();
+      toast('✓ Artículo creado');
+      stCardConfirm(nuevo, digits);
+    }catch(e){
+      if(String(e.message)==='login'){ card.innerHTML=''; drawStock(); return; }
+      ok.disabled=false; ok.textContent='Crear artículo y seguir';
+      err.textContent = e.message;
+    }
+  };
+}
+
 document.getElementById('ovCart').addEventListener('click',e=>{ if(e.target.id==='ovCart') closeCart(); });
 updateCartBtn();
 
@@ -1328,6 +1695,14 @@ function drawDetail(){
     <div class="talles">${p.talles.map((x,i)=>
       `<button class="talle ${i===curTalle?'sel':''}" data-t="${i}">${esc(x.talle)}</button>`).join('')}</div>` : '';
 
+  // Stock del talle elegido (solo en modo editor): suma de colores por local.
+  const stSum = (t.stock||[]).reduce((a,c)=>({
+    cam: a.cam + (Number(c.camerino)||0), giu: a.giu + (Number(c.giustozzi)||0),
+  }), {cam:0, giu:0});
+  const stockHtml = (isAdmin && (t.stock||[]).length)
+    ? `<div class="note" style="margin-top:4px">Stock${p.talles.length>1?' talle '+esc(t.talle):''}:
+        <b>${stSum.cam+stSum.giu}</b> (Camerino ${stSum.cam} · Giustozzi ${stSum.giu})</div>` : '';
+
   const cuotasIntHtml = CUOTAS_INT.map(n=>{
     const c=cuotaDirecta(base,n,r);
     const recargo=Math.round(r*n*100);
@@ -1350,6 +1725,7 @@ function drawDetail(){
     <div class="scat">${esc(p.categoria)}</div>
     ${p.foto_url ? `<img src="${esc(p.foto_url)}" alt="" style="width:100%;max-width:320px;border-radius:10px;margin:10px auto;display:block;">` : ''}
     ${tallesHtml}
+    ${stockHtml}
     <div class="lista">
       <div class="l">DÉBITO / TRANSFERENCIA / CRED 1 PAGO${p.talles.length>1?' · talle '+esc(t.talle):''}</div>
       <div class="v">${fmt(base)}</div>
