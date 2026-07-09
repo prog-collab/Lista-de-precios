@@ -1118,7 +1118,7 @@ document.getElementById('scanBtn').onclick = async ()=>{
    Escribir stock exige iniciar sesión con una cuenta del panel (RLS is_admin);
    el PIN del modo editor NO alcanza. */
 let sbSession = getLS('sb_session', null);
-let stOpen=false, stStream=null, stStopped=true, stBusy=false, stCount=0, stLast=null;
+let stOpen=false, stStream=null, stStopped=true, stBusy=false, stCount=0, stLast=null, stVentaTotal=0;
 let stCoolCode='', stCoolUntil=0;
 let MAPS = {color:{}, talle:{}};   // código de barras → nombre (compartido, tabla barcode_maps)
 
@@ -1185,6 +1185,90 @@ const stStockDe = (p, color, talle) => {
   const c = t && (t.stock||[]).find(s=>s.color===color);
   return c ? (Number(c.camerino)||0) + (Number(c.giustozzi)||0) : 0;
 };
+const money = n => '$'+Number(n||0).toLocaleString('es-AR');
+const API_FACTURAR = 'https://www.camerino.com.ar/api/facturar';
+
+// Refresca la cajita del total acumulado + botón Facturar (solo visible en modo Venta).
+function refVentaTotal(){
+  const box = document.getElementById('stVentaBox');
+  if(!box) return;
+  if(stModo()!=='venta' || stVentaTotal<=0){ box.innerHTML=''; return; }
+  box.innerHTML = `
+    <div class="lista" style="margin-top:10px">
+      <div class="l">Total de esta venta</div>
+      <div class="v">${money(stVentaTotal)}</div>
+    </div>
+    <button class="addcart" id="stFacturarBtn">🧾 Facturar ${money(stVentaTotal)}</button>
+    <button class="fbtn" id="stNuevaVenta" style="width:100%; margin-top:6px">Nueva venta (reiniciar total)</button>`;
+  box.querySelector('#stFacturarBtn').onclick = ()=> stCardFacturar();
+  box.querySelector('#stNuevaVenta').onclick = ()=>{ stVentaTotal=0; refVentaTotal(); };
+}
+
+// Tarjeta para emitir la factura electrónica (AFIP/ARCA) por el total acumulado.
+function stCardFacturar(){
+  const localSel = stLocal();
+  const card = document.getElementById('stCard');
+  card.innerHTML = `
+    <div class="lista" style="margin-top:10px">
+      <div class="l">Facturar venta — ${stLocalNombre(localSel)}</div>
+      <div class="v" style="font-size:15px">CUIT ${localSel==='camerino' ? '20-28157793-0 (Camerino)' : '27-32029626-4 (Giustozzi)'}</div>
+    </div>
+    <div class="label">Tipo de factura</div>
+    <div class="talles">
+      <button class="talle sel" data-t="B">Factura B (consumidor final)</button>
+      <button class="talle" data-t="A">Factura A (con CUIT)</button>
+    </div>
+    <div class="label" id="stFcCuitLabel" style="display:none">CUIT del cliente</div>
+    <input id="stFcCuit" class="search" placeholder="ej. 20345678901" inputmode="numeric" style="display:none">
+    <div class="label">Monto total</div>
+    <input id="stFcMonto" class="search" type="number" inputmode="decimal" value="${stVentaTotal}">
+    <button class="addcart" id="stFcOk">Emitir factura</button>
+    <button class="fbtn" id="stFcCancel" style="width:100%; margin-top:6px">Cancelar</button>
+    <div class="note" id="stFcErr"></div>
+    <div id="stFcResultado"></div>`;
+  let tipo = 'B';
+  [...card.querySelectorAll('[data-t]')].forEach(b=> b.onclick=()=>{
+    tipo = b.dataset.t;
+    [...card.querySelectorAll('[data-t]')].forEach(x=>x.classList.remove('sel'));
+    b.classList.add('sel');
+    const esA = tipo==='A';
+    card.querySelector('#stFcCuitLabel').style.display = esA?'':'none';
+    card.querySelector('#stFcCuit').style.display = esA?'':'none';
+  });
+  card.querySelector('#stFcCancel').onclick = ()=>{ card.innerHTML=''; };
+  card.querySelector('#stFcOk').onclick = async ()=>{
+    const err = card.querySelector('#stFcErr');
+    const ok = card.querySelector('#stFcOk');
+    const monto = Number(card.querySelector('#stFcMonto').value);
+    const cuit = (card.querySelector('#stFcCuit').value||'').replace(/\D/g,'');
+    if(!(monto>0)){ err.textContent='El monto tiene que ser mayor a 0.'; return; }
+    if(tipo==='A' && cuit.length!==11){ err.textContent='Para Factura A escribí el CUIT del cliente (11 dígitos).'; return; }
+    err.textContent=''; ok.disabled=true; ok.textContent='Emitiendo…';
+    try{
+      const token = await sbToken();
+      const r = await fetch(API_FACTURAR, {
+        method:'POST',
+        headers:{ 'Content-Type':'application/json', Authorization:'Bearer '+token },
+        body: JSON.stringify({ local: localSel, tipo, montoTotal: monto, clienteCuit: cuit }),
+      });
+      const d = await r.json().catch(()=>({}));
+      if(!r.ok) throw new Error(d.error || 'No se pudo facturar.');
+      const homolog = d.ambiente==='homologacion';
+      card.querySelector('#stFcResultado').innerHTML = `
+        <div class="lista" style="margin-top:10px; ${homolog?'border:2px solid var(--warn)':''}">
+          ${homolog ? `<div class="l" style="color:var(--warn)">⚠ HOMOLOGACIÓN — sin validez fiscal real</div>` : ''}
+          <div class="l">Factura ${esc(d.tipo)} N° ${esc(String(d.numero))} · Pto Vta ${esc(String(d.puntoVenta))}</div>
+          <div class="v" style="font-size:20px">CAE ${esc(d.cae)}</div>
+          <div class="l">Vence: ${esc(d.caeVencimiento)}</div>
+        </div>`;
+      stVentaTotal = 0; refVentaTotal();
+      ok.style.display='none'; card.querySelector('#stFcCancel').textContent='Cerrar';
+    }catch(e){
+      ok.disabled=false; ok.textContent='Emitir factura';
+      err.textContent = e.message || 'No se pudo facturar.';
+    }
+  };
+}
 const stMapTalles = ret => ret.map(t=>({ talle:t.talle, precio:Number(t.precio),
   stock: Array.isArray(t.stock) ? t.stock : [] }));
 
@@ -1262,7 +1346,8 @@ function drawStock(){
     </div>
     <div id="stCard"></div>
     <div class="note" id="stNLabel">Escaneadas en esta sesión: <b id="stN">${stCount}</b></div>
-    <button id="stUndo" class="fbtn" style="width:100%; margin-top:6px; display:${stLast?'':'none'}">↩ Deshacer último</button>`;
+    <button id="stUndo" class="fbtn" style="width:100%; margin-top:6px; display:${stLast?'':'none'}">↩ Deshacer último</button>
+    <div id="stVentaBox"></div>`;
   document.getElementById('stClose').onclick = ()=> stCerrar(false);
   document.getElementById('stLogout').onclick = (e)=>{ e.preventDefault();
     sbSession=null; setLS('sb_session', null); drawStock(); };
@@ -1271,7 +1356,8 @@ function drawStock(){
     bMC.classList.toggle('sel', m!=='venta'); bMV.classList.toggle('sel', m==='venta');
     document.getElementById('stTitulo').textContent = m==='venta' ? '🛍️ Vender (POS)' : '📦 Cargar stock';
     document.getElementById('stLocLabel').textContent = m==='venta' ? 'Local donde se vende' : 'Sumar stock al local';
-    document.getElementById('stNLabel').firstChild.textContent = (m==='venta' ? 'Vendidas' : 'Cargadas')+' en esta sesión: '; };
+    document.getElementById('stNLabel').firstChild.textContent = (m==='venta' ? 'Vendidas' : 'Cargadas')+' en esta sesión: ';
+    refVentaTotal(); };
   bMC.onclick=()=>{ setLS('stock_modo','carga'); refModo(); };
   bMV.onclick=()=>{ setLS('stock_modo','venta'); refModo(); };
   refModo();
@@ -1429,8 +1515,10 @@ function stCardConfirm(p, digits){
       if(Array.isArray(ret)) p.talles = stMapTalles(ret);
       if(col3 && MAPS.color[col3]!==color) guardarMap('color', col3, color);
       if(tal3 && MAPS.talle[tal3]!==talle) guardarMap('talle', tal3, talle);
-      stLast = {codigo:p.codigo, talle, color, local:localSel, nombre:p.nombre, prod:p, delta};
+      const precioItem = Number(p.talles[sel].precio)||0;
+      stLast = {codigo:p.codigo, talle, color, local:localSel, nombre:p.nombre, prod:p, delta, precio: modo==='venta'?precioItem:0};
       stCount++;
+      if(modo==='venta'){ stVentaTotal += precioItem; refVentaTotal(); }
       const nEl=document.getElementById('stN'); if(nEl) nEl.textContent=stCount;
       const u=document.getElementById('stUndo'); if(u) u.style.display='';
       toast(`✓ ${delta>0?'+1':'−1'} ${p.nombre} · ${color} · ${talle}`);
@@ -1452,6 +1540,7 @@ async function stDeshacer(){
     const ret = await rpcAjustarStock(stLast.codigo, stLast.talle, stLast.color, stLast.local, deltaDeshacer);
     if(Array.isArray(ret) && stLast.prod) stLast.prod.talles = stMapTalles(ret);
     stCount = Math.max(0, stCount-1);
+    if(stLast.precio){ stVentaTotal = Math.max(0, stVentaTotal - stLast.precio); refVentaTotal(); }
     const nEl=document.getElementById('stN'); if(nEl) nEl.textContent=stCount;
     toast(`↩ Deshecho: ${deltaDeshacer>0?'+1':'−1'} `+stLast.nombre);
     stLast=null;
