@@ -1231,16 +1231,41 @@ function afipQrUrl(d){
 const cuitFmt = c => { const s=String(c||'').padStart(11,'0'); return `${s.slice(0,2)}-${s.slice(2,10)}-${s.slice(10)}`; };
 const fechaFmtDe = d => d ? `${d.slice(6,8)}/${d.slice(4,6)}/${d.slice(0,4)}` : '';
 
+// Datos fiscales fijos que AFIP exige mostrar en todo comprobante (no vienen en
+// la respuesta de /api/facturar, son del negocio).
+const LOCAL_INFO = {
+  camerino: {
+    razonSocial: 'Giustozzi Juan Samuel',
+    ingBrutos: '011-118288-2',
+    domicilio: 'San Jerónimo 2362 - Santa Fe (Sta Fe)',
+    inicioActividades: '01/07/2004',
+    condicionIva: 'IVA RESPONSABLE INSCRIPTO',
+  },
+  giustozzi: {
+    razonSocial: 'Barberis Florencia Jimena',   // TODO: confirmar Ing. Brutos/domicilio/inicio de actividades reales
+    ingBrutos: '',
+    domicilio: '',
+    inicioActividades: '',
+    condicionIva: 'IVA RESPONSABLE INSCRIPTO',
+  },
+};
+
 function renderTicket(d, localSel){
   const homolog = d.ambiente==='homologacion';
+  const info = LOCAL_INFO[localSel] || LOCAL_INFO.camerino;
   const qrUrl = afipQrUrl(d);
   const qrImg = 'https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=' + encodeURIComponent(qrUrl);
   return `
     <div id="stTicket" class="lista" style="margin-top:10px; font-family:'Courier New',monospace; ${homolog?'border:2px solid var(--warn)':''}">
       ${homolog ? `<div class="l" style="color:var(--warn); text-align:center">⚠ HOMOLOGACIÓN — sin validez fiscal real</div>` : ''}
       <div style="text-align:center">
-        <div class="v" style="font-size:16px">${esc(stLocalNombre(localSel).toUpperCase())}</div>
+        <div class="v" style="font-size:15px">${esc(info.razonSocial)}</div>
         <div class="l">CUIT ${esc(cuitFmt(d.cuit))}</div>
+        <div class="l">Ing. Brutos: ${esc(info.ingBrutos)}</div>
+        <div class="l">Domicilio: ${esc(info.domicilio)}</div>
+        <div class="l">Inicio de Actividades: ${esc(info.inicioActividades)}</div>
+        <div class="l">${esc(info.condicionIva)}</div>
+        <div class="l">${d.tipo==='A' ? 'A RESPONSABLE INSCRIPTO' : 'A CONSUMIDOR FINAL'}</div>
       </div>
       <div style="border-top:1px dashed var(--accent); margin:8px 0"></div>
       <div class="l">FACTURA ${esc(d.tipo)} (Cód. ${d.tipo==='A'?'001':'006'}) · P.V. ${esc(String(d.puntoVenta).padStart(4,'0'))}</div>
@@ -1269,17 +1294,25 @@ function buildTicketImage(d, localSel){
     qrImg.crossOrigin = 'anonymous';
     qrImg.onload = ()=>{
       const homolog = d.ambiente==='homologacion';
-      const W = 380, pad = 20, lineH = 24, qrSize = 220;
+      const info = LOCAL_INFO[localSel] || LOCAL_INFO.camerino;
+      const W = 380, pad = 20, lineH = 24, smallH = 17, qrSize = 220;
       const font = w => `${w} 14px "Courier New", monospace`;
+      const smallFont = w => `${w} 11px "Courier New", monospace`;
       const draw = ctx => {
         let y = pad + 14;
         const divider = ()=>{ if(ctx){ ctx.strokeStyle='#000'; ctx.setLineDash([4,3]); ctx.beginPath(); ctx.moveTo(pad,y); ctx.lineTo(W-pad,y); ctx.stroke(); ctx.setLineDash([]); } y += 16; };
         const center = (t,w)=>{ if(ctx){ ctx.font=font(w); ctx.textAlign='center'; ctx.fillText(t, W/2, y); } y += lineH; };
+        const centerSmall = (t,w)=>{ if(ctx){ ctx.font=smallFont(w); ctx.textAlign='center'; ctx.fillText(t, W/2, y); } y += smallH; };
         const left = (t,w)=>{ if(ctx){ ctx.font=font(w); ctx.textAlign='left'; ctx.fillText(t, pad, y); } y += lineH; };
         const row = (a,b,w)=>{ if(ctx){ ctx.font=font(w); ctx.textAlign='left'; ctx.fillText(a, pad, y); ctx.textAlign='right'; ctx.fillText(b, W-pad, y); } y += lineH; };
         if(ctx) ctx.fillStyle = '#000';
-        center(stLocalNombre(localSel).toUpperCase(), 'bold');
-        center('CUIT '+cuitFmt(d.cuit), 'normal');
+        center(info.razonSocial, 'bold');
+        centerSmall('CUIT '+cuitFmt(d.cuit), 'normal');
+        centerSmall('Ing. Brutos: '+info.ingBrutos, 'normal');
+        centerSmall('Domicilio: '+info.domicilio, 'normal');
+        centerSmall('Inicio de Actividades: '+info.inicioActividades, 'normal');
+        centerSmall(info.condicionIva, 'normal');
+        centerSmall(d.tipo==='A' ? 'A RESPONSABLE INSCRIPTO' : 'A CONSUMIDOR FINAL', 'normal');
         y += 4; divider();
         left(`FACTURA ${d.tipo} (Cód. ${d.tipo==='A'?'001':'006'})`, 'bold');
         left(`P.V. ${String(d.puntoVenta).padStart(4,'0')} · Nro. ${String(d.numero).padStart(8,'0')}`, 'normal');
