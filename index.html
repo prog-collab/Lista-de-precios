@@ -1228,26 +1228,85 @@ function afipQrUrl(d){
   return 'https://www.afip.gob.ar/fe/qr/?p=' + btoa(JSON.stringify(payload));
 }
 
+const cuitFmt = c => { const s=String(c||'').padStart(11,'0'); return `${s.slice(0,2)}-${s.slice(2,10)}-${s.slice(10)}`; };
+const fechaFmtDe = d => d ? `${d.slice(6,8)}/${d.slice(4,6)}/${d.slice(0,4)}` : '';
+
 function renderTicket(d, localSel){
   const homolog = d.ambiente==='homologacion';
   const qrUrl = afipQrUrl(d);
   const qrImg = 'https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=' + encodeURIComponent(qrUrl);
-  const fechaFmt = d.fecha ? `${d.fecha.slice(6,8)}/${d.fecha.slice(4,6)}/${d.fecha.slice(0,4)}` : '';
   return `
-    <div id="stTicket" class="lista" style="margin-top:10px; ${homolog?'border:2px solid var(--warn)':''}">
-      ${homolog ? `<div class="l" style="color:var(--warn)">⚠ HOMOLOGACIÓN — sin validez fiscal real</div>` : ''}
-      <div class="v" style="font-size:16px">${esc(stLocalNombre(localSel))}</div>
-      <div class="l">CUIT ${esc(String(d.cuit))}</div>
-      <div class="l" style="margin-top:8px">Factura ${esc(d.tipo)} · Pto Vta ${esc(String(d.puntoVenta))} · N° ${esc(String(d.numero))}</div>
-      <div class="l">Fecha: ${esc(fechaFmt)}</div>
-      ${d.tipo==='A' ? `<div class="l">CUIT cliente: ${esc(String(d.clienteCuit))}</div>` : ''}
-      <div class="v" style="font-size:20px; margin-top:6px">Total: ${money(d.monto)}</div>
-      <div class="l" style="margin-top:6px">CAE ${esc(d.cae)}</div>
-      <div class="l">Vence: ${esc(d.caeVencimiento)}</div>
+    <div id="stTicket" class="lista" style="margin-top:10px; font-family:'Courier New',monospace; ${homolog?'border:2px solid var(--warn)':''}">
+      ${homolog ? `<div class="l" style="color:var(--warn); text-align:center">⚠ HOMOLOGACIÓN — sin validez fiscal real</div>` : ''}
+      <div style="text-align:center">
+        <div class="v" style="font-size:16px">${esc(stLocalNombre(localSel).toUpperCase())}</div>
+        <div class="l">CUIT ${esc(cuitFmt(d.cuit))}</div>
+      </div>
+      <div style="border-top:1px dashed var(--accent); margin:8px 0"></div>
+      <div class="l">FACTURA ${esc(d.tipo)} (Cód. ${d.tipo==='A'?'001':'006'}) · P.V. ${esc(String(d.puntoVenta).padStart(4,'0'))}</div>
+      <div class="l">Nro. ${esc(String(d.numero).padStart(8,'0'))}</div>
+      <div class="l">Fecha: ${esc(fechaFmtDe(d.fecha))}</div>
+      ${d.tipo==='A' ? `<div class="l">CUIT cliente: ${esc(cuitFmt(d.clienteCuit))}</div>` : ''}
+      <div style="border-top:1px dashed var(--accent); margin:8px 0"></div>
+      <div class="v" style="font-size:20px; display:flex; justify-content:space-between"><span>TOTAL</span><span>${money(d.monto)}</span></div>
+      <div style="border-top:1px dashed var(--accent); margin:8px 0"></div>
+      <div class="l">CAE: ${esc(d.cae)}</div>
+      <div class="l">Vto. CAE: ${esc(fechaFmtDe(d.caeVencimiento))}</div>
       <div style="text-align:center; margin-top:10px"><img src="${qrImg}" width="180" height="180" alt="QR AFIP"></div>
     </div>
     <button class="addcart" id="stTicketWA" style="margin-top:8px">📲 Compartir por WhatsApp</button>
-    <button class="fbtn" id="stTicketPrint" style="width:100%; margin-top:6px">🖨️ Imprimir / Guardar PDF</button>`;
+    <button class="fbtn" id="stTicketPrint" style="width:100%; margin-top:6px">🖨️ Imprimir / Guardar PDF</button>
+    <div class="note" id="stTicketWAErr"></div>`;
+}
+
+// Dibuja el ticket estilo comprobante (fondo blanco, como el papel) en un canvas
+// y devuelve un Blob JPG — se usa para compartir la imagen por WhatsApp.
+function buildTicketImage(d, localSel){
+  return new Promise((resolve, reject)=>{
+    const qrUrl = afipQrUrl(d);
+    const qrImgUrl = 'https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=' + encodeURIComponent(qrUrl);
+    const qrImg = new Image();
+    qrImg.crossOrigin = 'anonymous';
+    qrImg.onload = ()=>{
+      const homolog = d.ambiente==='homologacion';
+      const W = 380, pad = 20, lineH = 24, qrSize = 220;
+      const font = w => `${w} 14px "Courier New", monospace`;
+      const draw = ctx => {
+        let y = pad + 14;
+        const divider = ()=>{ if(ctx){ ctx.strokeStyle='#000'; ctx.setLineDash([4,3]); ctx.beginPath(); ctx.moveTo(pad,y); ctx.lineTo(W-pad,y); ctx.stroke(); ctx.setLineDash([]); } y += 16; };
+        const center = (t,w)=>{ if(ctx){ ctx.font=font(w); ctx.textAlign='center'; ctx.fillText(t, W/2, y); } y += lineH; };
+        const left = (t,w)=>{ if(ctx){ ctx.font=font(w); ctx.textAlign='left'; ctx.fillText(t, pad, y); } y += lineH; };
+        const row = (a,b,w)=>{ if(ctx){ ctx.font=font(w); ctx.textAlign='left'; ctx.fillText(a, pad, y); ctx.textAlign='right'; ctx.fillText(b, W-pad, y); } y += lineH; };
+        if(ctx) ctx.fillStyle = '#000';
+        center(stLocalNombre(localSel).toUpperCase(), 'bold');
+        center('CUIT '+cuitFmt(d.cuit), 'normal');
+        y += 4; divider();
+        left(`FACTURA ${d.tipo} (Cód. ${d.tipo==='A'?'001':'006'})`, 'bold');
+        left(`P.V. ${String(d.puntoVenta).padStart(4,'0')} · Nro. ${String(d.numero).padStart(8,'0')}`, 'normal');
+        left(`Fecha: ${fechaFmtDe(d.fecha)}`, 'normal');
+        if(d.tipo==='A') left(`CUIT cliente: ${cuitFmt(d.clienteCuit)}`, 'normal');
+        y += 4; divider();
+        row('TOTAL', money(d.monto), 'bold');
+        y += 4; divider();
+        left(`CAE: ${d.cae}`, 'normal');
+        left(`Vto. CAE: ${fechaFmtDe(d.caeVencimiento)}`, 'normal');
+        if(homolog){ y += 6; center('⚠ HOMOLOGACIÓN', 'bold'); center('Sin validez fiscal real', 'normal'); }
+        y += 10;
+        if(ctx) ctx.drawImage(qrImg, (W-qrSize)/2, y, qrSize, qrSize);
+        y += qrSize + pad;
+        return y;
+      };
+      const totalH = draw(null);
+      const canvas = document.createElement('canvas');
+      canvas.width = W; canvas.height = totalH;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#fff'; ctx.fillRect(0,0,W,totalH);
+      draw(ctx);
+      canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('No se pudo generar la imagen.')), 'image/jpeg', 0.92);
+    };
+    qrImg.onerror = ()=> reject(new Error('No se pudo cargar el QR.'));
+    qrImg.src = qrImgUrl;
+  });
 }
 
 // Deja el teléfono en formato E.164 sin '+' para el link wa.me (asume Argentina
@@ -1259,19 +1318,35 @@ function telParaWA(tel){
   return t;
 }
 function wireTicketButtons(card, d, localSel, telefono){
-  card.querySelector('#stTicketWA').onclick = ()=>{
-    const fechaFmt = d.fecha ? `${d.fecha.slice(6,8)}/${d.fecha.slice(4,6)}/${d.fecha.slice(0,4)}` : '';
+  card.querySelector('#stTicketWA').onclick = async ()=>{
+    const btn = card.querySelector('#stTicketWA');
+    const err = card.querySelector('#stTicketWAErr');
     const homolog = d.ambiente==='homologacion';
-    const texto = `${stLocalNombre(localSel)}\n`+
-      `Factura ${d.tipo} · Pto Vta ${d.puntoVenta} · N° ${d.numero}\n`+
-      `Fecha: ${fechaFmt}\n`+
-      `Total: ${money(d.monto)}\n`+
-      `CAE: ${d.cae} (vence ${d.caeVencimiento})\n`+
-      `Verificar: ${afipQrUrl(d)}`+
-      (homolog ? `\n\n⚠ HOMOLOGACIÓN — sin validez fiscal real` : '');
-    const tel = telParaWA(telefono);
-    const url = (tel ? `https://wa.me/${tel}` : 'https://wa.me/') + '?text='+encodeURIComponent(texto);
-    window.open(url, '_blank');
+    const caption = `Ticket ${stLocalNombre(localSel)} · Factura ${d.tipo} N° ${d.numero}`+
+      (homolog ? ' (HOMOLOGACIÓN)' : '');
+    err.textContent = '';
+    btn.disabled = true; btn.textContent = 'Generando imagen…';
+    try{
+      const blob = await buildTicketImage(d, localSel);
+      const file = new File([blob], `ticket-${d.tipo}-${d.numero}.jpg`, { type:'image/jpeg' });
+      if(navigator.canShare && navigator.canShare({ files:[file] })){
+        await navigator.share({ files:[file], text: caption });
+      } else {
+        // Sin soporte para compartir archivos: descarga la imagen y abre WhatsApp
+        // con el texto — hay que adjuntarla a mano en el chat.
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = file.name;
+        a.click();
+        const tel = telParaWA(telefono);
+        const url = (tel ? `https://wa.me/${tel}` : 'https://wa.me/') + '?text='+encodeURIComponent(caption+'\nVerificar: '+afipQrUrl(d));
+        window.open(url, '_blank');
+        err.textContent = 'Se descargó la imagen del ticket — adjuntala a mano en el chat que se abrió.';
+      }
+    }catch(e){
+      if(e.name!=='AbortError') err.textContent = 'No se pudo compartir: '+(e.message||e);
+    }
+    btn.disabled = false; btn.textContent = '📲 Compartir por WhatsApp';
   };
   card.querySelector('#stTicketPrint').onclick = ()=>{
     const ticket = card.querySelector('#stTicket');
@@ -1317,23 +1392,8 @@ function stCardFacturar(){
     <div class="note">AFIP solo acepta hasta 5 días antes o después de hoy.</div>
     <button class="addcart" id="stFcOk">Emitir factura</button>
     <button class="fbtn" id="stFcCancel" style="width:100%; margin-top:6px">Cancelar</button>
-    <button class="fbtn" id="stFcDebug" style="width:100%; margin-top:6px">🔧 Diagnóstico (temporal)</button>
     <div class="note" id="stFcErr"></div>
     <div id="stFcResultado"></div>`;
-  card.querySelector('#stFcDebug').onclick = async ()=>{
-    const err = card.querySelector('#stFcErr');
-    err.textContent = 'Consultando…';
-    try{
-      const token = await sbToken();
-      const r = await fetch(API_FACTURAR, {
-        method:'POST',
-        headers:{ 'Content-Type':'application/json', Authorization:'Bearer '+token },
-        body: JSON.stringify({ local: localSel, debugPem: true }),
-      });
-      const d = await r.json().catch(()=>({}));
-      err.textContent = JSON.stringify(d, null, 1);
-    }catch(e){ err.textContent = 'Error: '+(e.message||e); }
-  };
   let tipo = 'B';
   let clienteTelefono = null;
   [...card.querySelectorAll('[data-t]')].forEach(b=> b.onclick=()=>{
