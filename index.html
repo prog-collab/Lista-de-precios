@@ -1205,9 +1205,13 @@ function refVentaTotal(){
 }
 
 // Tarjeta para emitir la factura electrónica (AFIP/ARCA) por el total acumulado.
+const isoLocal = d => { const p=n=>String(n).padStart(2,'0'); return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`; };
 function stCardFacturar(){
   const localSel = stLocal();
   const card = document.getElementById('stCard');
+  const hoy = new Date();
+  const fMin = new Date(hoy); fMin.setDate(fMin.getDate()-5);
+  const fMax = new Date(hoy); fMax.setDate(fMax.getDate()+5);
   card.innerHTML = `
     <div class="lista" style="margin-top:10px">
       <div class="l">Facturar venta — ${stLocalNombre(localSel)}</div>
@@ -1222,6 +1226,9 @@ function stCardFacturar(){
     <input id="stFcCuit" class="search" placeholder="ej. 20345678901" inputmode="numeric" style="display:none">
     <div class="label">Monto total</div>
     <input id="stFcMonto" class="search" type="number" inputmode="decimal" value="${stVentaTotal}">
+    <div class="label">Fecha del comprobante</div>
+    <input id="stFcFecha" class="search" type="date" value="${isoLocal(hoy)}" min="${isoLocal(fMin)}" max="${isoLocal(fMax)}">
+    <div class="note">AFIP solo acepta hasta 5 días antes o después de hoy.</div>
     <button class="addcart" id="stFcOk">Emitir factura</button>
     <button class="fbtn" id="stFcCancel" style="width:100%; margin-top:6px">Cancelar</button>
     <div class="note" id="stFcErr"></div>
@@ -1241,15 +1248,17 @@ function stCardFacturar(){
     const ok = card.querySelector('#stFcOk');
     const monto = Number(card.querySelector('#stFcMonto').value);
     const cuit = (card.querySelector('#stFcCuit').value||'').replace(/\D/g,'');
+    const fecha = card.querySelector('#stFcFecha').value;
     if(!(monto>0)){ err.textContent='El monto tiene que ser mayor a 0.'; return; }
     if(tipo==='A' && cuit.length!==11){ err.textContent='Para Factura A escribí el CUIT del cliente (11 dígitos).'; return; }
+    if(!fecha){ err.textContent='Elegí la fecha del comprobante.'; return; }
     err.textContent=''; ok.disabled=true; ok.textContent='Emitiendo…';
     try{
       const token = await sbToken();
       const r = await fetch(API_FACTURAR, {
         method:'POST',
         headers:{ 'Content-Type':'application/json', Authorization:'Bearer '+token },
-        body: JSON.stringify({ local: localSel, tipo, montoTotal: monto, clienteCuit: cuit }),
+        body: JSON.stringify({ local: localSel, tipo, montoTotal: monto, clienteCuit: cuit, fecha }),
       });
       const d = await r.json().catch(()=>({}));
       if(!r.ok) throw new Error(d.error || 'No se pudo facturar.');
