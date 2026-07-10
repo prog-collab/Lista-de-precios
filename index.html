@@ -1285,7 +1285,8 @@ function renderTicket(d, localSel){
       <div class="l">Vto. CAE: ${esc(fechaFmtDe(d.caeVencimiento))}</div>
       <div style="text-align:center; margin-top:10px"><img src="${qrImg}" width="180" height="180" alt="QR AFIP"></div>
     </div>
-    <button class="addcart" id="stTicketWA" style="margin-top:8px">📲 Compartir por WhatsApp</button>
+    <button class="addcart" id="stTicketWADirecto" style="margin-top:8px">📱 Enviar directo (texto)</button>
+    <button class="fbtn" id="stTicketWA" style="width:100%; margin-top:6px">🖼️ Compartir imagen (elegir contacto)</button>
     <button class="fbtn" id="stTicketPrint" style="width:100%; margin-top:6px">🖨️ Imprimir / Guardar PDF</button>
     <div class="note" id="stTicketWAErr"></div>`;
 }
@@ -1368,13 +1369,30 @@ function telParaWA(tel){
   if(!t.startsWith('54')) t = '549'+t.replace(/^0/,'').replace(/^15/,'');
   return t;
 }
+function textoTicket(d, localSel){
+  const homolog = d.ambiente==='homologacion';
+  const fechaFmt = fechaFmtDe(d.fecha);
+  return `${stLocalNombre(localSel)}\n`+
+    `Factura ${d.tipo} · Pto Vta ${d.puntoVenta} · N° ${d.numero}\n`+
+    `Fecha: ${fechaFmt}\n`+
+    `Total: ${money(d.monto)}\n`+
+    `CAE: ${d.cae} (vence ${d.caeVencimiento})\n`+
+    `Verificar: ${afipQrUrl(d)}`+
+    (homolog ? `\n\n⚠ HOMOLOGACIÓN — sin validez fiscal real` : '');
+}
 function wireTicketButtons(card, d, localSel, telefono){
+  card.querySelector('#stTicketWADirecto').onclick = ()=>{
+    const err = card.querySelector('#stTicketWAErr');
+    err.textContent = '';
+    const tel = telefono || prompt('Teléfono de WhatsApp del cliente (con código de área, sin 0 ni 15):');
+    if(!tel) return;
+    const url = `https://wa.me/${telParaWA(tel)}?text=`+encodeURIComponent(textoTicket(d, localSel));
+    window.open(url, '_blank');
+  };
   card.querySelector('#stTicketWA').onclick = async ()=>{
     const btn = card.querySelector('#stTicketWA');
     const err = card.querySelector('#stTicketWAErr');
-    const homolog = d.ambiente==='homologacion';
-    const caption = `Ticket ${stLocalNombre(localSel)} · Factura ${d.tipo} N° ${d.numero}`+
-      (homolog ? ' (HOMOLOGACIÓN)' : '');
+    const caption = textoTicket(d, localSel);
     err.textContent = '';
     btn.disabled = true; btn.textContent = 'Generando imagen…';
     try{
@@ -1390,14 +1408,14 @@ function wireTicketButtons(card, d, localSel, telefono){
         a.download = file.name;
         a.click();
         const tel = telParaWA(telefono);
-        const url = (tel ? `https://wa.me/${tel}` : 'https://wa.me/') + '?text='+encodeURIComponent(caption+'\nVerificar: '+afipQrUrl(d));
+        const url = (tel ? `https://wa.me/${tel}` : 'https://wa.me/') + '?text='+encodeURIComponent(caption);
         window.open(url, '_blank');
         err.textContent = 'Se descargó la imagen del ticket — adjuntala a mano en el chat que se abrió.';
       }
     }catch(e){
       if(e.name!=='AbortError') err.textContent = 'No se pudo compartir: '+(e.message||e);
     }
-    btn.disabled = false; btn.textContent = '📲 Compartir por WhatsApp';
+    btn.disabled = false; btn.textContent = '🖼️ Compartir imagen (elegir contacto)';
   };
   card.querySelector('#stTicketPrint').onclick = ()=>{
     const ticket = card.querySelector('#stTicket');
