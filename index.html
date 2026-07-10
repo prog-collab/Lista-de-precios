@@ -1296,7 +1296,7 @@ function renderTicket(d, localSel){
 function buildTicketImage(d, localSel){
   return new Promise((resolve, reject)=>{
     const qrUrl = afipQrUrl(d);
-    const qrImgUrl = 'https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=' + encodeURIComponent(qrUrl);
+    const qrImgUrl = 'https://api.qrserver.com/v1/create-qr-code/?size=700x700&data=' + encodeURIComponent(qrUrl);
     const qrImg = new Image();
     qrImg.crossOrigin = 'anonymous';
     qrImg.onload = ()=>{
@@ -1349,12 +1349,14 @@ function buildTicketImage(d, localSel){
         return y;
       };
       const totalH = draw(null);
+      const scale = 3; // alta densidad para que la imagen no se vea borrosa al ampliar o imprimir
       const canvas = document.createElement('canvas');
-      canvas.width = W; canvas.height = totalH;
+      canvas.width = W*scale; canvas.height = totalH*scale;
       const ctx = canvas.getContext('2d');
+      ctx.scale(scale, scale);
       ctx.fillStyle = '#fff'; ctx.fillRect(0,0,W,totalH);
       draw(ctx);
-      canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('No se pudo generar la imagen.')), 'image/jpeg', 0.92);
+      canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('No se pudo generar la imagen.')), 'image/jpeg', 0.95);
     };
     qrImg.onerror = ()=> reject(new Error('No se pudo cargar el QR.'));
     qrImg.src = qrImgUrl;
