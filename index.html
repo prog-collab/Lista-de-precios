@@ -1250,7 +1250,15 @@ function renderTicket(d, localSel){
     <button class="fbtn" id="stTicketPrint" style="width:100%; margin-top:6px">🖨️ Imprimir / Guardar PDF</button>`;
 }
 
-function wireTicketButtons(card, d, localSel){
+// Deja el teléfono en formato E.164 sin '+' para el link wa.me (asume Argentina
+// si no viene con código de país).
+function telParaWA(tel){
+  let t = String(tel||'').replace(/\D/g,'');
+  if(!t) return '';
+  if(!t.startsWith('54')) t = '549'+t.replace(/^0/,'').replace(/^15/,'');
+  return t;
+}
+function wireTicketButtons(card, d, localSel, telefono){
   card.querySelector('#stTicketWA').onclick = ()=>{
     const fechaFmt = d.fecha ? `${d.fecha.slice(6,8)}/${d.fecha.slice(4,6)}/${d.fecha.slice(0,4)}` : '';
     const homolog = d.ambiente==='homologacion';
@@ -1261,7 +1269,9 @@ function wireTicketButtons(card, d, localSel){
       `CAE: ${d.cae} (vence ${d.caeVencimiento})\n`+
       `Verificar: ${afipQrUrl(d)}`+
       (homolog ? `\n\n⚠ HOMOLOGACIÓN — sin validez fiscal real` : '');
-    window.open('https://wa.me/?text='+encodeURIComponent(texto), '_blank');
+    const tel = telParaWA(telefono);
+    const url = (tel ? `https://wa.me/${tel}` : 'https://wa.me/') + '?text='+encodeURIComponent(texto);
+    window.open(url, '_blank');
   };
   card.querySelector('#stTicketPrint').onclick = ()=>{
     const ticket = card.querySelector('#stTicket');
@@ -1293,8 +1303,13 @@ function stCardFacturar(){
       <button class="talle" data-t="A">Factura A (con CUIT)</button>
     </div>
     <div class="label" id="stFcCuitLabel" style="display:none">CUIT del cliente</div>
-    <input id="stFcCuit" class="search" placeholder="ej. 20345678901" inputmode="numeric" style="display:none">
+    <div id="stFcCuitRow" style="display:none; gap:6px">
+      <input id="stFcCuit" class="search" placeholder="ej. 20345678901" inputmode="numeric" style="flex:1">
+      <button class="fbtn" type="button" id="stFcBuscarCliente" style="flex:none; padding:0 14px">🔍</button>
+    </div>
+    <div id="stFcClientePicker"></div>
     <div class="note" id="stFcCuitNombre" style="display:none"></div>
+    <div id="stFcGuardarClienteBox"></div>
     <div class="label">Monto total</div>
     <input id="stFcMonto" class="search" type="number" inputmode="decimal" value="${stVentaTotal}">
     <div class="label">Fecha del comprobante</div>
@@ -1320,18 +1335,38 @@ function stCardFacturar(){
     }catch(e){ err.textContent = 'Error: '+(e.message||e); }
   };
   let tipo = 'B';
+  let clienteTelefono = null;
   [...card.querySelectorAll('[data-t]')].forEach(b=> b.onclick=()=>{
     tipo = b.dataset.t;
     [...card.querySelectorAll('[data-t]')].forEach(x=>x.classList.remove('sel'));
     b.classList.add('sel');
     const esA = tipo==='A';
     card.querySelector('#stFcCuitLabel').style.display = esA?'':'none';
-    card.querySelector('#stFcCuit').style.display = esA?'':'none';
+    card.querySelector('#stFcCuitRow').style.display = esA?'flex':'none';
     card.querySelector('#stFcCuitNombre').style.display = 'none';
+    card.querySelector('#stFcClientePicker').innerHTML = '';
+    card.querySelector('#stFcGuardarClienteBox').innerHTML = '';
   });
+  const guardarClienteBtn = nombreAfip => {
+    const box = card.querySelector('#stFcGuardarClienteBox');
+    box.innerHTML = `<button class="fbtn" type="button" id="stFcGuardarCliente" style="width:100%; margin-top:4px">💾 Guardar cliente</button>`;
+    box.querySelector('#stFcGuardarCliente').onclick = async ()=>{
+      const cuit = (card.querySelector('#stFcCuit').value||'').replace(/\D/g,'');
+      const tel = clienteTelefono || prompt(`Teléfono de WhatsApp de ${nombreAfip} (con código de área, sin 0 ni 15):`);
+      if(!tel) return;
+      clienteTelefono = tel;
+      try{
+        await sbAuthed('/rest/v1/clientes?on_conflict=cuit', { method:'POST',
+          headers:{ Prefer:'resolution=merge-duplicates' },
+          body: JSON.stringify({ cuit, nombre: nombreAfip, telefono: tel }) });
+        box.innerHTML = `<div class="note">✓ Cliente guardado.</div>`;
+      }catch(e){ box.innerHTML = `<div class="note">No se pudo guardar: ${esc(e.message||e)}</div>`; }
+    };
+  };
   const consultarCuit = async ()=>{
     const cuitInput = card.querySelector('#stFcCuit');
     const nombreEl = card.querySelector('#stFcCuitNombre');
+    card.querySelector('#stFcGuardarClienteBox').innerHTML = '';
     const cuit = (cuitInput.value||'').replace(/\D/g,'');
     if(cuit.length!==11){ nombreEl.style.display='none'; return; }
     nombreEl.style.display=''; nombreEl.textContent='Buscando…';
@@ -1344,10 +1379,46 @@ function stCardFacturar(){
       });
       const d = await r.json().catch(()=>({}));
       if(!r.ok) throw new Error(d.error || 'No se pudo consultar.');
-      nombreEl.textContent = d.nombre ? ('✓ '+d.nombre) : 'No se encontró esa persona en AFIP.';
+      if(d.nombre){ nombreEl.textContent = '✓ '+d.nombre; guardarClienteBtn(d.nombre); }
+      else nombreEl.textContent = 'No se encontró esa persona en AFIP.';
     }catch(e){ nombreEl.textContent = 'No se pudo verificar: '+(e.message||e); }
   };
+  card.querySelector('#stFcCuit').addEventListener('input', ()=>{ clienteTelefono = null; });
   card.querySelector('#stFcCuit').addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); consultarCuit(); } });
+  card.querySelector('#stFcBuscarCliente').onclick = ()=>{
+    const picker = card.querySelector('#stFcClientePicker');
+    if(picker.innerHTML){ picker.innerHTML=''; return; }
+    picker.innerHTML = `
+      <input id="stFcBuscarInput" class="search" placeholder="Buscar por nombre o teléfono…" style="margin-top:6px">
+      <div id="stFcBuscarResultados"></div>`;
+    const buscarInput = picker.querySelector('#stFcBuscarInput');
+    const resultadosEl = picker.querySelector('#stFcBuscarResultados');
+    buscarInput.focus();
+    let t;
+    buscarInput.addEventListener('input', ()=>{
+      clearTimeout(t);
+      t = setTimeout(async ()=>{
+        const q = buscarInput.value.trim();
+        if(q.length<2){ resultadosEl.innerHTML=''; return; }
+        resultadosEl.innerHTML = 'Buscando…';
+        try{
+          const r = await sbAuthed(`/rest/v1/clientes?select=cuit,nombre,telefono&or=(nombre.ilike.*${encodeURIComponent(q)}*,telefono.ilike.*${encodeURIComponent(q)}*)&limit=8`);
+          const rows = r.ok ? await r.json() : [];
+          resultadosEl.innerHTML = rows.length ? rows.map((c,i)=>
+            `<div class="lista" data-i="${i}" style="margin-top:4px; cursor:pointer">
+               <div class="l">${esc(c.nombre||'(sin nombre)')}</div>
+               <div class="v" style="font-size:13px">${esc(c.cuit||'sin CUIT')} · ${esc(c.telefono||'sin tel')}</div>
+             </div>`).join('') : '<div class="note">Sin resultados.</div>';
+          [...resultadosEl.querySelectorAll('[data-i]')].forEach(el=> el.onclick=()=>{
+            const c = rows[Number(el.dataset.i)];
+            clienteTelefono = c.telefono || null;
+            if(c.cuit){ card.querySelector('#stFcCuit').value = c.cuit; consultarCuit(); }
+            picker.innerHTML='';
+          });
+        }catch(e){ resultadosEl.innerHTML = 'Error al buscar.'; }
+      }, 300);
+    });
+  };
   card.querySelector('#stFcCuit').addEventListener('blur', consultarCuit);
   card.querySelector('#stFcCancel').onclick = ()=>{ card.innerHTML=''; };
   card.querySelector('#stFcOk').onclick = async ()=>{
@@ -1370,7 +1441,7 @@ function stCardFacturar(){
       const d = await r.json().catch(()=>({}));
       if(!r.ok) throw new Error(d.error || 'No se pudo facturar.');
       card.querySelector('#stFcResultado').innerHTML = renderTicket(d, localSel);
-      wireTicketButtons(card, d, localSel);
+      wireTicketButtons(card, d, localSel, clienteTelefono);
       stVentaTotal = 0; refVentaTotal();
       ok.style.display='none'; card.querySelector('#stFcCancel').textContent='Cerrar';
     }catch(e){
