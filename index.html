@@ -1118,7 +1118,7 @@ document.getElementById('scanBtn').onclick = async ()=>{
    Escribir stock exige iniciar sesión con una cuenta del panel (RLS is_admin);
    el PIN del modo editor NO alcanza. */
 let sbSession = getLS('sb_session', null);
-let stOpen=false, stStream=null, stStopped=true, stBusy=false, stCount=0, stLast=null, stVentaTotal=0;
+let stOpen=false, stStream=null, stStopped=true, stBusy=false, stCount=0, stLast=null, stVentaTotal=0, stVentaItems=[];
 let stCoolCode='', stCoolUntil=0;
 let MAPS = {color:{}, talle:{}};   // código de barras → nombre (compartido, tabla barcode_maps)
 
@@ -1202,7 +1202,7 @@ function refVentaTotal(){
     <button class="addcart" id="stFacturarBtn">🧾 Facturar ${money(stVentaTotal)}</button>
     <button class="fbtn" id="stNuevaVenta" style="width:100%; margin-top:6px">Nueva venta (reiniciar total)</button>`;
   box.querySelector('#stFacturarBtn').onclick = ()=> stCardFacturar();
-  box.querySelector('#stNuevaVenta').onclick = ()=>{ stVentaTotal=0; refVentaTotal(); };
+  box.querySelector('#stNuevaVenta').onclick = ()=>{ stVentaTotal=0; stVentaItems=[]; refVentaTotal(); };
 }
 
 // Tarjeta para emitir la factura electrónica (AFIP/ARCA) por el total acumulado.
@@ -1273,6 +1273,12 @@ function renderTicket(d, localSel){
       <div class="l">Fecha: ${esc(fechaFmtDe(d.fecha))}</div>
       ${d.tipo==='A' ? `<div class="l">CUIT cliente: ${esc(cuitFmt(d.clienteCuit))}</div>` : ''}
       <div style="border-top:1px dashed var(--accent); margin:8px 0"></div>
+      ${(d.items||[]).map(it=>`
+        <div class="l" style="display:flex; justify-content:space-between; gap:8px">
+          <span>${esc(it.codigo)} ${esc(it.nombre)}${it.talle?` (${esc(it.talle)}${it.color?' · '+esc(it.color):''})`:''}</span>
+          <span style="white-space:nowrap">${money(it.precio)}</span>
+        </div>`).join('')}
+      ${(d.items||[]).length ? `<div style="border-top:1px dashed var(--accent); margin:8px 0"></div>` : ''}
       <div class="v" style="font-size:20px; display:flex; justify-content:space-between"><span>TOTAL</span><span>${money(d.monto)}</span></div>
       <div style="border-top:1px dashed var(--accent); margin:8px 0"></div>
       <div class="l">CAE: ${esc(d.cae)}</div>
@@ -1305,6 +1311,16 @@ function buildTicketImage(d, localSel){
         const centerSmall = (t,w)=>{ if(ctx){ ctx.font=smallFont(w); ctx.textAlign='center'; ctx.fillText(t, W/2, y); } y += smallH; };
         const left = (t,w)=>{ if(ctx){ ctx.font=font(w); ctx.textAlign='left'; ctx.fillText(t, pad, y); } y += lineH; };
         const row = (a,b,w)=>{ if(ctx){ ctx.font=font(w); ctx.textAlign='left'; ctx.fillText(a, pad, y); ctx.textAlign='right'; ctx.fillText(b, W-pad, y); } y += lineH; };
+        const rowSmall = (a,b)=>{
+          if(ctx){
+            ctx.font=smallFont('normal'); ctx.textAlign='right'; ctx.fillText(b, W-pad, y);
+            const maxW = W-pad*2-ctx.measureText(b).width-10;
+            let txt=a; while(ctx.measureText(txt).width>maxW && txt.length>1) txt=txt.slice(0,-1);
+            if(txt!==a) txt=txt.slice(0,-1)+'…';
+            ctx.textAlign='left'; ctx.fillText(txt, pad, y);
+          }
+          y += smallH;
+        };
         if(ctx) ctx.fillStyle = '#000';
         center(info.razonSocial, 'bold');
         centerSmall('CUIT '+cuitFmt(d.cuit), 'normal');
@@ -1319,6 +1335,8 @@ function buildTicketImage(d, localSel){
         left(`Fecha: ${fechaFmtDe(d.fecha)}`, 'normal');
         if(d.tipo==='A') left(`CUIT cliente: ${cuitFmt(d.clienteCuit)}`, 'normal');
         y += 4; divider();
+        (d.items||[]).forEach(it=> rowSmall(`${it.codigo} ${it.nombre}${it.talle?` (${it.talle}${it.color?' · '+it.color:''})`:''}`, money(it.precio)));
+        if((d.items||[]).length){ y += 4; divider(); }
         row('TOTAL', money(d.monto), 'bold');
         y += 4; divider();
         left(`CAE: ${d.cae}`, 'normal');
@@ -1529,13 +1547,13 @@ function stCardFacturar(){
       const r = await fetch(API_FACTURAR, {
         method:'POST',
         headers:{ 'Content-Type':'application/json', Authorization:'Bearer '+token },
-        body: JSON.stringify({ local: localSel, tipo, montoTotal: monto, clienteCuit: cuit, fecha }),
+        body: JSON.stringify({ local: localSel, tipo, montoTotal: monto, clienteCuit: cuit, fecha, items: stVentaItems }),
       });
       const d = await r.json().catch(()=>({}));
       if(!r.ok) throw new Error(d.error || 'No se pudo facturar.');
       card.querySelector('#stFcResultado').innerHTML = renderTicket(d, localSel);
       wireTicketButtons(card, d, localSel, clienteTelefono);
-      stVentaTotal = 0; refVentaTotal();
+      stVentaTotal = 0; stVentaItems = []; refVentaTotal();
       ok.style.display='none'; card.querySelector('#stFcCancel').textContent='Cerrar';
     }catch(e){
       ok.disabled=false; ok.textContent='Emitir factura';
@@ -1792,7 +1810,7 @@ function stCardConfirm(p, digits){
       const precioItem = Number(p.talles[sel].precio)||0;
       stLast = {codigo:p.codigo, talle, color, local:localSel, nombre:p.nombre, prod:p, delta, precio: modo==='venta'?precioItem:0};
       stCount++;
-      if(modo==='venta'){ stVentaTotal += precioItem; refVentaTotal(); }
+      if(modo==='venta'){ stVentaTotal += precioItem; stVentaItems.push({codigo:p.codigo, nombre:p.nombre, talle, color, precio:precioItem}); refVentaTotal(); }
       const nEl=document.getElementById('stN'); if(nEl) nEl.textContent=stCount;
       const u=document.getElementById('stUndo'); if(u) u.style.display='';
       toast(`✓ ${delta>0?'+1':'−1'} ${p.nombre} · ${color} · ${talle}`);
@@ -1814,7 +1832,7 @@ async function stDeshacer(){
     const ret = await rpcAjustarStock(stLast.codigo, stLast.talle, stLast.color, stLast.local, deltaDeshacer);
     if(Array.isArray(ret) && stLast.prod) stLast.prod.talles = stMapTalles(ret);
     stCount = Math.max(0, stCount-1);
-    if(stLast.precio){ stVentaTotal = Math.max(0, stVentaTotal - stLast.precio); refVentaTotal(); }
+    if(stLast.precio){ stVentaTotal = Math.max(0, stVentaTotal - stLast.precio); stVentaItems.pop(); refVentaTotal(); }
     const nEl=document.getElementById('stN'); if(nEl) nEl.textContent=stCount;
     toast(`↩ Deshecho: ${deltaDeshacer>0?'+1':'−1'} `+stLast.nombre);
     stLast=null;
