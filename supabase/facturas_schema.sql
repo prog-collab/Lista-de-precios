@@ -20,6 +20,7 @@ create table if not exists facturas (
   cae             text not null,
   cae_vencimiento date,
   ambiente        text not null,             -- 'homologacion' | 'produccion'
+  items           jsonb not null default '[]'::jsonb,  -- [{codigo,nombre,talle,color,precio}]
   created_at      timestamptz not null default now()
 );
 
