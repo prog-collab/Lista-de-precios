@@ -1231,8 +1231,23 @@ function stCardFacturar(){
     <div class="note">AFIP solo acepta hasta 5 días antes o después de hoy.</div>
     <button class="addcart" id="stFcOk">Emitir factura</button>
     <button class="fbtn" id="stFcCancel" style="width:100%; margin-top:6px">Cancelar</button>
+    <button class="fbtn" id="stFcDebug" style="width:100%; margin-top:6px">🔧 Diagnóstico (temporal)</button>
     <div class="note" id="stFcErr"></div>
     <div id="stFcResultado"></div>`;
+  card.querySelector('#stFcDebug').onclick = async ()=>{
+    const err = card.querySelector('#stFcErr');
+    err.textContent = 'Consultando…';
+    try{
+      const token = await sbToken();
+      const r = await fetch(API_FACTURAR, {
+        method:'POST',
+        headers:{ 'Content-Type':'application/json', Authorization:'Bearer '+token },
+        body: JSON.stringify({ local: localSel, debugPem: true }),
+      });
+      const d = await r.json().catch(()=>({}));
+      err.textContent = JSON.stringify(d, null, 1);
+    }catch(e){ err.textContent = 'Error: '+(e.message||e); }
+  };
   let tipo = 'B';
   [...card.querySelectorAll('[data-t]')].forEach(b=> b.onclick=()=>{
     tipo = b.dataset.t;
