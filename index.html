@@ -714,7 +714,7 @@ window.addEventListener('popstate', ()=>{
   if(cartOpen) hideCart();
   else if(curProd) hideDetail();
 });
-document.getElementById('ov').addEventListener('click',e=>{ if(e.target.id==='ov') closeDetail(); });
+document.getElementById('ov').addEventListener('click',e=>{ if(e.target.id==='ov' && !stOpen) closeDetail(); });
 
 /* ===== Carrito ===== */
 let cartOpen=false;
