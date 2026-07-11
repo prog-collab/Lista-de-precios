@@ -1210,9 +1210,9 @@ function refVentaTotal(){
       <div class="l">Total de esta venta</div>
       <div class="v">${money(stVentaTotal)}</div>
     </div>
-    <button class="addcart" id="stFacturarBtn">🧾 Facturar ${money(stVentaTotal)}</button>
+    <button class="addcart" id="stFacturarBtn">🧾 Cerrar venta — ${money(stVentaTotal)}</button>
     <button class="fbtn" id="stNuevaVenta" style="width:100%; margin-top:6px">Nueva venta (reiniciar total)</button>`;
-  box.querySelector('#stFacturarBtn').onclick = ()=> stCardFacturar();
+  box.querySelector('#stFacturarBtn').onclick = ()=> stCardCerrarVenta();
   box.querySelector('#stNuevaVenta').onclick = ()=>{ stVentaTotal=0; stVentaItems=[]; refVentaTotal(); };
 }
 
@@ -1443,7 +1443,7 @@ function wireTicketButtons(card, d, localSel, telefono){
   };
 }
 
-function stCardFacturar(){
+function stCardCerrarVenta(){
   const localSel = stLocal();
   const card = document.getElementById('stCard');
   const hoy = new Date();
@@ -1451,33 +1451,74 @@ function stCardFacturar(){
   const fMax = new Date(hoy); fMax.setDate(fMax.getDate()+5);
   card.innerHTML = `
     <div class="lista" style="margin-top:10px">
-      <div class="l">Facturar venta — ${stLocalNombre(localSel)}</div>
+      <div class="l">Cerrar venta — ${stLocalNombre(localSel)}</div>
       <div class="v" style="font-size:15px">CUIT ${localSel==='camerino' ? '20-28157793-0 (Camerino)' : '27-32029626-4 (Giustozzi)'}</div>
     </div>
-    <div class="label">Tipo de factura</div>
+    <div class="label">Total de la venta</div>
+    <input id="stCvTotal" class="search" type="number" inputmode="decimal" value="${stVentaTotal}">
+    <div class="label">Medios de pago</div>
+    <div class="grid">
+      <div><div class="note" style="margin:0 0 4px">Efectivo (contado)</div>
+        <input id="stCvContado" class="search" type="number" inputmode="decimal" value="${stVentaTotal}"></div>
+      <div><div class="note" style="margin:0 0 4px">Tarjeta de crédito</div>
+        <input id="stCvTCred" class="search" type="number" inputmode="decimal" value="0"></div>
+      <div><div class="note" style="margin:0 0 4px">Tarjeta de débito</div>
+        <input id="stCvTDeb" class="search" type="number" inputmode="decimal" value="0"></div>
+      <div><div class="note" style="margin:0 0 4px">Crédito personal</div>
+        <input id="stCvCPer" class="search" type="number" inputmode="decimal" value="0"></div>
+      <div><div class="note" style="margin:0 0 4px">Crédito financiero</div>
+        <input id="stCvCFin" class="search" type="number" inputmode="decimal" value="0"></div>
+    </div>
+    <div class="lista" style="margin-top:8px">
+      <div class="l">Saldo pendiente</div>
+      <div class="v" id="stCvSaldo" style="font-size:22px">${money(0)}</div>
+    </div>
+    <div class="label">¿Facturar esta venta?</div>
     <div class="talles">
-      <button class="talle sel" data-t="B">Factura B (consumidor final)</button>
-      <button class="talle" data-t="A">Factura A (con CUIT)</button>
+      <button class="talle sel" data-fac="no">No</button>
+      <button class="talle" data-fac="si">Sí</button>
     </div>
-    <div class="label" id="stFcCuitLabel" style="display:none">CUIT del cliente</div>
-    <div id="stFcCuitRow" style="display:none; gap:6px">
-      <input id="stFcCuit" class="search" placeholder="ej. 20345678901" inputmode="numeric" style="flex:1">
-      <button class="fbtn" type="button" id="stFcBuscarCliente" style="flex:none; padding:0 14px">🔍</button>
+    <div id="stCvFacturarBox" style="display:none">
+      <div class="label">Tipo de factura</div>
+      <div class="talles">
+        <button class="talle sel" data-t="B">Factura B (consumidor final)</button>
+        <button class="talle" data-t="A">Factura A (con CUIT)</button>
+      </div>
+      <div class="label" id="stFcCuitLabel" style="display:none">CUIT del cliente</div>
+      <div id="stFcCuitRow" style="display:none; gap:6px">
+        <input id="stFcCuit" class="search" placeholder="ej. 20345678901" inputmode="numeric" style="flex:1">
+        <button class="fbtn" type="button" id="stFcBuscarCliente" style="flex:none; padding:0 14px">🔍</button>
+      </div>
+      <div id="stFcClientePicker"></div>
+      <div class="note" id="stFcCuitNombre" style="display:none"></div>
+      <div id="stFcGuardarClienteBox"></div>
+      <div class="label">Fecha del comprobante</div>
+      <input id="stFcFecha" class="search" type="date" value="${isoLocal(hoy)}" min="${isoLocal(fMin)}" max="${isoLocal(fMax)}">
+      <div class="note">AFIP solo acepta hasta 5 días antes o después de hoy.</div>
     </div>
-    <div id="stFcClientePicker"></div>
-    <div class="note" id="stFcCuitNombre" style="display:none"></div>
-    <div id="stFcGuardarClienteBox"></div>
-    <div class="label">Monto total</div>
-    <input id="stFcMonto" class="search" type="number" inputmode="decimal" value="${stVentaTotal}">
-    <div class="label">Fecha del comprobante</div>
-    <input id="stFcFecha" class="search" type="date" value="${isoLocal(hoy)}" min="${isoLocal(fMin)}" max="${isoLocal(fMax)}">
-    <div class="note">AFIP solo acepta hasta 5 días antes o después de hoy.</div>
-    <button class="addcart" id="stFcOk">Emitir factura</button>
+    <button class="addcart" id="stFcOk">Guardar venta</button>
     <button class="fbtn" id="stFcCancel" style="width:100%; margin-top:6px">Cancelar</button>
     <div class="note" id="stFcErr"></div>
     <div id="stFcResultado"></div>`;
   let tipo = 'B';
+  let facturar = false;
   let clienteTelefono = null;
+  const recalcSaldo = ()=>{
+    const total = Number(card.querySelector('#stCvTotal').value)||0;
+    const pagado = ['stCvContado','stCvTCred','stCvTDeb','stCvCPer','stCvCFin']
+      .reduce((acc,id)=> acc + (Number(card.querySelector('#'+id).value)||0), 0);
+    card.querySelector('#stCvSaldo').textContent = money(Math.max(0, total-pagado));
+  };
+  ['stCvTotal','stCvContado','stCvTCred','stCvTDeb','stCvCPer','stCvCFin'].forEach(id=>
+    card.querySelector('#'+id).addEventListener('input', recalcSaldo));
+  recalcSaldo();
+  [...card.querySelectorAll('[data-fac]')].forEach(b=> b.onclick=()=>{
+    facturar = b.dataset.fac==='si';
+    [...card.querySelectorAll('[data-fac]')].forEach(x=>x.classList.remove('sel'));
+    b.classList.add('sel');
+    card.querySelector('#stCvFacturarBox').style.display = facturar?'':'none';
+    card.querySelector('#stFcOk').textContent = facturar?'Guardar y facturar':'Guardar venta';
+  });
   [...card.querySelectorAll('[data-t]')].forEach(b=> b.onclick=()=>{
     tipo = b.dataset.t;
     [...card.querySelectorAll('[data-t]')].forEach(x=>x.classList.remove('sel'));
@@ -1566,29 +1607,50 @@ function stCardFacturar(){
   card.querySelector('#stFcOk').onclick = async ()=>{
     const err = card.querySelector('#stFcErr');
     const ok = card.querySelector('#stFcOk');
-    const monto = Number(card.querySelector('#stFcMonto').value);
+    const total = Number(card.querySelector('#stCvTotal').value)||0;
+    const pagoContado = Number(card.querySelector('#stCvContado').value)||0;
+    const pagoTCred = Number(card.querySelector('#stCvTCred').value)||0;
+    const pagoTDeb = Number(card.querySelector('#stCvTDeb').value)||0;
+    const pagoCPer = Number(card.querySelector('#stCvCPer').value)||0;
+    const pagoCFin = Number(card.querySelector('#stCvCFin').value)||0;
+    const saldoPendiente = Math.max(0, total - (pagoContado+pagoTCred+pagoTDeb+pagoCPer+pagoCFin));
     const cuit = (card.querySelector('#stFcCuit').value||'').replace(/\D/g,'');
     const fecha = card.querySelector('#stFcFecha').value;
-    if(!(monto>0)){ err.textContent='El monto tiene que ser mayor a 0.'; return; }
-    if(tipo==='A' && cuit.length!==11){ err.textContent='Para Factura A escribí el CUIT del cliente (11 dígitos).'; return; }
-    if(!fecha){ err.textContent='Elegí la fecha del comprobante.'; return; }
-    err.textContent=''; ok.disabled=true; ok.textContent='Emitiendo…';
+    if(!(total>0)){ err.textContent='El total tiene que ser mayor a 0.'; return; }
+    if(facturar && tipo==='A' && cuit.length!==11){ err.textContent='Para Factura A escribí el CUIT del cliente (11 dígitos).'; return; }
+    if(facturar && !fecha){ err.textContent='Elegí la fecha del comprobante.'; return; }
+    err.textContent=''; ok.disabled=true; ok.textContent = facturar?'Emitiendo…':'Guardando…';
     try{
-      const token = await sbToken();
-      const r = await fetch(API_FACTURAR, {
-        method:'POST',
-        headers:{ 'Content-Type':'application/json', Authorization:'Bearer '+token },
-        body: JSON.stringify({ local: localSel, tipo, montoTotal: monto, clienteCuit: cuit, fecha, items: stVentaItems }),
-      });
-      const d = await r.json().catch(()=>({}));
-      if(!r.ok) throw new Error(d.error || 'No se pudo facturar.');
-      card.querySelector('#stFcResultado').innerHTML = renderTicket(d, localSel);
-      wireTicketButtons(card, d, localSel, clienteTelefono);
+      let d = null;
+      if(facturar){
+        const token = await sbToken();
+        const r = await fetch(API_FACTURAR, {
+          method:'POST',
+          headers:{ 'Content-Type':'application/json', Authorization:'Bearer '+token },
+          body: JSON.stringify({ local: localSel, tipo, montoTotal: total, clienteCuit: cuit, fecha, items: stVentaItems }),
+        });
+        d = await r.json().catch(()=>({}));
+        if(!r.ok) throw new Error(d.error || 'No se pudo facturar.');
+      }
+      await sbAuthed('/rest/v1/ventas', { method:'POST', body: JSON.stringify({
+        local: localSel, vendedor: sbSession.email||null, items: stVentaItems, total,
+        pago_contado: pagoContado, pago_tarjeta_credito: pagoTCred, pago_tarjeta_debito: pagoTDeb,
+        pago_credito_personal: pagoCPer, pago_credito_financiero: pagoCFin, saldo_pendiente: saldoPendiente,
+        facturada: facturar,
+        factura_tipo: facturar ? d.tipo : null, factura_pto_vta: facturar ? d.puntoVenta : null,
+        factura_numero: facturar ? d.numero : null, factura_cae: facturar ? d.cae : null,
+      })}).catch(e=>console.error('No se pudo guardar la venta:', e));
+      if(facturar){
+        card.querySelector('#stFcResultado').innerHTML = renderTicket(d, localSel);
+        wireTicketButtons(card, d, localSel, clienteTelefono);
+      } else {
+        card.querySelector('#stFcResultado').innerHTML = `<div class="lista" style="margin-top:10px"><div class="l">✓ Venta guardada</div><div class="v" style="font-size:20px">${money(total)}</div></div>`;
+      }
       stVentaTotal = 0; stVentaItems = []; refVentaTotal();
       ok.style.display='none'; card.querySelector('#stFcCancel').textContent='Cerrar';
     }catch(e){
-      ok.disabled=false; ok.textContent='Emitir factura';
-      err.textContent = e.message || 'No se pudo facturar.';
+      ok.disabled=false; ok.textContent = facturar?'Guardar y facturar':'Guardar venta';
+      err.textContent = e.message || 'No se pudo guardar la venta.';
     }
   };
 }
