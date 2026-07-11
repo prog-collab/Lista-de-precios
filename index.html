@@ -80,6 +80,11 @@
   .sheet{background:var(--bg); width:100%; max-width:520px; align-self:flex-start;
     border-radius:0 0 18px 18px; border-bottom:1px solid var(--line);
     padding:18px 16px 90px}
+  /* Panel de stock/venta/facturar: en pantallas grandes (PC) aprovecha el ancho
+     en vez de quedar angosto como en el celular. */
+  @media (min-width:900px){
+    .sheet.sheet-wide{max-width:680px; padding-left:32px; padding-right:32px}
+  }
   .sheet h2{margin:0 0 2px; font-size:20px; padding-right:8px}
   .sheet .scod{color:var(--accent); font-weight:700; font-size:14px}
   .sheet .scat{color:var(--muted); font-size:13px; margin-bottom:14px}
@@ -751,6 +756,7 @@ document.getElementById('cartBtn').onclick = openCart;
 let helpOpen=false;
 function openHelp(){
   helpOpen=true;
+  document.getElementById('sheet').classList.remove('sheet-wide');
   document.getElementById('sheet').innerHTML = `
     <div class="topbtns"><button class="backbtn" onclick="closeDetail()">← Atrás</button></div>
     <h2>❓ Ayuda</h2>
@@ -835,6 +841,7 @@ function openAddProduct(edit){
   const cats = [...new Set(PRODS.map(p=>p.categoria).filter(Boolean))].sort();
   const inS = 'border:1px solid var(--line); background:var(--card); color:var(--text); border-radius:8px; padding:9px; font-size:14px';
   const esEdit = !!edit;
+  document.getElementById('sheet').classList.remove('sheet-wide');
   document.getElementById('sheet').innerHTML = `
     <div class="topbtns"><button class="backbtn" onclick="closeDetail()">← Atrás</button></div>
     <h2>${esEdit?'✏️ Editar producto':'➕ Agregar producto'}</h2>
@@ -1002,6 +1009,7 @@ document.getElementById('scanBtn').onclick = async ()=>{
   video.srcObject = stream; video.setAttribute('playsinline','');
   video.style = 'width:100%; border-radius:12px; display:block';
   const hayBarras = ('BarcodeDetector' in window);
+  document.getElementById('sheet').classList.remove('sheet-wide');
   document.getElementById('sheet').innerHTML = `
     <div class="topbtns"><button class="backbtn" id="scanClose">✕ Cerrar</button></div>
     <h2>📷 Escanear código</h2>
@@ -1612,6 +1620,7 @@ window.addEventListener('popstate', ()=>{ if(stOpen) stCerrar(true); });
 
 function drawStock(){
   const sheet = document.getElementById('sheet');
+  sheet.classList.add('sheet-wide');
   if(!sbSession){
     sheet.innerHTML = `
       <div class="topbtns"><button class="backbtn" id="stClose">✕ Cerrar</button></div>
@@ -2154,6 +2163,7 @@ function drawDetail(){
         `<option value="${d}" ${d===promoSel?'selected':''}>−${d}%</option>`).join('')}</select></div>
      <div class="b">${fmt(base*(1-promoSel/100))}</div></div>`;
 
+  document.getElementById('sheet').classList.remove('sheet-wide');
   document.getElementById('sheet').innerHTML = `
     <div class="topbtns">
       <button class="star ${fav?'on':''}" onclick="toggleFav('${esc(p.codigo)}')" title="Favorito">${fav?'★':'☆'}</button>
