@@ -1463,6 +1463,7 @@ function wireVentaCard(){
   const CAMPOS_PAGO = ['stCvContado','stCvTransf','stCvTCred','stCvTDeb','stCvCPer','stCvCFin'];
   CAMPOS_PAGO.forEach(id=> card.querySelector('#'+id).addEventListener('input', recalcSaldoVenta));
   card.querySelector('#stCvTCredCuotas').addEventListener('change', recalcSaldoVenta);
+  card.querySelector('#stCvTransfDescuento').addEventListener('change', recalcSaldoVenta);
   recalcSaldoVenta();
   [...card.querySelectorAll('[data-usar-total]')].forEach(b=> b.onclick=()=>{
     const campo = b.dataset.usarTotal;
@@ -1568,11 +1569,13 @@ function wireVentaCard(){
     const err = card.querySelector('#stFcErr');
     const ok = card.querySelector('#stFcOk');
     const cuotasTCred = cuotasSeleccionadas();
-    const recargoPct = cuotasTCred>1 ? Number((tasaMensual*cuotasTCred).toFixed(2)) : 0;
+    const recargoPct = CUOTAS_INT.includes(cuotasTCred) ? Number((tasaMensual*cuotasTCred).toFixed(2)) : 0;
     const pagoTCred = montoFinalTarjeta();
+    const transfDescuentoActivo = descuentoTransferenciaActivo();
+    const transfDescuentoPct = transfDescuentoActivo ? DESCUENTO_TRANSFERENCIA : 0;
+    const pagoTransf = montoFinalTransferencia();
     const total = totalConRecargo();
     const pagoContado = Number(card.querySelector('#stCvContado').value)||0;
-    const pagoTransf = Number(card.querySelector('#stCvTransf').value)||0;
     const transfAlias = card.querySelector('#stCvTransfAlias').value||null;
     const pagoTDeb = Number(card.querySelector('#stCvTDeb').value)||0;
     const pagoCPer = Number(card.querySelector('#stCvCPer').value)||0;
@@ -1595,6 +1598,7 @@ function wireVentaCard(){
         body: JSON.stringify({
           local: localSel, vendedor: sbSession.email||null, items: stVentaItems, total,
           pago_contado: pagoContado, pago_transferencia: pagoTransf, transferencia_alias: transfAlias,
+          transferencia_descuento_pct: transfDescuentoPct,
           pago_tarjeta_credito: pagoTCred, pago_tarjeta_debito: pagoTDeb,
           pago_credito_personal: pagoCPer, pago_credito_financiero: pagoCFin, saldo_pendiente: saldoPendiente,
           tarjeta_credito_cuotas: cuotasTCred, tarjeta_credito_recargo_pct: recargoPct,
@@ -1886,6 +1890,11 @@ function drawVender(){
               <option value="juan01">juan01</option>
               <option value="giustozzi.mp">giustozzi.mp</option>
             </select>
+            <label class="note" style="display:flex; align-items:center; gap:6px; margin-top:4px; cursor:pointer">
+              <input id="stCvTransfDescuento" type="checkbox" style="margin:0">
+              Aplicar descuento −5%
+            </label>
+            <div class="note" id="stCvTransfDescuentoInfo" style="margin-top:2px"></div>
           </div>
           <div><div class="note" style="margin:0 0 4px">Tarjeta de crédito</div>
             <div style="display:flex; gap:4px">
@@ -1893,7 +1902,8 @@ function drawVender(){
               <button class="fbtn" type="button" data-usar-total="stCvTCred" style="flex:none; padding:0 10px" title="Usar el total del carrito">＝</button>
             </div>
             <select id="stCvTCredCuotas" class="search" style="margin-top:4px">
-              <option value="1">Sin cuotas (contado)</option>
+              <option value="1">1 cuota</option>
+              <option value="3">3 cuotas sin interés</option>
               ${CUOTAS_INT.map(n=>`<option value="${n}">${n} cuotas (+${(tasaMensual*n).toFixed(1)}%)</option>`).join('')}
             </select>
             <div class="note" id="stCvRecargoInfo" style="margin-top:2px"></div>
@@ -1989,8 +1999,34 @@ function drawVender(){
   stCamara();
 }
 
+// Rol del usuario logueado (vendedor|gerente), consultado una sola vez por
+// sesión — habilita la opción de editar una venta en "Ventas de hoy".
+let miRolCache = null;
+async function cargarMiRol(){
+  if(miRolCache) return miRolCache;
+  try{
+    const r = await sbAuthed('/rest/v1/admins?select=rol');
+    const rows = r.ok ? await r.json() : [];
+    miRolCache = (rows[0] && rows[0].rol) || 'vendedor';
+  }catch(e){ miRolCache = 'vendedor'; }
+  return miRolCache;
+}
+
+function mediosDePagoVenta(v){
+  return [
+    v.pago_contado>0 && `Efectivo ${money(v.pago_contado)}`,
+    v.pago_transferencia>0 && `Transf.${v.transferencia_alias?` (${esc(v.transferencia_alias)})`:''} ${money(v.pago_transferencia)}${v.transferencia_descuento_pct>0?` (−${v.transferencia_descuento_pct}%)`:''}`,
+    v.pago_tarjeta_credito>0 && `T.Créd ${money(v.pago_tarjeta_credito)}${v.tarjeta_credito_cuotas>1?` (${v.tarjeta_credito_cuotas} cuotas, +${v.tarjeta_credito_recargo_pct}%)`:''}`,
+    v.pago_tarjeta_debito>0 && `T.Déb ${money(v.pago_tarjeta_debito)}`,
+    v.pago_credito_personal>0 && `Créd.Pers ${money(v.pago_credito_personal)}`,
+    v.pago_credito_financiero>0 && `Créd.Fin ${money(v.pago_credito_financiero)}`,
+  ].filter(Boolean).join(' · ') || 'Sin medio de pago cargado';
+}
+
 // Visión general del día — reemplaza la planilla de papel: todas las ventas
 // de hoy en este local, con sus productos, medios de pago y si se facturaron.
+// Cada venta se puede tocar para desplegar el detalle con acciones (facturar
+// si no está facturada; editar, solo si el usuario es gerente).
 async function renderResumenDia(){
   const box = document.getElementById('stResumenDia');
   if(!box) return;
@@ -1998,7 +2034,10 @@ async function renderResumenDia(){
   try{
     const hoyIso = isoLocal(new Date());
     const localSel = stLocal();
-    const r = await sbAuthed(`/rest/v1/ventas?local=eq.${localSel}&fecha=eq.${hoyIso}&order=created_at.desc&select=*`);
+    const [rol, r] = await Promise.all([
+      cargarMiRol(),
+      sbAuthed(`/rest/v1/ventas?local=eq.${localSel}&fecha=eq.${hoyIso}&order=created_at.desc&select=*`),
+    ]);
     const rows = r.ok ? await r.json() : [];
     const totalDia = rows.reduce((a,v)=> a + Number(v.total||0), 0);
     box.innerHTML = `
@@ -2008,38 +2047,186 @@ async function renderResumenDia(){
       </div>
       ${rows.length ? rows.map(v=>{
         const hora = v.created_at ? new Date(v.created_at).toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'}) : '';
-        const medios = [
-          v.pago_contado>0 && `Efectivo ${money(v.pago_contado)}`,
-          v.pago_transferencia>0 && `Transf.${v.transferencia_alias?` (${esc(v.transferencia_alias)})`:''} ${money(v.pago_transferencia)}`,
-          v.pago_tarjeta_credito>0 && `T.Créd ${money(v.pago_tarjeta_credito)}${v.tarjeta_credito_cuotas>1?` (${v.tarjeta_credito_cuotas} cuotas, +${v.tarjeta_credito_recargo_pct}%)`:''}`,
-          v.pago_tarjeta_debito>0 && `T.Déb ${money(v.pago_tarjeta_debito)}`,
-          v.pago_credito_personal>0 && `Créd.Pers ${money(v.pago_credito_personal)}`,
-          v.pago_credito_financiero>0 && `Créd.Fin ${money(v.pago_credito_financiero)}`,
-        ].filter(Boolean).join(' · ') || 'Sin medio de pago cargado';
         const items = (v.items||[]).map(it=> `${esc(it.codigo)} ${esc(it.nombre)}${it.talle?` (${esc(it.talle)}${it.color?' · '+esc(it.color):''})`:''}`).join(', ');
         return `
-        <div class="lista" style="margin-top:6px; text-align:left">
+        <div class="lista ventaFila" data-venta-id="${v.id}" style="margin-top:6px; text-align:left; cursor:pointer">
           <div style="display:flex; justify-content:space-between; gap:8px">
             <span class="l">${hora} ${v.facturada?`<span class="v" style="font-size:11px; color:var(--accent2)">· Factura ${esc(v.factura_tipo)} N° ${esc(String(v.factura_numero))}</span>`:''}</span>
             <span class="v" style="font-size:16px">${money(v.total)}</span>
           </div>
           <div class="note" style="margin-top:2px">${items || '(sin detalle de items)'}</div>
-          <div class="note" style="margin-top:2px">${medios}${v.saldo_pendiente>0?` · ⚠ Saldo pendiente: ${money(v.saldo_pendiente)}`:''}</div>
+          <div class="note" style="margin-top:2px">${mediosDePagoVenta(v)}${v.saldo_pendiente>0?` · ⚠ Saldo pendiente: ${money(v.saldo_pendiente)}`:''}</div>
+          <div class="ventaDetalle" style="display:none; margin-top:8px; padding-top:8px; border-top:1px solid var(--border)"></div>
         </div>`;
       }).join('') : '<div class="note">Todavía no hay ventas registradas hoy en este local.</div>'}`;
+    [...box.querySelectorAll('.ventaFila')].forEach(fila=>{
+      fila.addEventListener('click', (e)=>{
+        if(e.target.closest('.ventaDetalle')) return; // no recolapsar al tocar algo adentro del detalle
+        const v = rows.find(x=>x.id===fila.dataset.ventaId);
+        const detBox = fila.querySelector('.ventaDetalle');
+        const abierto = detBox.style.display !== 'none';
+        [...box.querySelectorAll('.ventaDetalle')].forEach(d=>{ if(d!==detBox) d.style.display='none'; });
+        detBox.style.display = abierto ? 'none' : '';
+        if(!abierto && !detBox.dataset.armado){
+          detBox.dataset.armado = '1';
+          armarDetalleVenta(detBox, v, rol, localSel);
+        }
+      });
+    });
   }catch(e){ box.innerHTML = `<div class="note">No se pudo cargar el resumen del día.</div>`; }
+}
+
+// Contenido del desplegable de una venta: botón Facturar (si no está
+// facturada) y botón Editar (solo gerente, y solo si no está facturada).
+function armarDetalleVenta(detBox, v, rol, localSel){
+  const puedeEditar = rol==='gerente' && !v.facturada;
+  detBox.innerHTML = `
+    ${!v.facturada ? `<button class="fbtn" type="button" data-accion="facturar" style="width:100%">🧾 Facturar esta venta</button>` : ''}
+    ${puedeEditar ? `<button class="fbtn" type="button" data-accion="editar" style="width:100%; margin-top:6px">✏️ Editar venta</button>` : ''}
+    <div class="ventaAccionBox" style="margin-top:8px"></div>`;
+  const accionBox = detBox.querySelector('.ventaAccionBox');
+  const bFacturar = detBox.querySelector('[data-accion="facturar"]');
+  const bEditar = detBox.querySelector('[data-accion="editar"]');
+  if(bFacturar) bFacturar.onclick = ()=> armarFacturarVentaExistente(accionBox, v, localSel);
+  if(bEditar) bEditar.onclick = ()=> armarEditarVentaExistente(accionBox, v, localSel);
+}
+
+// Facturar una venta ya guardada (no facturada todavía) — mismo flujo de
+// AFIP que al guardar, pero disparado después, desde "Ventas de hoy".
+function armarFacturarVentaExistente(box, v, localSel){
+  const hoy = new Date();
+  const fMin = new Date(hoy); fMin.setDate(fMin.getDate()-5);
+  const fMax = new Date(hoy); fMax.setDate(fMax.getDate()+5);
+  let tipo = 'B';
+  box.innerHTML = `
+    <div class="label">Tipo de factura</div>
+    <div class="talles">
+      <button class="talle sel" data-t="B">Factura B (consumidor final)</button>
+      <button class="talle" data-t="A">Factura A (con CUIT)</button>
+    </div>
+    <div class="label" id="vfCuitLabel" style="display:none">CUIT del cliente</div>
+    <input id="vfCuit" class="search" placeholder="ej. 20345678901" inputmode="numeric" style="display:none">
+    <div class="label">Fecha del comprobante</div>
+    <input id="vfFecha" class="search" type="date" value="${isoLocal(hoy)}" min="${isoLocal(fMin)}" max="${isoLocal(fMax)}">
+    <button class="addcart" id="vfOk" style="margin-top:10px">Emitir factura</button>
+    <div class="note" id="vfErr"></div>
+    <div id="vfResultado"></div>`;
+  [...box.querySelectorAll('[data-t]')].forEach(b=> b.onclick=()=>{
+    tipo = b.dataset.t;
+    [...box.querySelectorAll('[data-t]')].forEach(x=>x.classList.remove('sel'));
+    b.classList.add('sel');
+    const esA = tipo==='A';
+    box.querySelector('#vfCuitLabel').style.display = esA?'':'none';
+    box.querySelector('#vfCuit').style.display = esA?'':'none';
+  });
+  box.querySelector('#vfOk').onclick = async ()=>{
+    const err = box.querySelector('#vfErr');
+    const ok = box.querySelector('#vfOk');
+    const cuit = (box.querySelector('#vfCuit').value||'').replace(/\D/g,'');
+    const fecha = box.querySelector('#vfFecha').value;
+    if(tipo==='A' && cuit.length!==11){ err.textContent='Para Factura A escribí el CUIT del cliente (11 dígitos).'; return; }
+    if(!fecha){ err.textContent='Elegí la fecha del comprobante.'; return; }
+    err.textContent=''; ok.disabled=true; ok.textContent='Emitiendo…';
+    try{
+      const token = await sbToken();
+      const r = await fetch(API_FACTURAR, {
+        method:'POST',
+        headers:{ 'Content-Type':'application/json', Authorization:'Bearer '+token },
+        body: JSON.stringify({ local: localSel, tipo, montoTotal: v.total, clienteCuit: cuit, fecha, items: v.items }),
+      });
+      const d = await r.json().catch(()=>({}));
+      if(!r.ok) throw new Error(d.error || 'No se pudo facturar.');
+      await sbAuthed(`/rest/v1/ventas?id=eq.${v.id}`, { method:'PATCH', body: JSON.stringify({
+        facturada: true, factura_tipo: d.tipo, factura_pto_vta: d.puntoVenta,
+        factura_numero: d.numero, factura_cae: d.cae,
+      }) });
+      box.innerHTML = renderTicket(d, localSel);
+      wireTicketButtons(box, d, localSel, null);
+      renderResumenDia();
+    }catch(e){
+      ok.disabled=false; ok.textContent='Emitir factura';
+      err.textContent = e.message || 'No se pudo facturar.';
+    }
+  };
+}
+
+// Editar medios de pago/total de una venta ya guardada (solo gerente, y solo
+// si no está facturada) — usa el RPC gerente_editar_venta_pago.
+function armarEditarVentaExistente(box, v, localSel){
+  box.innerHTML = `
+    <div class="grid">
+      <div><div class="note" style="margin:0 0 4px">Total</div><input id="veTotal" class="search" type="number" value="${v.total}"></div>
+      <div><div class="note" style="margin:0 0 4px">Efectivo</div><input id="veContado" class="search" type="number" value="${v.pago_contado}"></div>
+      <div><div class="note" style="margin:0 0 4px">Transferencia</div><input id="veTransf" class="search" type="number" value="${v.pago_transferencia}"></div>
+      <div><div class="note" style="margin:0 0 4px">Alias transferencia</div>
+        <select id="veTransfAlias" class="search">
+          <option value="" ${!v.transferencia_alias?'selected':''}>—</option>
+          <option value="juan01" ${v.transferencia_alias==='juan01'?'selected':''}>juan01</option>
+          <option value="giustozzi.mp" ${v.transferencia_alias==='giustozzi.mp'?'selected':''}>giustozzi.mp</option>
+        </select></div>
+      <div><div class="note" style="margin:0 0 4px">Descuento transf. (%)</div><input id="veTransfDesc" class="search" type="number" step="0.1" value="${v.transferencia_descuento_pct||0}"></div>
+      <div><div class="note" style="margin:0 0 4px">Tarjeta de crédito</div><input id="veTCred" class="search" type="number" value="${v.pago_tarjeta_credito}"></div>
+      <div><div class="note" style="margin:0 0 4px">Cuotas tarjeta</div>
+        <select id="veTCredCuotas" class="search">
+          <option value="1" ${v.tarjeta_credito_cuotas===1?'selected':''}>1 cuota</option>
+          <option value="3" ${v.tarjeta_credito_cuotas===3?'selected':''}>3 cuotas sin interés</option>
+          ${CUOTAS_INT.map(n=>`<option value="${n}" ${v.tarjeta_credito_cuotas===n?'selected':''}>${n} cuotas</option>`).join('')}
+        </select></div>
+      <div><div class="note" style="margin:0 0 4px">Recargo tarjeta (%)</div><input id="veTCredRecargo" class="search" type="number" step="0.1" value="${v.tarjeta_credito_recargo_pct||0}"></div>
+      <div><div class="note" style="margin:0 0 4px">Tarjeta de débito</div><input id="veTDeb" class="search" type="number" value="${v.pago_tarjeta_debito}"></div>
+      <div><div class="note" style="margin:0 0 4px">Crédito personal</div><input id="veCPer" class="search" type="number" value="${v.pago_credito_personal}"></div>
+      <div><div class="note" style="margin:0 0 4px">Crédito financiero</div><input id="veCFin" class="search" type="number" value="${v.pago_credito_financiero}"></div>
+    </div>
+    <button class="addcart" id="veOk" style="margin-top:10px">Guardar cambios</button>
+    <div class="note" id="veErr"></div>`;
+  box.querySelector('#veOk').onclick = async ()=>{
+    const err = box.querySelector('#veErr');
+    const ok = box.querySelector('#veOk');
+    ok.disabled = true; ok.textContent = 'Guardando…';
+    try{
+      const r = await sbAuthed('/rest/v1/rpc/gerente_editar_venta_pago', { method:'POST', body: JSON.stringify({
+        p_venta_id: v.id,
+        p_total: Number(box.querySelector('#veTotal').value)||0,
+        p_pago_contado: Number(box.querySelector('#veContado').value)||0,
+        p_pago_transferencia: Number(box.querySelector('#veTransf').value)||0,
+        p_transferencia_alias: box.querySelector('#veTransfAlias').value||null,
+        p_pago_tarjeta_credito: Number(box.querySelector('#veTCred').value)||0,
+        p_pago_tarjeta_debito: Number(box.querySelector('#veTDeb').value)||0,
+        p_pago_credito_personal: Number(box.querySelector('#veCPer').value)||0,
+        p_pago_credito_financiero: Number(box.querySelector('#veCFin').value)||0,
+        p_tarjeta_credito_cuotas: Number(box.querySelector('#veTCredCuotas').value)||1,
+        p_tarjeta_credito_recargo_pct: Number(box.querySelector('#veTCredRecargo').value)||0,
+        p_transferencia_descuento_pct: Number(box.querySelector('#veTransfDesc').value)||0,
+      }) });
+      if(!r.ok){ const d = await r.json().catch(()=>({})); throw new Error(d.message || 'No se pudo editar la venta.'); }
+      renderResumenDia();
+    }catch(e){
+      ok.disabled=false; ok.textContent='Guardar cambios';
+      err.textContent = e.message || 'No se pudo editar la venta.';
+    }
+  };
 }
 
 // Cuotas con interés en tarjeta de crédito: reutiliza la misma tasa mensual y
 // cantidades (6/9/12) configuradas para el carrito de la lista de precios,
 // así el recargo que ve el cliente es el mismo en los dos lugares.
-function factorCuotas(n){ n = Number(n)||1; return n<=1 ? 1 : 1 + (tasaMensual/100)*n; }
+function factorCuotas(n){ n = Number(n)||1; return CUOTAS_INT.includes(n) ? 1 + (tasaMensual/100)*n : 1; }
 function cuotasSeleccionadas(){ const el=document.getElementById('stCvTCredCuotas'); return el ? Number(el.value)||1 : 1; }
 function montoBaseTarjeta(){ const el=document.getElementById('stCvTCred'); return el ? Number(el.value)||0 : 0; }
 function montoFinalTarjeta(){ return montoBaseTarjeta() * factorCuotas(cuotasSeleccionadas()); }
-// El total de la venta sube por el recargo de financiar en cuotas — los demás
-// medios de pago siguen calculándose sobre el precio de contado del carrito.
-function totalConRecargo(){ return stVentaTotal + (montoFinalTarjeta() - montoBaseTarjeta()); }
+
+// Descuento −5% en transferencia (incentiva ese medio de pago frente a tarjeta).
+const DESCUENTO_TRANSFERENCIA = 5;
+function descuentoTransferenciaActivo(){ const el=document.getElementById('stCvTransfDescuento'); return !!(el && el.checked); }
+function montoBaseTransferencia(){ const el=document.getElementById('stCvTransf'); return el ? Number(el.value)||0 : 0; }
+function montoFinalTransferencia(){ return montoBaseTransferencia() * (descuentoTransferenciaActivo() ? (1-DESCUENTO_TRANSFERENCIA/100) : 1); }
+
+// El total de la venta sube por el recargo de financiar en cuotas y baja por
+// el descuento de transferencia — los demás medios de pago siguen
+// calculándose sobre el precio de contado del carrito.
+function totalConRecargo(){
+  return stVentaTotal + (montoFinalTarjeta() - montoBaseTarjeta()) + (montoFinalTransferencia() - montoBaseTransferencia());
+}
 
 function actualizarTotalVenta(){
   recalcSaldoVenta();
@@ -2053,11 +2240,18 @@ function recalcSaldoVenta(){
   const recargoEl = document.getElementById('stCvRecargoInfo');
   if(recargoEl){
     const n = cuotasSeleccionadas(), base = montoBaseTarjeta(), final = montoFinalTarjeta();
-    recargoEl.textContent = (n>1 && base>0) ? `Con ${n} cuotas: ${money(final)} (recargo +${money(final-base)})` : '';
+    recargoEl.textContent = base>0 && n>1
+      ? (final>base ? `Con ${n} cuotas: ${money(final)} (recargo +${money(final-base)})` : `${n} cuotas sin interés: ${money(final)}`)
+      : '';
   }
-  const pagado = ['stCvContado','stCvTransf','stCvTDeb','stCvCPer','stCvCFin']
+  const descEl = document.getElementById('stCvTransfDescuentoInfo');
+  if(descEl){
+    const baseT = montoBaseTransferencia(), finalT = montoFinalTransferencia();
+    descEl.textContent = (descuentoTransferenciaActivo() && baseT>0) ? `Con descuento: ${money(finalT)} (−${money(baseT-finalT)})` : '';
+  }
+  const pagado = ['stCvContado','stCvTDeb','stCvCPer','stCvCFin']
     .reduce((acc,id)=>{ const el=document.getElementById(id); return acc + (el ? Number(el.value)||0 : 0); }, 0)
-    + montoFinalTarjeta();
+    + montoFinalTarjeta() + montoFinalTransferencia();
   saldoEl.textContent = money(Math.max(0, total-pagado));
 }
 
