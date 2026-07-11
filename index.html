@@ -1462,6 +1462,7 @@ function wireVentaCard(){
   let clienteTelefono = null;
   const CAMPOS_PAGO = ['stCvContado','stCvTransf','stCvTCred','stCvTDeb','stCvCPer','stCvCFin'];
   CAMPOS_PAGO.forEach(id=> card.querySelector('#'+id).addEventListener('input', recalcSaldoVenta));
+  card.querySelector('#stCvTCredCuotas').addEventListener('change', recalcSaldoVenta);
   recalcSaldoVenta();
   [...card.querySelectorAll('[data-usar-total]')].forEach(b=> b.onclick=()=>{
     const campo = b.dataset.usarTotal;
@@ -1566,11 +1567,13 @@ function wireVentaCard(){
   card.querySelector('#stFcOk').onclick = async ()=>{
     const err = card.querySelector('#stFcErr');
     const ok = card.querySelector('#stFcOk');
-    const total = stVentaTotal;
+    const cuotasTCred = cuotasSeleccionadas();
+    const recargoPct = cuotasTCred>1 ? Number((tasaMensual*cuotasTCred).toFixed(2)) : 0;
+    const pagoTCred = montoFinalTarjeta();
+    const total = totalConRecargo();
     const pagoContado = Number(card.querySelector('#stCvContado').value)||0;
     const pagoTransf = Number(card.querySelector('#stCvTransf').value)||0;
     const transfAlias = card.querySelector('#stCvTransfAlias').value||null;
-    const pagoTCred = Number(card.querySelector('#stCvTCred').value)||0;
     const pagoTDeb = Number(card.querySelector('#stCvTDeb').value)||0;
     const pagoCPer = Number(card.querySelector('#stCvCPer').value)||0;
     const pagoCFin = Number(card.querySelector('#stCvCFin').value)||0;
@@ -1594,6 +1597,7 @@ function wireVentaCard(){
           pago_contado: pagoContado, pago_transferencia: pagoTransf, transferencia_alias: transfAlias,
           pago_tarjeta_credito: pagoTCred, pago_tarjeta_debito: pagoTDeb,
           pago_credito_personal: pagoCPer, pago_credito_financiero: pagoCFin, saldo_pendiente: saldoPendiente,
+          tarjeta_credito_cuotas: cuotasTCred, tarjeta_credito_recargo_pct: recargoPct,
           facturada: false,
         }) });
       const ventaRows = await rVenta.json().catch(()=>null);
@@ -1887,7 +1891,13 @@ function drawVender(){
             <div style="display:flex; gap:4px">
               <input id="stCvTCred" class="search" type="number" inputmode="decimal" value="0" style="flex:1">
               <button class="fbtn" type="button" data-usar-total="stCvTCred" style="flex:none; padding:0 10px" title="Usar el total del carrito">＝</button>
-            </div></div>
+            </div>
+            <select id="stCvTCredCuotas" class="search" style="margin-top:4px">
+              <option value="1">Sin cuotas (contado)</option>
+              ${CUOTAS_INT.map(n=>`<option value="${n}">${n} cuotas (+${(tasaMensual*n).toFixed(1)}%)</option>`).join('')}
+            </select>
+            <div class="note" id="stCvRecargoInfo" style="margin-top:2px"></div>
+          </div>
           <div><div class="note" style="margin:0 0 4px">Tarjeta de débito</div>
             <div style="display:flex; gap:4px">
               <input id="stCvTDeb" class="search" type="number" inputmode="decimal" value="0" style="flex:1">
@@ -2001,7 +2011,7 @@ async function renderResumenDia(){
         const medios = [
           v.pago_contado>0 && `Efectivo ${money(v.pago_contado)}`,
           v.pago_transferencia>0 && `Transf.${v.transferencia_alias?` (${esc(v.transferencia_alias)})`:''} ${money(v.pago_transferencia)}`,
-          v.pago_tarjeta_credito>0 && `T.Créd ${money(v.pago_tarjeta_credito)}`,
+          v.pago_tarjeta_credito>0 && `T.Créd ${money(v.pago_tarjeta_credito)}${v.tarjeta_credito_cuotas>1?` (${v.tarjeta_credito_cuotas} cuotas, +${v.tarjeta_credito_recargo_pct}%)`:''}`,
           v.pago_tarjeta_debito>0 && `T.Déb ${money(v.pago_tarjeta_debito)}`,
           v.pago_credito_personal>0 && `Créd.Pers ${money(v.pago_credito_personal)}`,
           v.pago_credito_financiero>0 && `Créd.Fin ${money(v.pago_credito_financiero)}`,
@@ -2020,17 +2030,35 @@ async function renderResumenDia(){
   }catch(e){ box.innerHTML = `<div class="note">No se pudo cargar el resumen del día.</div>`; }
 }
 
+// Cuotas con interés en tarjeta de crédito: reutiliza la misma tasa mensual y
+// cantidades (6/9/12) configuradas para el carrito de la lista de precios,
+// así el recargo que ve el cliente es el mismo en los dos lugares.
+function factorCuotas(n){ n = Number(n)||1; return n<=1 ? 1 : 1 + (tasaMensual/100)*n; }
+function cuotasSeleccionadas(){ const el=document.getElementById('stCvTCredCuotas'); return el ? Number(el.value)||1 : 1; }
+function montoBaseTarjeta(){ const el=document.getElementById('stCvTCred'); return el ? Number(el.value)||0 : 0; }
+function montoFinalTarjeta(){ return montoBaseTarjeta() * factorCuotas(cuotasSeleccionadas()); }
+// El total de la venta sube por el recargo de financiar en cuotas — los demás
+// medios de pago siguen calculándose sobre el precio de contado del carrito.
+function totalConRecargo(){ return stVentaTotal + (montoFinalTarjeta() - montoBaseTarjeta()); }
+
 function actualizarTotalVenta(){
-  const disp = document.getElementById('stCvTotalDisplay');
-  if(disp) disp.textContent = money(stVentaTotal);
   recalcSaldoVenta();
 }
 function recalcSaldoVenta(){
   const saldoEl = document.getElementById('stCvSaldo');
   if(!saldoEl) return;
-  const pagado = ['stCvContado','stCvTransf','stCvTCred','stCvTDeb','stCvCPer','stCvCFin']
-    .reduce((acc,id)=>{ const el=document.getElementById(id); return acc + (el ? Number(el.value)||0 : 0); }, 0);
-  saldoEl.textContent = money(Math.max(0, stVentaTotal-pagado));
+  const total = totalConRecargo();
+  const totalEl = document.getElementById('stCvTotalDisplay');
+  if(totalEl) totalEl.textContent = money(total);
+  const recargoEl = document.getElementById('stCvRecargoInfo');
+  if(recargoEl){
+    const n = cuotasSeleccionadas(), base = montoBaseTarjeta(), final = montoFinalTarjeta();
+    recargoEl.textContent = (n>1 && base>0) ? `Con ${n} cuotas: ${money(final)} (recargo +${money(final-base)})` : '';
+  }
+  const pagado = ['stCvContado','stCvTransf','stCvTDeb','stCvCPer','stCvCFin']
+    .reduce((acc,id)=>{ const el=document.getElementById(id); return acc + (el ? Number(el.value)||0 : 0); }, 0)
+    + montoFinalTarjeta();
+  saldoEl.textContent = money(Math.max(0, total-pagado));
 }
 
 function renderCarrito(){
