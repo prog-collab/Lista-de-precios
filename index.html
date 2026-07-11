@@ -1655,7 +1655,7 @@ function buscarArticuloBarcode(digits){
 document.getElementById('stockBtn').onclick = ()=>{
   stSeccion = 'carga';
   stOpen = true; stCount = 0; stLast = null; stBusy = false;
-  document.getElementById('ov').classList.add('open');
+  document.getElementById('ov').classList.add('open','ov-full');
   history.pushState({detalle:1}, '');
   cargarMaps();
   drawStock();
@@ -1709,7 +1709,7 @@ function drawStock(){
     <div class="topbtns"><button class="backbtn" id="stClose">✕ Cerrar</button></div>
     <h2>📦 Cargar stock</h2>
     <div class="scat">Sesión: ${esc(sbSession.email||'')} · <a href="#" id="stLogout" style="color:var(--accent)">salir</a></div>
-    <div class="st-grid">
+    <div class="st-grid st-grid-3">
       <div class="st-col-left">
         <div class="label">Sumar stock al local</div>
         <div class="talles">
@@ -1727,6 +1727,7 @@ function drawStock(){
       <div class="st-col-right">
         <div id="stCard"></div>
       </div>
+      <div class="st-col-dia" id="stHistorialCarga"></div>
     </div>`;
   document.getElementById('stClose').onclick = ()=> stCerrar(false);
   document.getElementById('stLogout').onclick = (e)=>{ e.preventDefault();
@@ -1734,15 +1735,43 @@ function drawStock(){
   const bC=document.getElementById('stLocCam'), bG=document.getElementById('stLocGiu');
   const refLoc=()=>{ const l=stLocal();
     bC.classList.toggle('sel', l==='camerino'); bG.classList.toggle('sel', l==='giustozzi'); };
-  bC.onclick=()=>{ setLS('stock_local','camerino'); refLoc(); };
-  bG.onclick=()=>{ setLS('stock_local','giustozzi'); refLoc(); };
+  bC.onclick=()=>{ setLS('stock_local','camerino'); refLoc(); renderHistorialCarga(); };
+  bG.onclick=()=>{ setLS('stock_local','giustozzi'); refLoc(); renderHistorialCarga(); };
   refLoc();
   const man=document.getElementById('stManual');
   const go=()=>{ if(man.value.trim()){ stProcesar(man.value); man.value=''; } };
   document.getElementById('stManualGo').onclick = go;
   man.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); go(); } });
   document.getElementById('stUndo').onclick = stDeshacer;
+  renderHistorialCarga();
   stCamara();
+}
+
+// Historial de últimos artículos cargados (stock_movimientos, motivo='carga')
+// en este local — tercera columna de la pantalla de Cargar stock.
+async function renderHistorialCarga(){
+  const box = document.getElementById('stHistorialCarga');
+  if(!box) return;
+  const localSel = stLocal();
+  box.innerHTML = `<div class="label">🕒 Últimos cargados — ${esc(stLocalNombre(localSel))}</div><div class="note">Cargando…</div>`;
+  try{
+    const r = await sbAuthed(`/rest/v1/stock_movimientos?motivo=eq.carga&local=eq.${localSel}&order=created_at.desc&limit=30&select=*`);
+    const rows = r.ok ? await r.json() : [];
+    box.innerHTML = `
+      <div class="label">🕒 Últimos cargados — ${esc(stLocalNombre(localSel))}</div>
+      ${rows.length ? rows.map(m=>{
+        const hora = m.created_at ? new Date(m.created_at).toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'}) : '';
+        return `
+        <div class="lista" style="margin-top:6px; text-align:left">
+          <div style="display:flex; justify-content:space-between; gap:8px">
+            <span class="l">${hora}</span>
+            <span class="v" style="font-size:14px">+${esc(String(m.delta))} → ${esc(String(m.stock_resultante))}</span>
+          </div>
+          <div class="note" style="margin-top:2px">${esc(m.codigo)} · ${esc(m.talle)}${m.color?' · '+esc(m.color):''}</div>
+          ${m.usuario ? `<div class="note" style="margin-top:1px">${esc(m.usuario)}</div>` : ''}
+        </div>`;
+      }).join('') : '<div class="note">Todavía no cargaste stock en este local.</div>'}`;
+  }catch(e){ box.innerHTML = `<div class="note">No se pudo cargar el historial.</div>`; }
 }
 
 // ===== Vender (POS): carrito — no toca el stock hasta "Guardar venta" =====
@@ -2171,6 +2200,7 @@ function stCardConfirm(p, digits){
       const u=document.getElementById('stUndo'); if(u) u.style.display='';
       toast(`✓ ${delta>0?'+1':'−1'} ${p.nombre} · ${color} · ${talle}`);
       card.innerHTML=''; stBusy=false;
+      renderHistorialCarga();
     }catch(e){
       if(String(e.message)==='login'){ card.innerHTML=''; drawStock(); return; }
       ok.disabled=false; ok.textContent=btnTxt;
@@ -2192,6 +2222,7 @@ async function stDeshacer(){
     toast(`↩ Deshecho: ${deltaDeshacer>0?'+1':'−1'} `+stLast.nombre);
     stLast=null;
     if(u){ u.disabled=false; u.textContent='↩ Deshacer último'; u.style.display='none'; }
+    renderHistorialCarga();
   }catch(e){
     if(u){ u.disabled=false; u.textContent='↩ Deshacer último'; }
     if(String(e.message)==='login'){ drawStock(); return; }
