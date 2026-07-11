@@ -1142,6 +1142,14 @@ let stSeccion='carga';   // 'carga' (cargar stock, descuenta al toque) o 'venta'
 let stCoolCode='', stCoolUntil=0;
 let MAPS = {color:{}, talle:{}};   // código de barras → nombre (compartido, tabla barcode_maps)
 
+// Los vendedores entran con un usuario corto (sin @), no con su email real.
+// Si no trae "@" le agregamos un dominio interno fijo, que Supabase Auth usa
+// solo como identificador — nunca se envía ningún correo a esa dirección.
+function usuarioAEmail(u){
+  u = (u||'').trim().toLowerCase();
+  return u.includes('@') ? u : u+'@vendedores.local';
+}
+function mostrarUsuario(email){ return (email||'').replace('@vendedores.local',''); }
 async function sbLogin(email, pass){
   const r = await fetch(`${SB_URL}/auth/v1/token?grant_type=password`, {
     method:'POST', headers:{ apikey:SB_KEY, 'Content-Type':'application/json' },
@@ -1690,8 +1698,8 @@ function drawStock(){
       <div class="topbtns"><button class="backbtn" id="stClose">✕ Cerrar</button></div>
       <h2>📦 Cargar stock</h2>
       <div class="scat">Iniciá sesión con tu usuario del panel para poder cargar stock.</div>
-      <div class="label">Email</div>
-      <input id="stEmail" class="search" type="email" autocomplete="username">
+      <div class="label">Usuario</div>
+      <input id="stEmail" class="search" type="text" autocomplete="username">
       <div class="label">Contraseña</div>
       <input id="stPass" class="search" type="password" autocomplete="current-password">
       <button class="addcart" id="stLoginBtn">Ingresar</button>
@@ -1702,7 +1710,7 @@ function drawStock(){
       const b = document.getElementById('stLoginBtn');
       b.disabled = true; b.textContent = 'Ingresando…';
       try{
-        await sbLogin(document.getElementById('stEmail').value.trim(),
+        await sbLogin(usuarioAEmail(document.getElementById('stEmail').value),
                       document.getElementById('stPass').value);
         drawStock();
       }catch(e){ b.disabled=false; b.textContent='Ingresar'; err.textContent = e.message; }
@@ -1712,7 +1720,7 @@ function drawStock(){
   sheet.innerHTML = `
     <div class="topbtns"><button class="backbtn" id="stClose">✕ Cerrar</button></div>
     <h2>📦 Cargar stock</h2>
-    <div class="scat">Sesión: ${esc(sbSession.email||'')} · <a href="#" id="stLogout" style="color:var(--accent)">salir</a></div>
+    <div class="scat">Sesión: ${esc(mostrarUsuario(sbSession.email))} · <a href="#" id="stLogout" style="color:var(--accent)">salir</a></div>
     <div class="st-grid st-grid-3">
       <div class="st-col-left">
         <div class="label">Sumar stock al local</div>
@@ -1794,7 +1802,7 @@ async function renderHistorialCarga(){
             <span class="v" style="font-size:14px">+${esc(String(m.delta))} → ${esc(String(m.stock_resultante))}</span>
           </div>
           <div class="note" style="margin-top:2px">${esc(m.codigo)} · ${esc(m.talle)}${m.color?' · '+esc(m.color):''}</div>
-          ${m.usuario ? `<div class="note" style="margin-top:1px">${esc(m.usuario)}</div>` : ''}
+          ${m.usuario ? `<div class="note" style="margin-top:1px">${esc(mostrarUsuario(m.usuario))}</div>` : ''}
         </div>`;
       }).join('') : '<div class="note">Todavía no cargaste stock en este local.</div>'}`;
   }catch(e){ box.innerHTML = `<div class="note">No se pudo cargar el historial.</div>`; }
@@ -1809,8 +1817,8 @@ function drawVender(){
       <div class="topbtns"><button class="backbtn" id="stClose">✕ Cerrar</button></div>
       <h2>🛍️ Vender (POS)</h2>
       <div class="scat">Iniciá sesión con tu usuario del panel para poder vender.</div>
-      <div class="label">Email</div>
-      <input id="stEmail" class="search" type="email" autocomplete="username">
+      <div class="label">Usuario</div>
+      <input id="stEmail" class="search" type="text" autocomplete="username">
       <div class="label">Contraseña</div>
       <input id="stPass" class="search" type="password" autocomplete="current-password">
       <button class="addcart" id="stLoginBtn">Ingresar</button>
@@ -1821,7 +1829,7 @@ function drawVender(){
       const b = document.getElementById('stLoginBtn');
       b.disabled = true; b.textContent = 'Ingresando…';
       try{
-        await sbLogin(document.getElementById('stEmail').value.trim(),
+        await sbLogin(usuarioAEmail(document.getElementById('stEmail').value),
                       document.getElementById('stPass').value);
         drawVender();
       }catch(e){ b.disabled=false; b.textContent='Ingresar'; err.textContent = e.message; }
@@ -1834,7 +1842,7 @@ function drawVender(){
   sheet.innerHTML = `
     <div class="topbtns"><button class="backbtn" id="stClose">✕ Cerrar</button></div>
     <h2>🛍️ Vender (POS)</h2>
-    <div class="scat">Sesión: ${esc(sbSession.email||'')} · <a href="#" id="stLogout" style="color:var(--accent)">salir</a></div>
+    <div class="scat">Sesión: ${esc(mostrarUsuario(sbSession.email))} · <a href="#" id="stLogout" style="color:var(--accent)">salir</a></div>
     <div class="st-grid st-grid-3">
       <div class="st-col-left">
         <div class="label">Local donde se vende</div>
