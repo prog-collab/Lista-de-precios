@@ -1452,14 +1452,14 @@ function wireVentaCard(){
   let tipo = 'B';
   let facturar = false;
   let clienteTelefono = null;
-  ['stCvContado','stCvTCred','stCvTDeb','stCvCPer','stCvCFin'].forEach(id=>
-    card.querySelector('#'+id).addEventListener('input', recalcSaldoVenta));
+  const CAMPOS_PAGO = ['stCvContado','stCvTCred','stCvTDeb','stCvCPer','stCvCFin'];
+  CAMPOS_PAGO.forEach(id=> card.querySelector('#'+id).addEventListener('input', recalcSaldoVenta));
   recalcSaldoVenta();
-  card.querySelector('#stCvTodoEfectivo').onclick = ()=>{
-    card.querySelector('#stCvContado').value = stVentaTotal;
-    ['stCvTCred','stCvTDeb','stCvCPer','stCvCFin'].forEach(id=> card.querySelector('#'+id).value = 0);
+  [...card.querySelectorAll('[data-usar-total]')].forEach(b=> b.onclick=()=>{
+    const campo = b.dataset.usarTotal;
+    CAMPOS_PAGO.forEach(id=> card.querySelector('#'+id).value = id===campo ? stVentaTotal : 0);
     recalcSaldoVenta();
-  };
+  });
   [...card.querySelectorAll('[data-fac]')].forEach(b=> b.onclick=()=>{
     facturar = b.dataset.fac==='si';
     [...card.querySelectorAll('[data-fac]')].forEach(x=>x.classList.remove('sel'));
@@ -1834,17 +1834,32 @@ function drawVender(){
         <div class="label">Medios de pago</div>
         <div class="grid">
           <div><div class="note" style="margin:0 0 4px">Efectivo (contado)</div>
-            <input id="stCvContado" class="search" type="number" inputmode="decimal" value="0"></div>
+            <div style="display:flex; gap:4px">
+              <input id="stCvContado" class="search" type="number" inputmode="decimal" value="0" style="flex:1">
+              <button class="fbtn" type="button" data-usar-total="stCvContado" style="flex:none; padding:0 10px" title="Usar el total del carrito">＝</button>
+            </div></div>
           <div><div class="note" style="margin:0 0 4px">Tarjeta de crédito</div>
-            <input id="stCvTCred" class="search" type="number" inputmode="decimal" value="0"></div>
+            <div style="display:flex; gap:4px">
+              <input id="stCvTCred" class="search" type="number" inputmode="decimal" value="0" style="flex:1">
+              <button class="fbtn" type="button" data-usar-total="stCvTCred" style="flex:none; padding:0 10px" title="Usar el total del carrito">＝</button>
+            </div></div>
           <div><div class="note" style="margin:0 0 4px">Tarjeta de débito</div>
-            <input id="stCvTDeb" class="search" type="number" inputmode="decimal" value="0"></div>
+            <div style="display:flex; gap:4px">
+              <input id="stCvTDeb" class="search" type="number" inputmode="decimal" value="0" style="flex:1">
+              <button class="fbtn" type="button" data-usar-total="stCvTDeb" style="flex:none; padding:0 10px" title="Usar el total del carrito">＝</button>
+            </div></div>
           <div><div class="note" style="margin:0 0 4px">Crédito personal</div>
-            <input id="stCvCPer" class="search" type="number" inputmode="decimal" value="0"></div>
+            <div style="display:flex; gap:4px">
+              <input id="stCvCPer" class="search" type="number" inputmode="decimal" value="0" style="flex:1">
+              <button class="fbtn" type="button" data-usar-total="stCvCPer" style="flex:none; padding:0 10px" title="Usar el total del carrito">＝</button>
+            </div></div>
           <div><div class="note" style="margin:0 0 4px">Crédito financiero</div>
-            <input id="stCvCFin" class="search" type="number" inputmode="decimal" value="0"></div>
+            <div style="display:flex; gap:4px">
+              <input id="stCvCFin" class="search" type="number" inputmode="decimal" value="0" style="flex:1">
+              <button class="fbtn" type="button" data-usar-total="stCvCFin" style="flex:none; padding:0 10px" title="Usar el total del carrito">＝</button>
+            </div></div>
         </div>
-        <button class="fbtn" id="stCvTodoEfectivo" style="width:100%; margin-top:6px">Todo en efectivo</button>
+        <div class="note">Tocá "＝" al lado de un medio de pago para cargarle el total del carrito de una — pone el resto en $0.</div>
         <div class="lista" style="margin-top:8px">
           <div class="l">Saldo pendiente</div>
           <div class="v" id="stCvSaldo" style="font-size:22px">${money(0)}</div>
