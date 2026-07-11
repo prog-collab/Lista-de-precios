@@ -1,6 +1,8 @@
 -- ============================================================
 --  Vista de solo lectura para el dashboard: talle/color con stock bajo
---  (<=2 unidades entre las dos marcas). No cambia ningún permiso —
+--  (entre 1 y 2 unidades entre las dos marcas — el umbral "<=2" original
+--  incluía miles de combinaciones que nunca tuvieron stock cargado, sin
+--  ninguna utilidad como alerta de reposición). No cambia ningún permiso —
 --  hereda el RLS ya existente de "articulos" (lectura pública).
 --  Ya aplicada en Supabase — este archivo queda como referencia/backup.
 -- ============================================================
@@ -12,7 +14,7 @@ select a.codigo, a.nombre, a.categoria, t->>'talle' as talle, s->>'color' as col
 from articulos a,
   jsonb_array_elements(a.talles) as t,
   jsonb_array_elements(case when jsonb_typeof(t->'stock')='array' then t->'stock' else '[]'::jsonb end) as s
-where coalesce((s->>'camerino')::int,0) + coalesce((s->>'giustozzi')::int,0) <= 2;
+where coalesce((s->>'camerino')::int,0) + coalesce((s->>'giustozzi')::int,0) between 1 and 2;
 
 grant select on v_stock_bajo to authenticated, anon, public;
 
