@@ -15,6 +15,8 @@ create table if not exists ventas (
   items                    jsonb not null default '[]'::jsonb,  -- [{codigo,nombre,talle,color,precio}]
   total                    numeric(12,2) not null,
   pago_contado             numeric(12,2) not null default 0,
+  pago_transferencia       numeric(12,2) not null default 0,
+  transferencia_alias      text,             -- 'juan01' | 'giustozzi.mp', si se cobro por transferencia
   pago_tarjeta_credito     numeric(12,2) not null default 0,
   pago_tarjeta_debito      numeric(12,2) not null default 0,
   pago_credito_personal    numeric(12,2) not null default 0,
