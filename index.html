@@ -1785,9 +1785,10 @@ function drawVender(){
         </div>
         <div id="stVideoBox"></div>
         <div class="filters" style="margin-top:8px">
-          <input id="stManual" class="search" placeholder="O escribí el código a mano…" inputmode="numeric" autocomplete="off" style="flex:1">
+          <input id="stManual" class="search" placeholder="O escribí el código o nombre…" inputmode="text" autocomplete="off" style="flex:1">
           <button id="stManualGo" class="fbtn" style="font-size:16px">OK</button>
         </div>
+        <div id="stManualResultados"></div>
         <div id="stCard"></div>
         <div class="label">Carrito de esta venta</div>
         <div id="stCarrito"></div>
@@ -1855,9 +1856,30 @@ function drawVender(){
   bG.onclick=()=>{ setLS('stock_local','giustozzi'); refLoc(); renderResumenDia(); };
   refLoc();
   const man=document.getElementById('stManual');
-  const go=()=>{ if(man.value.trim()){ stProcesar(man.value); man.value=''; } };
+  const resultadosBox = document.getElementById('stManualResultados');
+  const go=()=>{ if(man.value.trim()){ stProcesar(man.value); man.value=''; resultadosBox.innerHTML=''; } };
   document.getElementById('stManualGo').onclick = go;
   man.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); go(); } });
+  man.addEventListener('input', ()=>{
+    const q = norm(man.value.trim());
+    if(q.length<2){ resultadosBox.innerHTML=''; return; }
+    const terms = q.split(/\s+/).filter(Boolean);
+    const encontrados = PRODS.filter(p=>{
+      const hay = norm(p.codigo+' '+p.nombre+' '+(p.categoria||''));
+      return terms.every(t=>hay.includes(t));
+    }).slice(0,8);
+    resultadosBox.innerHTML = encontrados.length ? encontrados.map((p,i)=>`
+      <div class="lista" data-i="${i}" style="margin-top:4px; cursor:pointer; text-align:left">
+        <div class="l">${esc(p.codigo)} · ${esc(p.categoria||'')}</div>
+        <div class="v" style="font-size:15px">${esc(p.nombre)}</div>
+      </div>`).join('') : '<div class="note">Sin resultados.</div>';
+    [...resultadosBox.querySelectorAll('[data-i]')].forEach(el=> el.onclick=()=>{
+      const p = encontrados[Number(el.dataset.i)];
+      man.value=''; resultadosBox.innerHTML='';
+      stBusy = true;
+      ventaCardConfirm(p, p.codigo);
+    });
+  });
   renderCarrito();
   wireVentaCard();
   renderResumenDia();
