@@ -183,6 +183,7 @@
       <button id="stockBtn" class="fbtn" title="Cargar stock (escaneo)">📦</button>
       <button id="venderBtn" class="fbtn" title="Vender (POS)">🛍️</button>
       <button id="clientesBtn" class="fbtn" title="Cuenta corriente de clientes">👤</button>
+      <button id="traspasosBtn" class="fbtn" title="Traspaso de stock entre locales">🔁</button>
       <button id="helpBtn" class="fbtn" title="Ayuda">❓</button>
       <button id="cartBtn" class="fbtn" title="Carrito">🛒<span id="cartN" class="cbadge" style="display:none"></span></button>
     </div>
@@ -1818,6 +1819,12 @@ document.getElementById('clientesBtn').onclick = ()=>{
   history.pushState({detalle:1}, '');
   drawClientes();
 };
+document.getElementById('traspasosBtn').onclick = ()=>{
+  stOpen = true;
+  document.getElementById('ov').classList.add('open','ov-full');
+  history.pushState({detalle:1}, '');
+  drawTraspasos();
+};
 function stCerrar(viaHistory){
   if(!stOpen) return;
   stOpen=false; stStopped=true; stBusy=false;
@@ -2327,6 +2334,187 @@ async function mostrarDetalleCliente(cliente){
       }catch(e){ pagoOk.disabled=false; pagoOk.textContent='💰 Registrar pago'; err.textContent = e.message||e; }
     };
   }catch(e){ box.innerHTML = `<div class="note">No se pudo cargar la cuenta del cliente.</div>`; }
+}
+
+// ===== 🔁 Traspaso de stock entre locales (solo gerente) =====
+function drawTraspasos(){
+  const sheet = document.getElementById('sheet');
+  sheet.classList.add('sheet-wide');
+  if(!sbSession){
+    sheet.innerHTML = `
+      <div class="topbtns"><button class="backbtn" id="stClose">✕ Cerrar</button></div>
+      <h2>🔁 Traspaso entre locales</h2>
+      <div class="scat">Iniciá sesión con tu usuario del panel para poder usarlo.</div>
+      <div class="label">Usuario</div>
+      <input id="stEmail" class="search" type="text" autocomplete="username">
+      <div class="label">Contraseña</div>
+      <input id="stPass" class="search" type="password" autocomplete="current-password">
+      <button class="addcart" id="stLoginBtn">Ingresar</button>
+      <div class="note" id="stLoginErr"></div>`;
+    document.getElementById('stClose').onclick = ()=> stCerrar(false);
+    document.getElementById('stLoginBtn').onclick = async ()=>{
+      const err = document.getElementById('stLoginErr');
+      const b = document.getElementById('stLoginBtn');
+      b.disabled = true; b.textContent = 'Ingresando…';
+      try{
+        await sbLogin(usuarioAEmail(document.getElementById('stEmail').value),
+                      document.getElementById('stPass').value);
+        drawTraspasos();
+      }catch(e){ b.disabled=false; b.textContent='Ingresar'; err.textContent = e.message; }
+    };
+    return;
+  }
+  sheet.innerHTML = `
+    <div class="topbtns"><button class="backbtn" id="stClose">✕ Cerrar</button></div>
+    <h2>🔁 Traspaso entre locales</h2>
+    <div class="scat">Sesión: ${esc(mostrarUsuario(sbSession.email))} · <a href="#" id="stLogout" style="color:var(--accent)">salir</a></div>
+    <div id="tsCheckingRol" class="note">Verificando permisos…</div>
+    <div id="tsBody" style="display:none"></div>`;
+  document.getElementById('stClose').onclick = ()=> stCerrar(false);
+  document.getElementById('stLogout').onclick = (e)=>{ e.preventDefault();
+    sbSession=null; setLS('sb_session', null); miRolCache=null; miLocalAsignadoCache=undefined; drawTraspasos(); };
+  cargarMiRol().then(rol=>{
+    document.getElementById('tsCheckingRol').style.display = 'none';
+    const body = document.getElementById('tsBody');
+    body.style.display = '';
+    if(rol!=='gerente'){
+      body.innerHTML = `<div class="error-a" style="padding:12px; border-radius:10px; background:var(--card2)">Esta sección es solo para gerentes.</div>`;
+      return;
+    }
+    armarTraspasos(body);
+  });
+}
+
+function armarTraspasos(body){
+  body.innerHTML = `
+    <div class="st-grid st-grid-3">
+      <div class="st-col-left">
+        <div class="label">Buscar artículo</div>
+        <input id="tsBuscarInput" class="search" placeholder="Código o nombre…" autocomplete="off">
+        <div id="tsResultados"></div>
+      </div>
+      <div class="st-col-right" id="tsDetalle">
+        <div class="note">Buscá un artículo para ver su stock en cada local.</div>
+      </div>
+      <div class="st-col-dia" id="tsHistorial"></div>
+    </div>`;
+  const buscarInput = document.getElementById('tsBuscarInput');
+  const resultadosEl = document.getElementById('tsResultados');
+  buscarInput.addEventListener('input', ()=>{
+    const q = norm(buscarInput.value.trim());
+    if(q.length<2){ resultadosEl.innerHTML=''; return; }
+    const terms = q.split(/\s+/).filter(Boolean);
+    const encontrados = PRODS.filter(p=>{
+      const hay = norm(p.codigo+' '+p.nombre+' '+(p.categoria||''));
+      return terms.every(t=>hay.includes(t));
+    }).slice(0,8);
+    resultadosEl.innerHTML = encontrados.length ? encontrados.map((p,i)=>`
+      <div class="lista" data-i="${i}" style="margin-top:4px; cursor:pointer; text-align:left">
+        <div class="l">${esc(p.codigo)} · ${esc(p.categoria||'')}</div>
+        <div class="v" style="font-size:15px">${esc(p.nombre)}</div>
+      </div>`).join('') : '<div class="note">Sin resultados.</div>';
+    [...resultadosEl.querySelectorAll('[data-i]')].forEach(el=> el.onclick=()=> armarDetalleTraspaso(encontrados[Number(el.dataset.i)]));
+  });
+  renderHistorialTraspasos();
+}
+
+function armarDetalleTraspaso(p){
+  const box = document.getElementById('tsDetalle');
+  let talleIdx = 0;
+  function talleColorOpciones(){
+    const t = p.talles[talleIdx];
+    const colores = (t.stock||[]).length ? t.stock : [{color:'Único', camerino:0, giustozzi:0}];
+    return {t, colores};
+  }
+  function render(){
+    const {t, colores} = talleColorOpciones();
+    box.innerHTML = `
+      <div class="label">${esc(p.nombre)}</div>
+      <div class="note">${esc(p.codigo)}</div>
+      ${p.talles.length>1 ? `
+        <div class="label" style="margin-top:8px">Talle</div>
+        <div class="talles">${p.talles.map((x,i)=>`<button class="talle ${i===talleIdx?'sel':''}" data-ti="${i}">${esc(x.talle)}</button>`).join('')}</div>` : ''}
+      <div class="label" style="margin-top:8px">Color / stock actual</div>
+      ${colores.map((c,i)=>`
+        <div class="lista" data-ci="${i}" style="margin-top:6px; cursor:pointer; text-align:left">
+          <div class="l">${esc(c.color||'Único')}</div>
+          <div class="v" style="font-size:15px">Camerino ${Number(c.camerino)||0} · Giustozzi ${Number(c.giustozzi)||0}</div>
+        </div>`).join('')}
+      <div id="tsFormBox" style="margin-top:8px"></div>`;
+    [...box.querySelectorAll('[data-ti]')].forEach(el=> el.onclick=()=>{ talleIdx = Number(el.dataset.ti); render(); });
+    [...box.querySelectorAll('[data-ci]')].forEach(el=> el.onclick=()=> armarFormTraspaso(box.querySelector('#tsFormBox'), p, t.talle, colores[Number(el.dataset.ci)]));
+  }
+  render();
+}
+
+function armarFormTraspaso(formBox, p, talle, colorObj){
+  const color = colorObj.color || 'Único';
+  const cam = Number(colorObj.camerino)||0, giu = Number(colorObj.giustozzi)||0;
+  formBox.innerHTML = `
+    <div class="label">Traspasar "${esc(color)}"</div>
+    <div class="talles">
+      <button class="talle sel" data-dir="cg">Camerino → Giustozzi</button>
+      <button class="talle" data-dir="gc">Giustozzi → Camerino</button>
+    </div>
+    <div class="note" id="tsDisponible" style="margin-top:4px">Disponible en Camerino: ${cam}</div>
+    <input id="tsCantidad" class="search" type="number" min="1" placeholder="Cantidad" style="margin-top:6px">
+    <button class="addcart" id="tsOk" style="margin-top:8px">🔁 Confirmar traspaso</button>
+    <div class="note" id="tsErr"></div>`;
+  let dir = 'cg';
+  const disponibleEl = formBox.querySelector('#tsDisponible');
+  [...formBox.querySelectorAll('[data-dir]')].forEach(b=> b.onclick=()=>{
+    dir = b.dataset.dir;
+    [...formBox.querySelectorAll('[data-dir]')].forEach(x=>x.classList.remove('sel'));
+    b.classList.add('sel');
+    disponibleEl.textContent = dir==='cg' ? `Disponible en Camerino: ${cam}` : `Disponible en Giustozzi: ${giu}`;
+  });
+  formBox.querySelector('#tsOk').onclick = async ()=>{
+    const err = formBox.querySelector('#tsErr');
+    const ok = formBox.querySelector('#tsOk');
+    const cantidad = Number(formBox.querySelector('#tsCantidad').value)||0;
+    if(!(cantidad>0)){ err.textContent='Ingresá una cantidad mayor a 0.'; return; }
+    const origen = dir==='cg' ? 'camerino' : 'giustozzi';
+    const destino = dir==='cg' ? 'giustozzi' : 'camerino';
+    err.textContent=''; ok.disabled=true; ok.textContent='Traspasando…';
+    try{
+      const r = await sbAuthed('/rest/v1/rpc/gerente_traspasar_stock', { method:'POST', body: JSON.stringify({
+        p_codigo: p.codigo, p_talle: talle, p_color: color,
+        p_local_origen: origen, p_local_destino: destino, p_cantidad: cantidad,
+      }) });
+      if(!r.ok){ const d = await r.json().catch(()=>({})); throw new Error(d.message || 'No se pudo traspasar.'); }
+      await cargarCatalogo();
+      const pActualizado = BYCOD[p.codigo];
+      if(pActualizado) armarDetalleTraspaso(pActualizado);
+      renderHistorialTraspasos();
+    }catch(e){
+      ok.disabled=false; ok.textContent='🔁 Confirmar traspaso';
+      err.textContent = e.message||e;
+    }
+  };
+}
+
+async function renderHistorialTraspasos(){
+  const box = document.getElementById('tsHistorial');
+  if(!box) return;
+  box.innerHTML = `<div class="label">🕒 Últimos traspasos</div><div class="note">Cargando…</div>`;
+  try{
+    const r = await sbAuthed(`/rest/v1/stock_movimientos?motivo=eq.traspaso_salida&order=created_at.desc&limit=30&select=*`);
+    const rows = r.ok ? await r.json() : [];
+    box.innerHTML = `
+      <div class="label">🕒 Últimos traspasos</div>
+      ${rows.length ? rows.map(m=>{
+        const hora = m.created_at ? new Date(m.created_at).toLocaleString('es-AR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '';
+        return `
+        <div class="lista" style="margin-top:6px; text-align:left">
+          <div style="display:flex; justify-content:space-between; gap:8px">
+            <span class="l">${hora}</span>
+            <span class="v" style="font-size:14px">${esc(m.local)} → otro local: ${Math.abs(m.delta)}</span>
+          </div>
+          <div class="note" style="margin-top:2px">${esc(m.codigo)} · ${esc(m.talle)}${m.color?' · '+esc(m.color):''}</div>
+          ${m.usuario ? `<div class="note" style="margin-top:1px">${esc(mostrarUsuario(m.usuario))}</div>` : ''}
+        </div>`;
+      }).join('') : '<div class="note">Todavía no se hicieron traspasos.</div>'}`;
+  }catch(e){ box.innerHTML = `<div class="note">No se pudo cargar el historial.</div>`; }
 }
 
 function mediosDePagoVenta(v){
