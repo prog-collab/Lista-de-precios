@@ -1170,6 +1170,10 @@ async function sbLogin(email, pass){
   sbSession = { access_token: d.access_token, refresh_token: d.refresh_token,
     expires_at: Math.floor(Date.now()/1000) + (d.expires_in||3600), email };
   setLS('sb_session', sbSession);
+  // Si había quedado en caché el rol/local de una sesión anterior en esta
+  // misma pestaña (sin recargar la página), hay que olvidarlo al loguear.
+  miRolCache = null;
+  miLocalAsignadoCache = undefined;
 }
 // Token vigente; renueva con el refresh_token si está por vencer. Si no se
 // puede renovar, tira 'login' para que la vista vuelva a pedir la sesión.
@@ -1466,7 +1470,10 @@ function wireTicketButtons(card, d, localSel, telefono){
 
 function wireVentaCard(){
   const card = document.getElementById('stVentaCard');
-  const localSel = stLocal();
+  // OJO: no cachear stLocal() en una const acá — este bloque se arma antes de
+  // que se resuelva la restricción de local por usuario (aplicarRestriccionLocal
+  // es async), así que cada acción real (guardar, facturar, etc.) vuelve a leer
+  // stLocal() en el momento en que se ejecuta, no en el momento en que se arma la tarjeta.
   let tipo = 'B';
   let facturar = false;
   let clienteTelefono = null;
@@ -1515,6 +1522,7 @@ function wireVentaCard(){
     };
   };
   const consultarCuit = async ()=>{
+    const localSel = stLocal();
     const cuitInput = card.querySelector('#stFcCuit');
     const nombreEl = card.querySelector('#stFcCuitNombre');
     card.querySelector('#stFcGuardarClienteBox').innerHTML = '';
@@ -1578,6 +1586,7 @@ function wireVentaCard(){
   card.querySelector('#stFcOk').onclick = async ()=>{
     const err = card.querySelector('#stFcErr');
     const ok = card.querySelector('#stFcOk');
+    const localSel = stLocal();
     const cuotasTCred = cuotasSeleccionadas();
     const recargoPct = CUOTAS_INT.includes(cuotasTCred) ? Number((tasaMensual*cuotasTCred).toFixed(2)) : 0;
     const pagoTCred = montoFinalTarjeta();
@@ -1594,6 +1603,7 @@ function wireVentaCard(){
     const cuit = (card.querySelector('#stFcCuit').value||'').replace(/\D/g,'');
     const fecha = card.querySelector('#stFcFecha').value;
     if(!(total>0)){ err.textContent='Agregá al menos un producto al carrito.'; return; }
+    if(saldoPendiente>0){ err.textContent='⚠ Falta cargar medios de pago — el saldo pendiente tiene que quedar en $0 para guardar la venta.'; return; }
     if(pagoTransf>0 && !transfAlias){ err.textContent='Elegí a qué alias se transfirió.'; return; }
     if(facturar && tipo==='A' && cuit.length!==11){ err.textContent='Para Factura A escribí el CUIT del cliente (11 dígitos).'; return; }
     if(facturar && !fecha){ err.textContent='Elegí la fecha del comprobante.'; return; }
@@ -1765,13 +1775,14 @@ function drawStock(){
     </div>`;
   document.getElementById('stClose').onclick = ()=> stCerrar(false);
   document.getElementById('stLogout').onclick = (e)=>{ e.preventDefault();
-    sbSession=null; setLS('sb_session', null); drawStock(); };
+    sbSession=null; setLS('sb_session', null); miRolCache=null; miLocalAsignadoCache=undefined; drawStock(); };
   const bC=document.getElementById('stLocCam'), bG=document.getElementById('stLocGiu');
   const refLoc=()=>{ const l=stLocal();
     bC.classList.toggle('sel', l==='camerino'); bG.classList.toggle('sel', l==='giustozzi'); };
-  bC.onclick=()=>{ setLS('stock_local','camerino'); refLoc(); renderHistorialCarga(); };
-  bG.onclick=()=>{ setLS('stock_local','giustozzi'); refLoc(); renderHistorialCarga(); };
+  bC.onclick=()=>{ if(bC.disabled) return; setLS('stock_local','camerino'); refLoc(); renderHistorialCarga(); };
+  bG.onclick=()=>{ if(bG.disabled) return; setLS('stock_local','giustozzi'); refLoc(); renderHistorialCarga(); };
   refLoc();
+  aplicarRestriccionLocal(bC, bG).then(()=>{ refLoc(); renderHistorialCarga(); });
   const man=document.getElementById('stManual');
   const resultadosBox = document.getElementById('stManualResultados');
   const go=()=>{ if(man.value.trim()){ stProcesar(man.value); man.value=''; resultadosBox.innerHTML=''; } };
@@ -1978,13 +1989,14 @@ function drawVender(){
     </div>`;
   document.getElementById('stClose').onclick = ()=> stCerrar(false);
   document.getElementById('stLogout').onclick = (e)=>{ e.preventDefault();
-    sbSession=null; setLS('sb_session', null); drawVender(); };
+    sbSession=null; setLS('sb_session', null); miRolCache=null; miLocalAsignadoCache=undefined; drawVender(); };
   const bC=document.getElementById('stLocCam'), bG=document.getElementById('stLocGiu');
   const refLoc=()=>{ const l=stLocal();
     bC.classList.toggle('sel', l==='camerino'); bG.classList.toggle('sel', l==='giustozzi'); };
-  bC.onclick=()=>{ setLS('stock_local','camerino'); refLoc(); renderResumenDia(); };
-  bG.onclick=()=>{ setLS('stock_local','giustozzi'); refLoc(); renderResumenDia(); };
+  bC.onclick=()=>{ if(bC.disabled) return; setLS('stock_local','camerino'); refLoc(); renderResumenDia(); };
+  bG.onclick=()=>{ if(bG.disabled) return; setLS('stock_local','giustozzi'); refLoc(); renderResumenDia(); };
   refLoc();
+  aplicarRestriccionLocal(bC, bG).then(()=>{ refLoc(); renderResumenDia(); });
   const man=document.getElementById('stManual');
   const resultadosBox = document.getElementById('stManualResultados');
   const go=()=>{ if(man.value.trim()){ stProcesar(man.value); man.value=''; resultadosBox.innerHTML=''; } };
@@ -2027,6 +2039,35 @@ async function cargarMiRol(){
     miRolCache = (rows[0] && rows[0].rol) || 'vendedor';
   }catch(e){ miRolCache = 'vendedor'; }
   return miRolCache;
+}
+
+// Local al que está limitado este usuario (null = sin restricción, puede
+// operar en cualquiera de los dos). Los usuarios "camerino"/"giustozzi" solo
+// pueden cargar stock/vender/facturar en su propio local — pero la vista de
+// stock del catálogo principal sigue mostrando siempre los dos locales.
+let miLocalAsignadoCache = undefined;
+async function cargarMiLocalAsignado(){
+  if(miLocalAsignadoCache !== undefined) return miLocalAsignadoCache;
+  try{
+    const r = await sbAuthed('/rest/v1/admins?select=local_asignado');
+    const rows = r.ok ? await r.json() : [];
+    miLocalAsignadoCache = (rows[0] && rows[0].local_asignado) || null;
+  }catch(e){ miLocalAsignadoCache = null; }
+  return miLocalAsignadoCache;
+}
+
+// Aplica la restricción de local a los botones Camerino/Giustozzi de Cargar y
+// Vender: si el usuario tiene un local asignado, fuerza ese local y deshabilita
+// el botón del otro.
+async function aplicarRestriccionLocal(bC, bG){
+  const asignado = await cargarMiLocalAsignado();
+  if(!asignado) return;
+  if(getLS('stock_local','camerino') !== asignado) setLS('stock_local', asignado);
+  const otro = asignado==='camerino' ? bG : bC;
+  otro.disabled = true;
+  otro.title = `Tu usuario solo puede operar en ${stLocalNombre(asignado)}.`;
+  otro.style.opacity = '0.5';
+  otro.style.cursor = 'not-allowed';
 }
 
 function mediosDePagoVenta(v){
@@ -2269,7 +2310,11 @@ function recalcSaldoVenta(){
   const pagado = ['stCvContado','stCvTDeb','stCvCPer','stCvCFin']
     .reduce((acc,id)=>{ const el=document.getElementById(id); return acc + (el ? Number(el.value)||0 : 0); }, 0)
     + montoFinalTarjeta() + montoFinalTransferencia();
-  saldoEl.textContent = money(Math.max(0, total-pagado));
+  const saldo = Math.max(0, total-pagado);
+  saldoEl.textContent = money(saldo);
+  saldoEl.style.color = saldo>0 ? 'var(--warn)' : '';
+  const saldoBox = saldoEl.closest('.lista');
+  if(saldoBox) saldoBox.style.border = saldo>0 ? '1px solid var(--warn)' : '';
 }
 
 function renderCarrito(){
