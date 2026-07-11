@@ -1452,7 +1452,7 @@ function wireVentaCard(){
   let tipo = 'B';
   let facturar = false;
   let clienteTelefono = null;
-  const CAMPOS_PAGO = ['stCvContado','stCvTCred','stCvTDeb','stCvCPer','stCvCFin'];
+  const CAMPOS_PAGO = ['stCvContado','stCvTransf','stCvTCred','stCvTDeb','stCvCPer','stCvCFin'];
   CAMPOS_PAGO.forEach(id=> card.querySelector('#'+id).addEventListener('input', recalcSaldoVenta));
   recalcSaldoVenta();
   [...card.querySelectorAll('[data-usar-total]')].forEach(b=> b.onclick=()=>{
@@ -1560,14 +1560,17 @@ function wireVentaCard(){
     const ok = card.querySelector('#stFcOk');
     const total = stVentaTotal;
     const pagoContado = Number(card.querySelector('#stCvContado').value)||0;
+    const pagoTransf = Number(card.querySelector('#stCvTransf').value)||0;
+    const transfAlias = card.querySelector('#stCvTransfAlias').value||null;
     const pagoTCred = Number(card.querySelector('#stCvTCred').value)||0;
     const pagoTDeb = Number(card.querySelector('#stCvTDeb').value)||0;
     const pagoCPer = Number(card.querySelector('#stCvCPer').value)||0;
     const pagoCFin = Number(card.querySelector('#stCvCFin').value)||0;
-    const saldoPendiente = Math.max(0, total - (pagoContado+pagoTCred+pagoTDeb+pagoCPer+pagoCFin));
+    const saldoPendiente = Math.max(0, total - (pagoContado+pagoTransf+pagoTCred+pagoTDeb+pagoCPer+pagoCFin));
     const cuit = (card.querySelector('#stFcCuit').value||'').replace(/\D/g,'');
     const fecha = card.querySelector('#stFcFecha').value;
     if(!(total>0)){ err.textContent='Agregá al menos un producto al carrito.'; return; }
+    if(pagoTransf>0 && !transfAlias){ err.textContent='Elegí a qué alias se transfirió.'; return; }
     if(facturar && tipo==='A' && cuit.length!==11){ err.textContent='Para Factura A escribí el CUIT del cliente (11 dígitos).'; return; }
     if(facturar && !fecha){ err.textContent='Elegí la fecha del comprobante.'; return; }
     err.textContent=''; ok.disabled=true; ok.textContent = 'Guardando…';
@@ -1580,7 +1583,8 @@ function wireVentaCard(){
         headers:{ Prefer:'return=representation' },
         body: JSON.stringify({
           local: localSel, vendedor: sbSession.email||null, items: stVentaItems, total,
-          pago_contado: pagoContado, pago_tarjeta_credito: pagoTCred, pago_tarjeta_debito: pagoTDeb,
+          pago_contado: pagoContado, pago_transferencia: pagoTransf, transferencia_alias: transfAlias,
+          pago_tarjeta_credito: pagoTCred, pago_tarjeta_debito: pagoTDeb,
           pago_credito_personal: pagoCPer, pago_credito_financiero: pagoCFin, saldo_pendiente: saldoPendiente,
           facturada: false,
         }) });
@@ -1718,9 +1722,10 @@ function drawStock(){
         </div>
         <div id="stVideoBox"></div>
         <div class="filters" style="margin-top:8px">
-          <input id="stManual" class="search" placeholder="O escribí el código a mano…" inputmode="numeric" autocomplete="off" style="flex:1">
+          <input id="stManual" class="search" placeholder="O escribí el código o nombre…" inputmode="text" autocomplete="off" style="flex:1">
           <button id="stManualGo" class="fbtn" style="font-size:16px">OK</button>
         </div>
+        <div id="stManualResultados"></div>
         <div class="note">Cargadas en esta sesión: <b id="stN">${stCount}</b></div>
         <button id="stUndo" class="fbtn" style="width:100%; margin-top:6px; display:${stLast?'':'none'}">↩ Deshacer último</button>
       </div>
@@ -1739,9 +1744,30 @@ function drawStock(){
   bG.onclick=()=>{ setLS('stock_local','giustozzi'); refLoc(); renderHistorialCarga(); };
   refLoc();
   const man=document.getElementById('stManual');
-  const go=()=>{ if(man.value.trim()){ stProcesar(man.value); man.value=''; } };
+  const resultadosBox = document.getElementById('stManualResultados');
+  const go=()=>{ if(man.value.trim()){ stProcesar(man.value); man.value=''; resultadosBox.innerHTML=''; } };
   document.getElementById('stManualGo').onclick = go;
   man.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); go(); } });
+  man.addEventListener('input', ()=>{
+    const q = norm(man.value.trim());
+    if(q.length<2){ resultadosBox.innerHTML=''; return; }
+    const terms = q.split(/\s+/).filter(Boolean);
+    const encontrados = PRODS.filter(p=>{
+      const hay = norm(p.codigo+' '+p.nombre+' '+(p.categoria||''));
+      return terms.every(t=>hay.includes(t));
+    }).slice(0,8);
+    resultadosBox.innerHTML = encontrados.length ? encontrados.map((p,i)=>`
+      <div class="lista" data-i="${i}" style="margin-top:4px; cursor:pointer; text-align:left">
+        <div class="l">${esc(p.codigo)} · ${esc(p.categoria||'')}</div>
+        <div class="v" style="font-size:15px">${esc(p.nombre)}</div>
+      </div>`).join('') : '<div class="note">Sin resultados.</div>';
+    [...resultadosBox.querySelectorAll('[data-i]')].forEach(el=> el.onclick=()=>{
+      const p = encontrados[Number(el.dataset.i)];
+      man.value=''; resultadosBox.innerHTML='';
+      stBusy = true;
+      stCardConfirm(p, p.codigo);
+    });
+  });
   document.getElementById('stUndo').onclick = stDeshacer;
   renderHistorialCarga();
   stCamara();
@@ -1838,6 +1864,17 @@ function drawVender(){
               <input id="stCvContado" class="search" type="number" inputmode="decimal" value="0" style="flex:1">
               <button class="fbtn" type="button" data-usar-total="stCvContado" style="flex:none; padding:0 10px" title="Usar el total del carrito">＝</button>
             </div></div>
+          <div><div class="note" style="margin:0 0 4px">Transferencia</div>
+            <div style="display:flex; gap:4px">
+              <input id="stCvTransf" class="search" type="number" inputmode="decimal" value="0" style="flex:1">
+              <button class="fbtn" type="button" data-usar-total="stCvTransf" style="flex:none; padding:0 10px" title="Usar el total del carrito">＝</button>
+            </div>
+            <select id="stCvTransfAlias" class="search" style="margin-top:4px">
+              <option value="">¿A qué alias?</option>
+              <option value="juan01">juan01</option>
+              <option value="giustozzi.mp">giustozzi.mp</option>
+            </select>
+          </div>
           <div><div class="note" style="margin:0 0 4px">Tarjeta de crédito</div>
             <div style="display:flex; gap:4px">
               <input id="stCvTCred" class="search" type="number" inputmode="decimal" value="0" style="flex:1">
@@ -1955,6 +1992,7 @@ async function renderResumenDia(){
         const hora = v.created_at ? new Date(v.created_at).toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'}) : '';
         const medios = [
           v.pago_contado>0 && `Efectivo ${money(v.pago_contado)}`,
+          v.pago_transferencia>0 && `Transf.${v.transferencia_alias?` (${esc(v.transferencia_alias)})`:''} ${money(v.pago_transferencia)}`,
           v.pago_tarjeta_credito>0 && `T.Créd ${money(v.pago_tarjeta_credito)}`,
           v.pago_tarjeta_debito>0 && `T.Déb ${money(v.pago_tarjeta_debito)}`,
           v.pago_credito_personal>0 && `Créd.Pers ${money(v.pago_credito_personal)}`,
@@ -1982,7 +2020,7 @@ function actualizarTotalVenta(){
 function recalcSaldoVenta(){
   const saldoEl = document.getElementById('stCvSaldo');
   if(!saldoEl) return;
-  const pagado = ['stCvContado','stCvTCred','stCvTDeb','stCvCPer','stCvCFin']
+  const pagado = ['stCvContado','stCvTransf','stCvTCred','stCvTDeb','stCvCPer','stCvCFin']
     .reduce((acc,id)=>{ const el=document.getElementById(id); return acc + (el ? Number(el.value)||0 : 0); }, 0);
   saldoEl.textContent = money(Math.max(0, stVentaTotal-pagado));
 }
