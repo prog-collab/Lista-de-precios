@@ -285,6 +285,7 @@ function normArt(p){
     categoria: p.categoria,
     precio_lista: Number(p.precio_lista),
     foto_url: p.foto_url || null,
+    costo: (p.costo!=null && p.costo!=='') ? Number(p.costo) : null,
     talles: (p.talles||[]).map(t=>({ talle: t.talle, precio: Number(t.precio),
       stock: Array.isArray(t.stock) ? t.stock : [] }))
   };
@@ -293,7 +294,7 @@ async function cargarCatalogo(){
   try{
     const all=[]; const step=1000; let off=0;
     for(;;){
-      const r = await fetch(`${SB_URL}/rest/v1/articulos?select=codigo,nombre,categoria,precio_lista,talles,foto_url&order=codigo.asc&limit=${step}&offset=${off}`,
+      const r = await fetch(`${SB_URL}/rest/v1/articulos?select=codigo,nombre,categoria,precio_lista,talles,foto_url,costo&order=codigo.asc&limit=${step}&offset=${off}`,
         { headers:{ apikey:SB_KEY, Authorization:'Bearer '+SB_KEY }, cache:'no-store' });
       if(!r.ok) throw new Error('HTTP '+r.status);
       const page = await r.json();
@@ -867,7 +868,8 @@ function openAddProduct(edit){
   document.getElementById('sheet').innerHTML = `
     <div class="topbtns"><button class="backbtn" onclick="closeDetail()">← Atrás</button></div>
     <h2>${esEdit?'✏️ Editar producto':'➕ Agregar producto'}</h2>
-    <div class="scat">Se guarda en este aparato y se sincroniza con la planilla.</div>
+    <div class="scat">${esEdit?'Se guarda en el catálogo compartido (Supabase) — se ve en todos los dispositivos.':'Se crea en el catálogo compartido (Supabase) — se ve en todos los dispositivos.'}</div>
+    ${sbSession ? '' : `<div class="note" style="color:var(--warn)">⚠ Necesitás iniciar sesión (botón 📦 o 🛍️) para poder guardar. Podés seguir completando el formulario mientras tanto.</div>`}
     <div class="label">Categoría</div>
     <select id="apCat" style="width:100%">
       ${cats.map(c=>`<option ${esEdit&&c===edit.categoria?'selected':''}>${esc(c)}</option>`).join('')}
@@ -878,8 +880,10 @@ function openAddProduct(edit){
     <input id="apCod" class="search" placeholder="Ej: 12345XXX" autocomplete="off" value="${esEdit?esc(edit.codigo):''}" ${esEdit?'readonly':''}>
     <div class="label">Nombre</div>
     <input id="apNom" class="search" placeholder="Ej: TAVERNITI BUZO" autocomplete="off" value="${esEdit?esc(edit.nombre):''}">
+    <div class="label">Costo (para calcular margen — opcional)</div>
+    <input id="apCostoReal" class="search" type="number" placeholder="ej. 35000" value="${esEdit && edit.costo!=null ? edit.costo : ''}">
     <div class="label">🧮 Calculadora de precio (informativa)</div>
-    <div class="scat">No se guarda. Multiplica el costo por el coeficiente.</div>
+    <div class="scat">No se guarda. Multiplica el costo por el coeficiente, para sugerir un precio de venta.</div>
     <div class="row">
       <input id="apCosto" type="number" placeholder="Precio de costo" style="flex:1; ${inS}">
       <input id="apCoef" type="number" step="0.01" value="2.42" title="Coeficiente" style="width:80px; margin-left:6px; ${inS}">
@@ -917,7 +921,7 @@ function openAddProduct(edit){
   catSel.onchange = ()=>{ document.getElementById('apCatNew').style.display = catSel.value==='__new' ? 'block' : 'none'; };
   document.getElementById('apSave').onclick = ()=> guardarProducto(esEdit);
   // ✕ para vaciar de un toque en todos los campos de texto
-  ['apCatNew','apCod','apNom','apCosto'].forEach(id=> makeClearable(document.getElementById(id)));
+  ['apCatNew','apCod','apNom','apCosto','apCostoReal'].forEach(id=> makeClearable(document.getElementById(id)));
   cont.querySelectorAll('.apT, .apP').forEach(makeClearable);
   document.getElementById('apAddRow').onclick = ()=>{ addRow('',''); const r=cont.lastElementChild; if(r) r.querySelectorAll('.apT, .apP').forEach(makeClearable); };
 }
@@ -926,40 +930,67 @@ document.getElementById('addBtn').onclick = ()=>{
   openAddProduct();
 };
 
-function guardarProducto(esEdit){
+async function guardarProducto(esEdit){
   const msg = document.getElementById('apMsg');
+  const ok = document.getElementById('apSave');
   const catSel = document.getElementById('apCat');
   const categoria = catSel.value==='__new' ? document.getElementById('apCatNew').value.trim() : catSel.value;
   const codigo = document.getElementById('apCod').value.trim();
   const nombre = document.getElementById('apNom').value.trim();
+  const costoVal = document.getElementById('apCostoReal').value;
+  const costo = costoVal.trim()!=='' ? Number(costoVal) : null;
   const talles = [];
   document.querySelectorAll('#apTalles .row').forEach(r=>{
     const t = r.querySelector('.apT').value.trim();
     const p = parseFloat(r.querySelector('.apP').value);
-    if(!isNaN(p) && p>0) talles.push({talle: t||'Único', precio: Math.round(p)});
+    if(!isNaN(p) && p>0) talles.push({talle: t||'Único', precio: Math.round(p), stock: []});
   });
   if(!codigo){ msg.textContent='Falta el código.'; return; }
   if(!nombre){ msg.textContent='Falta el nombre.'; return; }
   if(!categoria){ msg.textContent='Falta la categoría.'; return; }
   if(!talles.length){ msg.textContent='Cargá al menos un precio.'; return; }
-  // agregar y editar requieren PIN del editor
+  // agregar y editar requieren PIN del editor, más una sesión real (📦/🛍️)
+  // para poder escribir en el catálogo compartido de Supabase.
   if(!pedirAdmin()){ msg.textContent='Necesitás el PIN del editor.'; return; }
-  const a = {accion: esEdit?'edit':'alta', codigo, nombre, categoria, precio_lista: talles[0].precio, talles};
-  msg.textContent='Guardando…';
-  pushCambio(a)
-    .then(()=>{ msg.textContent='✓ Guardado'; setTimeout(closeDetail, 700); })
-    .catch(()=>{ msg.textContent = SCRIPT_URL
-      ? 'Guardado en este aparato. No se sincronizó (¿sin internet?).'
-      : 'Guardado en este aparato. (Falta configurar SCRIPT_URL.)'; });
+  ok.disabled = true; msg.textContent = 'Guardando…';
+  try{
+    const body = { nombre, categoria, precio_lista: talles[0].precio, talles, costo };
+    const r = esEdit
+      ? await sbAuthed(`/rest/v1/articulos?codigo=eq.${encodeURIComponent(codigo)}`, { method:'PATCH', body: JSON.stringify(body) })
+      : await sbAuthed('/rest/v1/articulos', { method:'POST', body: JSON.stringify(Object.assign({codigo}, body)) });
+    if(!r.ok){ const d = await r.json().catch(()=>({})); throw new Error(d.message || 'No se pudo guardar.'); }
+    // rebuild() usa CATALOG (Supabase) como fuente de verdad para códigos ya
+    // existentes — los OVERRIDES locales no alcanzan para reflejar una edición
+    // al toque, así que actualizamos CATALOG directamente con lo ya confirmado.
+    const nuevoArt = normArt({codigo, nombre, categoria, precio_lista: talles[0].precio, talles, costo});
+    const idx = CATALOG.findIndex(p=>p.codigo===codigo);
+    if(idx>=0) CATALOG[idx] = nuevoArt; else CATALOG.push(nuevoArt);
+    rebuild();
+    msg.textContent = '✓ Guardado';
+    setTimeout(closeDetail, 700);
+  }catch(e){
+    ok.disabled = false;
+    msg.textContent = String(e.message)==='login'
+      ? 'Necesitás iniciar sesión (botón 📦 o 🛍️) para guardar en el catálogo compartido.'
+      : 'No se pudo guardar: '+(e.message||e);
+  }
 }
 
-function borrarProducto(cod){
+async function borrarProducto(cod){
   const p = BYCOD[cod]; if(!p) return;
   if(!pedirAdmin()) return;
   if(!confirm('¿Borrar "'+(p.nombre||cod)+'"?')) return;
-  pushCambio({accion:'baja', codigo:cod, nombre:p.nombre, categoria:p.categoria,
-    precio_lista:p.precio_lista, talles:p.talles}).catch(()=>{});
-  closeDetail();
+  try{
+    const r = await sbAuthed(`/rest/v1/articulos?codigo=eq.${encodeURIComponent(cod)}`, { method:'DELETE' });
+    if(!r.ok){ const d = await r.json().catch(()=>({})); throw new Error(d.message || 'No se pudo borrar.'); }
+    CATALOG = CATALOG.filter(x=>x.codigo!==cod);
+    rebuild();
+    closeDetail();
+  }catch(e){
+    alert(String(e.message)==='login'
+      ? 'Necesitás iniciar sesión (botón 📦 o 🛍️) para borrar del catálogo compartido.'
+      : 'No se pudo borrar: '+(e.message||e));
+  }
 }
 
 /* ===== Escaneo de código de barras =====
@@ -3082,6 +3113,13 @@ function drawDetail(){
     ? `<div class="note" style="margin-top:4px">Stock${p.talles.length>1?' talle '+esc(t.talle):''}:
         <b>${stSum.cam+stSum.giu}</b> (Camerino ${stSum.cam} · Giustozzi ${stSum.giu})</div>` : '';
 
+  // Margen (solo modo editor): costo es un valor por producto, no por talle,
+  // así que puede variar el % si el talle elegido tiene otro precio.
+  const margenHtml = (isAdmin && p.costo!=null && p.costo>0)
+    ? (()=>{ const margen=base-p.costo; const pct=base>0?(margen/base*100):0;
+        return `<div class="note" style="margin-top:4px">Costo: ${fmt(p.costo)} · Margen: <b>${fmt(margen)}</b> (${pct.toFixed(1)}%)</div>`; })()
+    : (isAdmin ? `<div class="note" style="margin-top:4px">Sin costo cargado (no se puede calcular margen).</div>` : '');
+
   const cuotasIntHtml = CUOTAS_INT.map(n=>{
     const c=cuotaDirecta(base,n,r);
     const recargo=Math.round(r*n*100);
@@ -3106,6 +3144,7 @@ function drawDetail(){
     ${p.foto_url ? `<img src="${esc(p.foto_url)}" alt="" style="width:100%;max-width:320px;border-radius:10px;margin:10px auto;display:block;">` : ''}
     ${tallesHtml}
     ${stockHtml}
+    ${margenHtml}
     <div class="lista">
       <div class="l">DÉBITO / TRANSFERENCIA / CRED 1 PAGO${p.talles.length>1?' · talle '+esc(t.talle):''}</div>
       <div class="v">${fmt(base)}</div>
