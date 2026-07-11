@@ -174,6 +174,7 @@
       <button id="themeBtn" class="fbtn" title="Cambiar tema">🌙</button>
       <button id="addBtn" class="fbtn" title="Agregar producto">➕</button>
       <button id="stockBtn" class="fbtn" title="Cargar stock (escaneo)">📦</button>
+      <button id="venderBtn" class="fbtn" title="Vender (POS)">🛍️</button>
       <button id="helpBtn" class="fbtn" title="Ayuda">❓</button>
       <button id="cartBtn" class="fbtn" title="Carrito">🛒<span id="cartN" class="cbadge" style="display:none"></span></button>
     </div>
@@ -1130,6 +1131,7 @@ document.getElementById('scanBtn').onclick = async ()=>{
    el PIN del modo editor NO alcanza. */
 let sbSession = getLS('sb_session', null);
 let stOpen=false, stStream=null, stStopped=true, stBusy=false, stCount=0, stLast=null, stVentaTotal=0, stVentaItems=[];
+let stSeccion='carga';   // 'carga' (cargar stock, descuenta al toque) o 'venta' (carrito, descuenta al Guardar venta)
 let stCoolCode='', stCoolUntil=0;
 let MAPS = {color:{}, talle:{}};   // código de barras → nombre (compartido, tabla barcode_maps)
 
@@ -1190,7 +1192,6 @@ function guardarMap(tipo, codigo, nombre){
 }
 const stLocal = ()=> getLS('stock_local', 'camerino');
 const stLocalNombre = l => l==='camerino' ? 'Camerino' : 'Giustozzi';
-const stModo = ()=> getLS('stock_modo', 'carga');   // 'carga' (+1) o 'venta' (-1)
 const stStockDe = (p, color, talle) => {
   const t = (p.talles||[]).find(x=>x.talle===talle);
   const c = t && (t.stock||[]).find(s=>s.color===color);
@@ -1199,22 +1200,6 @@ const stStockDe = (p, color, talle) => {
 const money = n => '$'+Number(n||0).toLocaleString('es-AR');
 const API_FACTURAR = 'https://www.camerino.com.ar/api/facturar';
 const API_CONSULTAR_CUIT = 'https://www.camerino.com.ar/api/consultar-cuit';
-
-// Refresca la cajita del total acumulado + botón Facturar (solo visible en modo Venta).
-function refVentaTotal(){
-  const box = document.getElementById('stVentaBox');
-  if(!box) return;
-  if(stModo()!=='venta' || stVentaTotal<=0){ box.innerHTML=''; return; }
-  box.innerHTML = `
-    <div class="lista" style="margin-top:10px">
-      <div class="l">Total de esta venta</div>
-      <div class="v">${money(stVentaTotal)}</div>
-    </div>
-    <button class="addcart" id="stFacturarBtn">🧾 Cerrar venta — ${money(stVentaTotal)}</button>
-    <button class="fbtn" id="stNuevaVenta" style="width:100%; margin-top:6px">Nueva venta (reiniciar total)</button>`;
-  box.querySelector('#stFacturarBtn').onclick = ()=> stCardCerrarVenta();
-  box.querySelector('#stNuevaVenta').onclick = ()=>{ stVentaTotal=0; stVentaItems=[]; refVentaTotal(); };
-}
 
 // Tarjeta para emitir la factura electrónica (AFIP/ARCA) por el total acumulado.
 const isoLocal = d => { const p=n=>String(n).padStart(2,'0'); return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`; };
@@ -1443,75 +1428,20 @@ function wireTicketButtons(card, d, localSel, telefono){
   };
 }
 
-function stCardCerrarVenta(){
+function wireVentaCard(){
+  const card = document.getElementById('stVentaCard');
   const localSel = stLocal();
-  const card = document.getElementById('stCard');
-  const hoy = new Date();
-  const fMin = new Date(hoy); fMin.setDate(fMin.getDate()-5);
-  const fMax = new Date(hoy); fMax.setDate(fMax.getDate()+5);
-  card.innerHTML = `
-    <div class="lista" style="margin-top:10px">
-      <div class="l">Cerrar venta — ${stLocalNombre(localSel)}</div>
-      <div class="v" style="font-size:15px">CUIT ${localSel==='camerino' ? '20-28157793-0 (Camerino)' : '27-32029626-4 (Giustozzi)'}</div>
-    </div>
-    <div class="label">Total de la venta</div>
-    <input id="stCvTotal" class="search" type="number" inputmode="decimal" value="${stVentaTotal}">
-    <div class="label">Medios de pago</div>
-    <div class="grid">
-      <div><div class="note" style="margin:0 0 4px">Efectivo (contado)</div>
-        <input id="stCvContado" class="search" type="number" inputmode="decimal" value="${stVentaTotal}"></div>
-      <div><div class="note" style="margin:0 0 4px">Tarjeta de crédito</div>
-        <input id="stCvTCred" class="search" type="number" inputmode="decimal" value="0"></div>
-      <div><div class="note" style="margin:0 0 4px">Tarjeta de débito</div>
-        <input id="stCvTDeb" class="search" type="number" inputmode="decimal" value="0"></div>
-      <div><div class="note" style="margin:0 0 4px">Crédito personal</div>
-        <input id="stCvCPer" class="search" type="number" inputmode="decimal" value="0"></div>
-      <div><div class="note" style="margin:0 0 4px">Crédito financiero</div>
-        <input id="stCvCFin" class="search" type="number" inputmode="decimal" value="0"></div>
-    </div>
-    <div class="lista" style="margin-top:8px">
-      <div class="l">Saldo pendiente</div>
-      <div class="v" id="stCvSaldo" style="font-size:22px">${money(0)}</div>
-    </div>
-    <div class="label">¿Facturar esta venta?</div>
-    <div class="talles">
-      <button class="talle sel" data-fac="no">No</button>
-      <button class="talle" data-fac="si">Sí</button>
-    </div>
-    <div id="stCvFacturarBox" style="display:none">
-      <div class="label">Tipo de factura</div>
-      <div class="talles">
-        <button class="talle sel" data-t="B">Factura B (consumidor final)</button>
-        <button class="talle" data-t="A">Factura A (con CUIT)</button>
-      </div>
-      <div class="label" id="stFcCuitLabel" style="display:none">CUIT del cliente</div>
-      <div id="stFcCuitRow" style="display:none; gap:6px">
-        <input id="stFcCuit" class="search" placeholder="ej. 20345678901" inputmode="numeric" style="flex:1">
-        <button class="fbtn" type="button" id="stFcBuscarCliente" style="flex:none; padding:0 14px">🔍</button>
-      </div>
-      <div id="stFcClientePicker"></div>
-      <div class="note" id="stFcCuitNombre" style="display:none"></div>
-      <div id="stFcGuardarClienteBox"></div>
-      <div class="label">Fecha del comprobante</div>
-      <input id="stFcFecha" class="search" type="date" value="${isoLocal(hoy)}" min="${isoLocal(fMin)}" max="${isoLocal(fMax)}">
-      <div class="note">AFIP solo acepta hasta 5 días antes o después de hoy.</div>
-    </div>
-    <button class="addcart" id="stFcOk">Guardar venta</button>
-    <button class="fbtn" id="stFcCancel" style="width:100%; margin-top:6px">Cancelar</button>
-    <div class="note" id="stFcErr"></div>
-    <div id="stFcResultado"></div>`;
   let tipo = 'B';
   let facturar = false;
   let clienteTelefono = null;
-  const recalcSaldo = ()=>{
-    const total = Number(card.querySelector('#stCvTotal').value)||0;
-    const pagado = ['stCvContado','stCvTCred','stCvTDeb','stCvCPer','stCvCFin']
-      .reduce((acc,id)=> acc + (Number(card.querySelector('#'+id).value)||0), 0);
-    card.querySelector('#stCvSaldo').textContent = money(Math.max(0, total-pagado));
+  ['stCvContado','stCvTCred','stCvTDeb','stCvCPer','stCvCFin'].forEach(id=>
+    card.querySelector('#'+id).addEventListener('input', recalcSaldoVenta));
+  recalcSaldoVenta();
+  card.querySelector('#stCvTodoEfectivo').onclick = ()=>{
+    card.querySelector('#stCvContado').value = stVentaTotal;
+    ['stCvTCred','stCvTDeb','stCvCPer','stCvCFin'].forEach(id=> card.querySelector('#'+id).value = 0);
+    recalcSaldoVenta();
   };
-  ['stCvTotal','stCvContado','stCvTCred','stCvTDeb','stCvCPer','stCvCFin'].forEach(id=>
-    card.querySelector('#'+id).addEventListener('input', recalcSaldo));
-  recalcSaldo();
   [...card.querySelectorAll('[data-fac]')].forEach(b=> b.onclick=()=>{
     facturar = b.dataset.fac==='si';
     [...card.querySelectorAll('[data-fac]')].forEach(x=>x.classList.remove('sel'));
@@ -1603,11 +1533,14 @@ function stCardCerrarVenta(){
     });
   };
   card.querySelector('#stFcCuit').addEventListener('blur', consultarCuit);
-  card.querySelector('#stFcCancel').onclick = ()=>{ card.innerHTML=''; };
+  card.querySelector('#stFcCancel').onclick = ()=>{
+    stVentaTotal = 0; stVentaItems = [];
+    drawVender();
+  };
   card.querySelector('#stFcOk').onclick = async ()=>{
     const err = card.querySelector('#stFcErr');
     const ok = card.querySelector('#stFcOk');
-    const total = Number(card.querySelector('#stCvTotal').value)||0;
+    const total = stVentaTotal;
     const pagoContado = Number(card.querySelector('#stCvContado').value)||0;
     const pagoTCred = Number(card.querySelector('#stCvTCred').value)||0;
     const pagoTDeb = Number(card.querySelector('#stCvTDeb').value)||0;
@@ -1616,11 +1549,16 @@ function stCardCerrarVenta(){
     const saldoPendiente = Math.max(0, total - (pagoContado+pagoTCred+pagoTDeb+pagoCPer+pagoCFin));
     const cuit = (card.querySelector('#stFcCuit').value||'').replace(/\D/g,'');
     const fecha = card.querySelector('#stFcFecha').value;
-    if(!(total>0)){ err.textContent='El total tiene que ser mayor a 0.'; return; }
+    if(!(total>0)){ err.textContent='Agregá al menos un producto al carrito.'; return; }
     if(facturar && tipo==='A' && cuit.length!==11){ err.textContent='Para Factura A escribí el CUIT del cliente (11 dígitos).'; return; }
     if(facturar && !fecha){ err.textContent='Elegí la fecha del comprobante.'; return; }
-    err.textContent=''; ok.disabled=true; ok.textContent = facturar?'Emitiendo…':'Guardando…';
+    err.textContent=''; ok.disabled=true; ok.textContent = 'Descontando stock…';
     try{
+      // Recién ahora, al guardar, se descuenta el stock de cada producto del carrito.
+      for(const it of stVentaItems){
+        await rpcAjustarStock(it.codigo, it.talle, it.color, localSel, -1);
+      }
+      ok.textContent = facturar?'Emitiendo…':'Guardando…';
       let d = null;
       if(facturar){
         const token = await sbToken();
@@ -1646,8 +1584,11 @@ function stCardCerrarVenta(){
       } else {
         card.querySelector('#stFcResultado').innerHTML = `<div class="lista" style="margin-top:10px"><div class="l">✓ Venta guardada</div><div class="v" style="font-size:20px">${money(total)}</div></div>`;
       }
-      stVentaTotal = 0; stVentaItems = []; refVentaTotal();
-      ok.style.display='none'; card.querySelector('#stFcCancel').textContent='Cerrar';
+      stVentaTotal = 0; stVentaItems = [];
+      renderCarrito();
+      ok.style.display='none';
+      card.querySelector('#stFcCancel').textContent='Nueva venta';
+      card.querySelector('#stFcCancel').onclick = ()=> drawVender();
     }catch(e){
       ok.disabled=false; ok.textContent = facturar?'Guardar y facturar':'Guardar venta';
       err.textContent = e.message || 'No se pudo guardar la venta.';
@@ -1667,11 +1608,20 @@ function buscarArticuloBarcode(digits){
 }
 
 document.getElementById('stockBtn').onclick = ()=>{
+  stSeccion = 'carga';
   stOpen = true; stCount = 0; stLast = null; stBusy = false;
   document.getElementById('ov').classList.add('open');
   history.pushState({detalle:1}, '');
   cargarMaps();
   drawStock();
+};
+document.getElementById('venderBtn').onclick = ()=>{
+  stSeccion = 'venta';
+  stOpen = true; stBusy = false;
+  document.getElementById('ov').classList.add('open');
+  history.pushState({detalle:1}, '');
+  cargarMaps();
+  drawVender();
 };
 function stCerrar(viaHistory){
   if(!stOpen) return;
@@ -1710,19 +1660,13 @@ function drawStock(){
     };
     return;
   }
-  const modoInicial = stModo();
   sheet.innerHTML = `
     <div class="topbtns"><button class="backbtn" id="stClose">✕ Cerrar</button></div>
-    <h2 id="stTitulo">${modoInicial==='venta' ? '🛍️ Vender (POS)' : '📦 Cargar stock'}</h2>
+    <h2>📦 Cargar stock</h2>
     <div class="scat">Sesión: ${esc(sbSession.email||'')} · <a href="#" id="stLogout" style="color:var(--accent)">salir</a></div>
     <div class="st-grid">
       <div class="st-col-left">
-        <div class="label">¿Qué estás haciendo?</div>
-        <div class="talles">
-          <button class="talle" id="stModoCarga">📦 Cargar (+1)</button>
-          <button class="talle" id="stModoVenta">🛍️ Vender (−1)</button>
-        </div>
-        <div class="label" id="stLocLabel">Local</div>
+        <div class="label">Sumar stock al local</div>
         <div class="talles">
           <button class="talle" id="stLocCam">Camerino</button>
           <button class="talle" id="stLocGiu">Giustozzi</button>
@@ -1732,27 +1676,16 @@ function drawStock(){
           <input id="stManual" class="search" placeholder="O escribí el código a mano…" inputmode="numeric" autocomplete="off" style="flex:1">
           <button id="stManualGo" class="fbtn" style="font-size:16px">OK</button>
         </div>
-        <div class="note" id="stNLabel">Escaneadas en esta sesión: <b id="stN">${stCount}</b></div>
+        <div class="note">Cargadas en esta sesión: <b id="stN">${stCount}</b></div>
         <button id="stUndo" class="fbtn" style="width:100%; margin-top:6px; display:${stLast?'':'none'}">↩ Deshacer último</button>
       </div>
       <div class="st-col-right">
         <div id="stCard"></div>
-        <div id="stVentaBox"></div>
       </div>
     </div>`;
   document.getElementById('stClose').onclick = ()=> stCerrar(false);
   document.getElementById('stLogout').onclick = (e)=>{ e.preventDefault();
     sbSession=null; setLS('sb_session', null); drawStock(); };
-  const bMC=document.getElementById('stModoCarga'), bMV=document.getElementById('stModoVenta');
-  const refModo=()=>{ const m=stModo();
-    bMC.classList.toggle('sel', m!=='venta'); bMV.classList.toggle('sel', m==='venta');
-    document.getElementById('stTitulo').textContent = m==='venta' ? '🛍️ Vender (POS)' : '📦 Cargar stock';
-    document.getElementById('stLocLabel').textContent = m==='venta' ? 'Local donde se vende' : 'Sumar stock al local';
-    document.getElementById('stNLabel').firstChild.textContent = (m==='venta' ? 'Vendidas' : 'Cargadas')+' en esta sesión: ';
-    refVentaTotal(); };
-  bMC.onclick=()=>{ setLS('stock_modo','carga'); refModo(); };
-  bMV.onclick=()=>{ setLS('stock_modo','venta'); refModo(); };
-  refModo();
   const bC=document.getElementById('stLocCam'), bG=document.getElementById('stLocGiu');
   const refLoc=()=>{ const l=stLocal();
     bC.classList.toggle('sel', l==='camerino'); bG.classList.toggle('sel', l==='giustozzi'); };
@@ -1765,6 +1698,224 @@ function drawStock(){
   man.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); go(); } });
   document.getElementById('stUndo').onclick = stDeshacer;
   stCamara();
+}
+
+// ===== Vender (POS): carrito — no toca el stock hasta "Guardar venta" =====
+function drawVender(){
+  const sheet = document.getElementById('sheet');
+  sheet.classList.add('sheet-wide');
+  if(!sbSession){
+    sheet.innerHTML = `
+      <div class="topbtns"><button class="backbtn" id="stClose">✕ Cerrar</button></div>
+      <h2>🛍️ Vender (POS)</h2>
+      <div class="scat">Iniciá sesión con tu usuario del panel para poder vender.</div>
+      <div class="label">Email</div>
+      <input id="stEmail" class="search" type="email" autocomplete="username">
+      <div class="label">Contraseña</div>
+      <input id="stPass" class="search" type="password" autocomplete="current-password">
+      <button class="addcart" id="stLoginBtn">Ingresar</button>
+      <div class="note" id="stLoginErr"></div>`;
+    document.getElementById('stClose').onclick = ()=> stCerrar(false);
+    document.getElementById('stLoginBtn').onclick = async ()=>{
+      const err = document.getElementById('stLoginErr');
+      const b = document.getElementById('stLoginBtn');
+      b.disabled = true; b.textContent = 'Ingresando…';
+      try{
+        await sbLogin(document.getElementById('stEmail').value.trim(),
+                      document.getElementById('stPass').value);
+        drawVender();
+      }catch(e){ b.disabled=false; b.textContent='Ingresar'; err.textContent = e.message; }
+    };
+    return;
+  }
+  const hoy = new Date();
+  const fMin = new Date(hoy); fMin.setDate(fMin.getDate()-5);
+  const fMax = new Date(hoy); fMax.setDate(fMax.getDate()+5);
+  sheet.innerHTML = `
+    <div class="topbtns"><button class="backbtn" id="stClose">✕ Cerrar</button></div>
+    <h2>🛍️ Vender (POS)</h2>
+    <div class="scat">Sesión: ${esc(sbSession.email||'')} · <a href="#" id="stLogout" style="color:var(--accent)">salir</a></div>
+    <div class="st-grid">
+      <div class="st-col-left">
+        <div class="label">Local donde se vende</div>
+        <div class="talles">
+          <button class="talle" id="stLocCam">Camerino</button>
+          <button class="talle" id="stLocGiu">Giustozzi</button>
+        </div>
+        <div id="stVideoBox"></div>
+        <div class="filters" style="margin-top:8px">
+          <input id="stManual" class="search" placeholder="O escribí el código a mano…" inputmode="numeric" autocomplete="off" style="flex:1">
+          <button id="stManualGo" class="fbtn" style="font-size:16px">OK</button>
+        </div>
+        <div id="stCard"></div>
+        <div class="label">Carrito de esta venta</div>
+        <div id="stCarrito"></div>
+      </div>
+      <div class="st-col-right" id="stVentaCard">
+        <div class="lista">
+          <div class="l">Total del carrito</div>
+          <div class="v" id="stCvTotalDisplay" style="font-size:28px">${money(stVentaTotal)}</div>
+        </div>
+        <div class="label">Medios de pago</div>
+        <div class="grid">
+          <div><div class="note" style="margin:0 0 4px">Efectivo (contado)</div>
+            <input id="stCvContado" class="search" type="number" inputmode="decimal" value="0"></div>
+          <div><div class="note" style="margin:0 0 4px">Tarjeta de crédito</div>
+            <input id="stCvTCred" class="search" type="number" inputmode="decimal" value="0"></div>
+          <div><div class="note" style="margin:0 0 4px">Tarjeta de débito</div>
+            <input id="stCvTDeb" class="search" type="number" inputmode="decimal" value="0"></div>
+          <div><div class="note" style="margin:0 0 4px">Crédito personal</div>
+            <input id="stCvCPer" class="search" type="number" inputmode="decimal" value="0"></div>
+          <div><div class="note" style="margin:0 0 4px">Crédito financiero</div>
+            <input id="stCvCFin" class="search" type="number" inputmode="decimal" value="0"></div>
+        </div>
+        <button class="fbtn" id="stCvTodoEfectivo" style="width:100%; margin-top:6px">Todo en efectivo</button>
+        <div class="lista" style="margin-top:8px">
+          <div class="l">Saldo pendiente</div>
+          <div class="v" id="stCvSaldo" style="font-size:22px">${money(0)}</div>
+        </div>
+        <div class="label">¿Facturar esta venta?</div>
+        <div class="talles">
+          <button class="talle sel" data-fac="no">No</button>
+          <button class="talle" data-fac="si">Sí</button>
+        </div>
+        <div id="stCvFacturarBox" style="display:none">
+          <div class="label">Tipo de factura</div>
+          <div class="talles">
+            <button class="talle sel" data-t="B">Factura B (consumidor final)</button>
+            <button class="talle" data-t="A">Factura A (con CUIT)</button>
+          </div>
+          <div class="label" id="stFcCuitLabel" style="display:none">CUIT del cliente</div>
+          <div id="stFcCuitRow" style="display:none; gap:6px">
+            <input id="stFcCuit" class="search" placeholder="ej. 20345678901" inputmode="numeric" style="flex:1">
+            <button class="fbtn" type="button" id="stFcBuscarCliente" style="flex:none; padding:0 14px">🔍</button>
+          </div>
+          <div id="stFcClientePicker"></div>
+          <div class="note" id="stFcCuitNombre" style="display:none"></div>
+          <div id="stFcGuardarClienteBox"></div>
+          <div class="label">Fecha del comprobante</div>
+          <input id="stFcFecha" class="search" type="date" value="${isoLocal(hoy)}" min="${isoLocal(fMin)}" max="${isoLocal(fMax)}">
+          <div class="note">AFIP solo acepta hasta 5 días antes o después de hoy.</div>
+        </div>
+        <button class="addcart" id="stFcOk" style="margin-top:10px">Guardar venta</button>
+        <button class="fbtn" id="stFcCancel" style="width:100%; margin-top:6px">Vaciar carrito</button>
+        <div class="note" id="stFcErr"></div>
+        <div id="stFcResultado"></div>
+      </div>
+    </div>`;
+  document.getElementById('stClose').onclick = ()=> stCerrar(false);
+  document.getElementById('stLogout').onclick = (e)=>{ e.preventDefault();
+    sbSession=null; setLS('sb_session', null); drawVender(); };
+  const bC=document.getElementById('stLocCam'), bG=document.getElementById('stLocGiu');
+  const refLoc=()=>{ const l=stLocal();
+    bC.classList.toggle('sel', l==='camerino'); bG.classList.toggle('sel', l==='giustozzi'); };
+  bC.onclick=()=>{ setLS('stock_local','camerino'); refLoc(); };
+  bG.onclick=()=>{ setLS('stock_local','giustozzi'); refLoc(); };
+  refLoc();
+  const man=document.getElementById('stManual');
+  const go=()=>{ if(man.value.trim()){ stProcesar(man.value); man.value=''; } };
+  document.getElementById('stManualGo').onclick = go;
+  man.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); go(); } });
+  renderCarrito();
+  wireVentaCard();
+  stCamara();
+}
+
+function actualizarTotalVenta(){
+  const disp = document.getElementById('stCvTotalDisplay');
+  if(disp) disp.textContent = money(stVentaTotal);
+  recalcSaldoVenta();
+}
+function recalcSaldoVenta(){
+  const saldoEl = document.getElementById('stCvSaldo');
+  if(!saldoEl) return;
+  const pagado = ['stCvContado','stCvTCred','stCvTDeb','stCvCPer','stCvCFin']
+    .reduce((acc,id)=>{ const el=document.getElementById(id); return acc + (el ? Number(el.value)||0 : 0); }, 0);
+  saldoEl.textContent = money(Math.max(0, stVentaTotal-pagado));
+}
+
+function renderCarrito(){
+  const box = document.getElementById('stCarrito');
+  if(!box) return;
+  box.innerHTML = stVentaItems.length ? stVentaItems.map((it,i)=>`
+    <div class="lista" style="margin-top:6px; display:flex; justify-content:space-between; align-items:center; gap:8px; text-align:left">
+      <div>
+        <div class="l">${esc(it.codigo)} ${esc(it.nombre)}</div>
+        <div class="v" style="font-size:14px">${esc(it.talle)}${it.color?' · '+esc(it.color):''} · ${money(it.precio)}</div>
+      </div>
+      <button class="fbtn" data-rm="${i}" style="flex:none; padding:6px 10px">✕</button>
+    </div>`).join('') : '<div class="note">Todavía no agregaste ningún producto.</div>';
+  [...box.querySelectorAll('[data-rm]')].forEach(b=> b.onclick=()=>{
+    const i = Number(b.dataset.rm);
+    stVentaTotal = Math.max(0, stVentaTotal - (stVentaItems[i]?.precio||0));
+    stVentaItems.splice(i,1);
+    renderCarrito();
+    actualizarTotalVenta();
+  });
+}
+
+// Tarjeta de confirmación al agregar un producto al carrito de venta (no toca stock).
+function ventaCardConfirm(p, digits){
+  const col3 = digits.length>=8  ? digits.slice(5,8)  : '';
+  const tal3 = digits.length>=11 ? digits.slice(8,11) : '';
+  const colorSug = col3 ? (MAPS.color[col3]||'') : 'Único';
+  let sel = p.talles.length===1 ? 0 : -1;
+  if(sel<0 && tal3 && MAPS.talle[tal3]){
+    const m = norm(MAPS.talle[tal3]);
+    const hits = p.talles.map((t,i)=>({i, ok: norm(t.talle)===m || norm(t.talle).includes(m)})).filter(x=>x.ok);
+    if(hits.length===1) sel = hits[0].i;
+  }
+  const localSel = stLocal();
+  const colores = [...new Set([].concat(Object.values(MAPS.color),
+    ...p.talles.map(t=>(t.stock||[]).map(s=>s.color))))].filter(c=>c && c!=='Único').sort();
+  const card = document.getElementById('stCard');
+  card.innerHTML = `
+    <div class="lista" style="margin-top:10px">
+      <div class="l">${esc(p.nombre)||'(sin nombre)'} · Código ${esc(p.codigo)}</div>
+      <div class="v" style="font-size:15px">${digits.length>=11
+        ? `Barra ${esc(digits.slice(0,5))}-${esc(col3)}-${esc(tal3)}` : 'Barra '+esc(digits)}</div>
+    </div>
+    <div class="label">Color${col3?` (código ${esc(col3)})`:''}</div>
+    <input id="stColor" class="search" list="stColores" placeholder="ej. Negro" value="${esc(colorSug)}" autocomplete="off">
+    <datalist id="stColores">${colores.map(c=>`<option value="${esc(c)}">`).join('')}</datalist>
+    <div class="label">Talle${tal3?` (código ${esc(tal3)})`:''}</div>
+    <div class="talles" id="stTalles">${p.talles.map((x,i)=>
+      `<button class="talle ${i===sel?'sel':''}" data-i="${i}">${esc(x.talle)}</button>`).join('')}</div>
+    <div class="note" id="stStockActual"></div>
+    <button class="addcart" id="stOk">🛒 Agregar al carrito</button>
+    <button class="fbtn" id="stCancel" style="width:100%; margin-top:6px">Cancelar</button>
+    <div class="note" id="stErr"></div>`;
+  const stockInfo = card.querySelector('#stStockActual');
+  const refStockInfo = ()=>{
+    if(sel<0){ stockInfo.textContent=''; return; }
+    const color = (card.querySelector('#stColor').value||'').trim() || 'Único';
+    const actual = stStockDe(p, color, p.talles[sel].talle);
+    stockInfo.innerHTML = `Stock actual en ${stLocalNombre(localSel)}: <b>${actual}</b>`;
+  };
+  [...card.querySelectorAll('#stTalles .talle')].forEach(b=> b.onclick=()=>{
+    sel = +b.dataset.i;
+    [...card.querySelectorAll('#stTalles .talle')].forEach(x=>x.classList.remove('sel'));
+    b.classList.add('sel');
+    refStockInfo();
+  });
+  card.querySelector('#stColor').addEventListener('input', refStockInfo);
+  refStockInfo();
+  card.querySelector('#stCancel').onclick = ()=>{ card.innerHTML=''; stBusy=false; };
+  card.querySelector('#stOk').onclick = ()=>{
+    const err = card.querySelector('#stErr');
+    const color = (card.querySelector('#stColor').value||'').trim() || 'Único';
+    if(sel<0){ err.textContent='Elegí el talle.'; return; }
+    const talle = p.talles[sel].talle;
+    const precioItem = Number(p.talles[sel].precio)||0;
+    if(col3 && MAPS.color[col3]!==color) guardarMap('color', col3, color);
+    if(tal3 && MAPS.talle[tal3]!==talle) guardarMap('talle', tal3, talle);
+    stVentaItems.push({codigo:p.codigo, nombre:p.nombre, talle, color, precio:precioItem});
+    stVentaTotal += precioItem;
+    toast(`🛒 + ${p.nombre} · ${color} · ${talle}`);
+    card.innerHTML=''; stBusy=false;
+    renderCarrito();
+    actualizarTotalVenta();
+  };
 }
 
 // Cámara continua: no se cierra tras cada lectura — se escanea prenda tras prenda.
@@ -1840,7 +1991,8 @@ function stProcesar(raw){
   stBusy = true;   // pausa la detección mientras la tarjeta está abierta
   const p = buscarArticuloBarcode(digits);
   if(!p){ stCardNuevo(digits); return; }
-  stCardConfirm(p, digits);
+  if(stSeccion==='venta') ventaCardConfirm(p, digits);
+  else stCardConfirm(p, digits);
 }
 
 // Tarjeta de confirmación: color + talle preseleccionados si ya hay mapeo.
@@ -1855,9 +2007,8 @@ function stCardConfirm(p, digits){
     if(hits.length===1) sel = hits[0].i;
   }
   const localSel = stLocal();
-  const modo = stModo();
-  const delta = modo==='venta' ? -1 : 1;
-  const btnTxt = modo==='venta' ? `➖ Restar 1 de ${stLocalNombre(localSel)}` : `➕ Sumar 1 a ${stLocalNombre(localSel)}`;
+  const delta = 1;
+  const btnTxt = `➕ Sumar 1 a ${stLocalNombre(localSel)}`;
   const colores = [...new Set([].concat(Object.values(MAPS.color),
     ...p.talles.map(t=>(t.stock||[]).map(s=>s.color))))].filter(c=>c && c!=='Único').sort();
   const card = document.getElementById('stCard');
@@ -1879,12 +2030,10 @@ function stCardConfirm(p, digits){
     <div class="note" id="stErr"></div>`;
   const stockInfo = card.querySelector('#stStockActual');
   const refStockInfo = ()=>{
-    if(modo!=='venta' || sel<0){ stockInfo.textContent=''; return; }
+    if(sel<0){ stockInfo.textContent=''; return; }
     const color = (card.querySelector('#stColor').value||'').trim() || 'Único';
     const actual = stStockDe(p, color, p.talles[sel].talle);
-    stockInfo.innerHTML = actual>0
-      ? `Stock actual en ${stLocalNombre(localSel)}: <b>${actual}</b>`
-      : `⚠ No hay stock cargado de este color/talle en ${stLocalNombre(localSel)} — igual se puede descontar.`;
+    stockInfo.innerHTML = `Stock actual en ${stLocalNombre(localSel)}: <b>${actual}</b>`;
   };
   [...card.querySelectorAll('#stTalles .talle')].forEach(b=> b.onclick=()=>{
     sel = +b.dataset.i;
@@ -1907,10 +2056,8 @@ function stCardConfirm(p, digits){
       if(Array.isArray(ret)) p.talles = stMapTalles(ret);
       if(col3 && MAPS.color[col3]!==color) guardarMap('color', col3, color);
       if(tal3 && MAPS.talle[tal3]!==talle) guardarMap('talle', tal3, talle);
-      const precioItem = Number(p.talles[sel].precio)||0;
-      stLast = {codigo:p.codigo, talle, color, local:localSel, nombre:p.nombre, prod:p, delta, precio: modo==='venta'?precioItem:0};
+      stLast = {codigo:p.codigo, talle, color, local:localSel, nombre:p.nombre, prod:p, delta};
       stCount++;
-      if(modo==='venta'){ stVentaTotal += precioItem; stVentaItems.push({codigo:p.codigo, nombre:p.nombre, talle, color, precio:precioItem}); refVentaTotal(); }
       const nEl=document.getElementById('stN'); if(nEl) nEl.textContent=stCount;
       const u=document.getElementById('stUndo'); if(u) u.style.display='';
       toast(`✓ ${delta>0?'+1':'−1'} ${p.nombre} · ${color} · ${talle}`);
@@ -1932,7 +2079,6 @@ async function stDeshacer(){
     const ret = await rpcAjustarStock(stLast.codigo, stLast.talle, stLast.color, stLast.local, deltaDeshacer);
     if(Array.isArray(ret) && stLast.prod) stLast.prod.talles = stMapTalles(ret);
     stCount = Math.max(0, stCount-1);
-    if(stLast.precio){ stVentaTotal = Math.max(0, stVentaTotal - stLast.precio); stVentaItems.pop(); refVentaTotal(); }
     const nEl=document.getElementById('stN'); if(nEl) nEl.textContent=stCount;
     toast(`↩ Deshecho: ${deltaDeshacer>0?'+1':'−1'} `+stLast.nombre);
     stLast=null;
@@ -1985,7 +2131,8 @@ function stCardNuevo(digits){
         {codigo, nombre, categoria, precio_lista: precio, talles:[{talle:'Único', precio, stock:[]}]});
       CATALOG.push(nuevo); rebuild();
       toast('✓ Artículo creado');
-      stCardConfirm(nuevo, digits);
+      if(stSeccion==='venta') ventaCardConfirm(nuevo, digits);
+      else stCardConfirm(nuevo, digits);
     }catch(e){
       if(String(e.message)==='login'){ card.innerHTML=''; drawStock(); return; }
       ok.disabled=false; ok.textContent='Crear artículo y seguir';
