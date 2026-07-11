@@ -38,7 +38,10 @@ drop policy if exists "gerente select ventas" on ventas;
 drop policy if exists "admin insert ventas" on ventas;
 drop policy if exists "admin update ventas" on ventas;
 drop policy if exists "gerente delete ventas" on ventas;
-create policy "gerente select ventas" on ventas for select using (public.is_gerente());
+-- Cualquier admin (vendedor o gerente) puede leer las ventas de HOY (para el
+-- resumen diario en la app de vendedores); el historial completo, solo gerente.
+-- Confirmado explícitamente por el usuario el 2026-07-11.
+create policy "select ventas" on ventas for select using (public.is_gerente() or fecha = current_date);
 create policy "admin insert ventas" on ventas for insert with check (public.is_admin());
 create policy "admin update ventas" on ventas for update using (public.is_admin()) with check (public.is_admin());
 create policy "gerente delete ventas" on ventas for delete using (public.is_gerente());
