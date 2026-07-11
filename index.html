@@ -580,8 +580,17 @@ function pushHist(cod){
   setLS('hist_codigos', HIST);
 }
 
+// Stock total del producto (suma todos los talles/colores), por local.
+function stockPorLocal(p){
+  return (p.talles||[]).reduce((acc,t)=>{
+    (t.stock||[]).forEach(s=>{ acc.cam += Number(s.camerino)||0; acc.giu += Number(s.giustozzi)||0; });
+    return acc;
+  }, {cam:0, giu:0});
+}
+
 function itemHtml(p){
   const fav = isFav(p.codigo);
+  const st = stockPorLocal(p);
   return `<div class="swipe-wrap">
     <button class="swipe-add" data-add="${esc(p.codigo)}" title="Agregar al carrito">🛒<span>Agregar</span></button>
     <div class="item" data-cod="${esc(p.codigo)}">
@@ -589,6 +598,7 @@ function itemHtml(p){
       <div class="info">
         <div class="nombre">${esc(p.nombre)||'(sin nombre)'}</div>
         <div class="meta"><span class="cod">${esc(p.codigo)||'—'}</span> · ${esc(p.categoria)}</div>
+        <div class="meta">Stock: Camerino ${st.cam} · Giustozzi ${st.giu}</div>
       </div>
       <div class="right">
         <div class="precio">${fmt(p.precio_lista)}</div>
