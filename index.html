@@ -80,6 +80,9 @@
   .sheet{background:var(--bg); width:100%; max-width:520px; align-self:flex-start;
     border-radius:0 0 18px 18px; border-bottom:1px solid var(--line);
     padding:18px 16px 90px}
+  /* Vender (POS): pantalla completa, no un desplegable tipo modal. */
+  .overlay.ov-full{background:var(--bg); align-items:stretch}
+  .overlay.ov-full .sheet{max-width:100%; min-height:100vh; border-radius:0; border-bottom:none}
   /* Panel de stock/venta/facturar: en pantallas grandes (PC) se acomoda en 2
      columnas (escaneo a la izquierda, confirmar/facturar a la derecha) en vez
      de quedar todo apilado y angosto como en el celular. */
@@ -1612,6 +1615,7 @@ function wireVentaCard(){
       }
       stVentaTotal = 0; stVentaItems = [];
       renderCarrito();
+      renderResumenDia();
       ok.style.display='none';
       card.querySelector('#stFcCancel').textContent='Nueva venta';
       card.querySelector('#stFcCancel').onclick = ()=> drawVender();
@@ -1655,7 +1659,7 @@ document.getElementById('stockBtn').onclick = ()=>{
 document.getElementById('venderBtn').onclick = ()=>{
   stSeccion = 'venta';
   stOpen = true; stBusy = false;
-  document.getElementById('ov').classList.add('open');
+  document.getElementById('ov').classList.add('open','ov-full');
   history.pushState({detalle:1}, '');
   cargarMaps();
   drawVender();
@@ -1665,7 +1669,7 @@ function stCerrar(viaHistory){
   stOpen=false; stStopped=true; stBusy=false;
   try{ if(stStream) stStream.getTracks().forEach(t=>t.stop()); }catch(e){}
   stStream=null;
-  document.getElementById('ov').classList.remove('open');
+  document.getElementById('ov').classList.remove('open','ov-full');
   if(!viaHistory && history.state && history.state.detalle) history.back();
 }
 window.addEventListener('popstate', ()=>{ if(stOpen) stCerrar(true); });
@@ -1839,15 +1843,16 @@ function drawVender(){
         <div class="note" id="stFcErr"></div>
         <div id="stFcResultado"></div>
       </div>
-    </div>`;
+    </div>
+    <div id="stResumenDia" style="margin-top:22px"></div>`;
   document.getElementById('stClose').onclick = ()=> stCerrar(false);
   document.getElementById('stLogout').onclick = (e)=>{ e.preventDefault();
     sbSession=null; setLS('sb_session', null); drawVender(); };
   const bC=document.getElementById('stLocCam'), bG=document.getElementById('stLocGiu');
   const refLoc=()=>{ const l=stLocal();
     bC.classList.toggle('sel', l==='camerino'); bG.classList.toggle('sel', l==='giustozzi'); };
-  bC.onclick=()=>{ setLS('stock_local','camerino'); refLoc(); };
-  bG.onclick=()=>{ setLS('stock_local','giustozzi'); refLoc(); };
+  bC.onclick=()=>{ setLS('stock_local','camerino'); refLoc(); renderResumenDia(); };
+  bG.onclick=()=>{ setLS('stock_local','giustozzi'); refLoc(); renderResumenDia(); };
   refLoc();
   const man=document.getElementById('stManual');
   const go=()=>{ if(man.value.trim()){ stProcesar(man.value); man.value=''; } };
@@ -1855,7 +1860,48 @@ function drawVender(){
   man.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); go(); } });
   renderCarrito();
   wireVentaCard();
+  renderResumenDia();
   stCamara();
+}
+
+// Visión general del día — reemplaza la planilla de papel: todas las ventas
+// de hoy en este local, con sus productos, medios de pago y si se facturaron.
+async function renderResumenDia(){
+  const box = document.getElementById('stResumenDia');
+  if(!box) return;
+  box.innerHTML = `<div class="label">📋 Ventas de hoy — ${esc(stLocalNombre(stLocal()))}</div><div class="note">Cargando…</div>`;
+  try{
+    const hoyIso = isoLocal(new Date());
+    const localSel = stLocal();
+    const r = await sbAuthed(`/rest/v1/ventas?local=eq.${localSel}&fecha=eq.${hoyIso}&order=created_at.desc&select=*`);
+    const rows = r.ok ? await r.json() : [];
+    const totalDia = rows.reduce((a,v)=> a + Number(v.total||0), 0);
+    box.innerHTML = `
+      <div class="label" style="display:flex; justify-content:space-between; align-items:center">
+        <span>📋 Ventas de hoy — ${esc(stLocalNombre(localSel))} (${rows.length})</span>
+        <span style="text-transform:none; font-weight:700; color:var(--text)">${money(totalDia)}</span>
+      </div>
+      ${rows.length ? rows.map(v=>{
+        const hora = v.created_at ? new Date(v.created_at).toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'}) : '';
+        const medios = [
+          v.pago_contado>0 && `Efectivo ${money(v.pago_contado)}`,
+          v.pago_tarjeta_credito>0 && `T.Créd ${money(v.pago_tarjeta_credito)}`,
+          v.pago_tarjeta_debito>0 && `T.Déb ${money(v.pago_tarjeta_debito)}`,
+          v.pago_credito_personal>0 && `Créd.Pers ${money(v.pago_credito_personal)}`,
+          v.pago_credito_financiero>0 && `Créd.Fin ${money(v.pago_credito_financiero)}`,
+        ].filter(Boolean).join(' · ') || 'Sin medio de pago cargado';
+        const items = (v.items||[]).map(it=> `${esc(it.codigo)} ${esc(it.nombre)}${it.talle?` (${esc(it.talle)}${it.color?' · '+esc(it.color):''})`:''}`).join(', ');
+        return `
+        <div class="lista" style="margin-top:6px; text-align:left">
+          <div style="display:flex; justify-content:space-between; gap:8px">
+            <span class="l">${hora} ${v.facturada?`<span class="v" style="font-size:11px; color:var(--accent2)">· Factura ${esc(v.factura_tipo)} N° ${esc(String(v.factura_numero))}</span>`:''}</span>
+            <span class="v" style="font-size:16px">${money(v.total)}</span>
+          </div>
+          <div class="note" style="margin-top:2px">${items || '(sin detalle de items)'}</div>
+          <div class="note" style="margin-top:2px">${medios}${v.saldo_pendiente>0?` · ⚠ Saldo pendiente: ${money(v.saldo_pendiente)}`:''}</div>
+        </div>`;
+      }).join('') : '<div class="note">Todavía no hay ventas registradas hoy en este local.</div>'}`;
+  }catch(e){ box.innerHTML = `<div class="note">No se pudo cargar el resumen del día.</div>`; }
 }
 
 function actualizarTotalVenta(){
