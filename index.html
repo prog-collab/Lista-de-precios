@@ -80,10 +80,13 @@
   .sheet{background:var(--bg); width:100%; max-width:520px; align-self:flex-start;
     border-radius:0 0 18px 18px; border-bottom:1px solid var(--line);
     padding:18px 16px 90px}
-  /* Panel de stock/venta/facturar: en pantallas grandes (PC) aprovecha el ancho
-     en vez de quedar angosto como en el celular. */
+  /* Panel de stock/venta/facturar: en pantallas grandes (PC) se acomoda en 2
+     columnas (escaneo a la izquierda, confirmar/facturar a la derecha) en vez
+     de quedar todo apilado y angosto como en el celular. */
   @media (min-width:900px){
-    .sheet.sheet-wide{max-width:680px; padding-left:32px; padding-right:32px}
+    .sheet.sheet-wide{max-width:1040px; padding-left:32px; padding-right:32px}
+    .sheet.sheet-wide .st-grid{display:grid; grid-template-columns:1fr 1fr; gap:32px; align-items:start}
+    .sheet.sheet-wide .st-col-right{position:sticky; top:18px}
   }
   .sheet h2{margin:0 0 2px; font-size:20px; padding-right:8px}
   .sheet .scod{color:var(--accent); font-weight:700; font-size:14px}
@@ -1650,25 +1653,31 @@ function drawStock(){
     <div class="topbtns"><button class="backbtn" id="stClose">✕ Cerrar</button></div>
     <h2 id="stTitulo">${modoInicial==='venta' ? '🛍️ Vender (POS)' : '📦 Cargar stock'}</h2>
     <div class="scat">Sesión: ${esc(sbSession.email||'')} · <a href="#" id="stLogout" style="color:var(--accent)">salir</a></div>
-    <div class="label">¿Qué estás haciendo?</div>
-    <div class="talles">
-      <button class="talle" id="stModoCarga">📦 Cargar (+1)</button>
-      <button class="talle" id="stModoVenta">🛍️ Vender (−1)</button>
-    </div>
-    <div class="label" id="stLocLabel">Local</div>
-    <div class="talles">
-      <button class="talle" id="stLocCam">Camerino</button>
-      <button class="talle" id="stLocGiu">Giustozzi</button>
-    </div>
-    <div id="stVideoBox"></div>
-    <div class="filters" style="margin-top:8px">
-      <input id="stManual" class="search" placeholder="O escribí el código a mano…" inputmode="numeric" autocomplete="off" style="flex:1">
-      <button id="stManualGo" class="fbtn" style="font-size:16px">OK</button>
-    </div>
-    <div id="stCard"></div>
-    <div class="note" id="stNLabel">Escaneadas en esta sesión: <b id="stN">${stCount}</b></div>
-    <button id="stUndo" class="fbtn" style="width:100%; margin-top:6px; display:${stLast?'':'none'}">↩ Deshacer último</button>
-    <div id="stVentaBox"></div>`;
+    <div class="st-grid">
+      <div class="st-col-left">
+        <div class="label">¿Qué estás haciendo?</div>
+        <div class="talles">
+          <button class="talle" id="stModoCarga">📦 Cargar (+1)</button>
+          <button class="talle" id="stModoVenta">🛍️ Vender (−1)</button>
+        </div>
+        <div class="label" id="stLocLabel">Local</div>
+        <div class="talles">
+          <button class="talle" id="stLocCam">Camerino</button>
+          <button class="talle" id="stLocGiu">Giustozzi</button>
+        </div>
+        <div id="stVideoBox"></div>
+        <div class="filters" style="margin-top:8px">
+          <input id="stManual" class="search" placeholder="O escribí el código a mano…" inputmode="numeric" autocomplete="off" style="flex:1">
+          <button id="stManualGo" class="fbtn" style="font-size:16px">OK</button>
+        </div>
+        <div class="note" id="stNLabel">Escaneadas en esta sesión: <b id="stN">${stCount}</b></div>
+        <button id="stUndo" class="fbtn" style="width:100%; margin-top:6px; display:${stLast?'':'none'}">↩ Deshacer último</button>
+      </div>
+      <div class="st-col-right">
+        <div id="stCard"></div>
+        <div id="stVentaBox"></div>
+      </div>
+    </div>`;
   document.getElementById('stClose').onclick = ()=> stCerrar(false);
   document.getElementById('stLogout').onclick = (e)=>{ e.preventDefault();
     sbSession=null; setLS('sb_session', null); drawStock(); };
