@@ -182,6 +182,7 @@
       <button id="addBtn" class="fbtn" title="Agregar producto">➕</button>
       <button id="stockBtn" class="fbtn" title="Cargar stock (escaneo)">📦</button>
       <button id="venderBtn" class="fbtn" title="Vender (POS)">🛍️</button>
+      <button id="clientesBtn" class="fbtn" title="Cuenta corriente de clientes">👤</button>
       <button id="helpBtn" class="fbtn" title="Ayuda">❓</button>
       <button id="cartBtn" class="fbtn" title="Carrito">🛒<span id="cartN" class="cbadge" style="display:none"></span></button>
     </div>
@@ -1477,6 +1478,8 @@ function wireVentaCard(){
   let tipo = 'B';
   let facturar = false;
   let clienteTelefono = null;
+  let clienteCreditoId = null;
+  let clienteCreditoNombre = null;
   const CAMPOS_PAGO = ['stCvContado','stCvTransf','stCvTCred','stCvTDeb','stCvCPer','stCvCFin'];
   CAMPOS_PAGO.forEach(id=> card.querySelector('#'+id).addEventListener('input', recalcSaldoVenta));
   card.querySelector('#stCvTCredCuotas').addEventListener('change', recalcSaldoVenta);
@@ -1487,6 +1490,62 @@ function wireVentaCard(){
     CAMPOS_PAGO.forEach(id=> card.querySelector('#'+id).value = id===campo ? stVentaTotal : 0);
     recalcSaldoVenta();
   });
+  const clienteInfoEl = card.querySelector('#stCvClienteInfo');
+  async function elegirClienteCredito(cliente){
+    clienteCreditoId = cliente.id;
+    clienteCreditoNombre = cliente.nombre || '(sin nombre)';
+    card.querySelector('#stCvClientePicker').innerHTML = '';
+    clienteInfoEl.textContent = `Cliente: ${clienteCreditoNombre} — consultando saldo…`;
+    try{
+      const r = await sbAuthed(`/rest/v1/v_cuenta_corriente_saldo?cliente_id=eq.${cliente.id}&select=saldo`);
+      const rows = r.ok ? await r.json() : [];
+      const saldo = (rows[0] && Number(rows[0].saldo)) || 0;
+      clienteInfoEl.textContent = saldo>0
+        ? `Cliente: ${clienteCreditoNombre} — ⚠ ya debe ${money(saldo)}`
+        : `Cliente: ${clienteCreditoNombre} — sin saldo pendiente`;
+    }catch(e){ clienteInfoEl.textContent = `Cliente: ${clienteCreditoNombre}`; }
+  }
+  card.querySelector('#stCvClienteBuscar').onclick = ()=>{
+    const picker = card.querySelector('#stCvClientePicker');
+    if(picker.innerHTML){ picker.innerHTML=''; return; }
+    picker.innerHTML = `
+      <input id="stCvClienteBuscarInput" class="search" placeholder="Buscar por nombre o teléfono…" style="margin-top:6px">
+      <div id="stCvClienteResultados"></div>`;
+    const buscarInput = picker.querySelector('#stCvClienteBuscarInput');
+    const resultadosEl = picker.querySelector('#stCvClienteResultados');
+    buscarInput.focus();
+    let t;
+    buscarInput.addEventListener('input', ()=>{
+      clearTimeout(t);
+      t = setTimeout(async ()=>{
+        const q = buscarInput.value.trim();
+        if(q.length<2){ resultadosEl.innerHTML=''; return; }
+        resultadosEl.innerHTML = 'Buscando…';
+        try{
+          const r = await sbAuthed(`/rest/v1/clientes?select=id,nombre,telefono&or=(nombre.ilike.*${encodeURIComponent(q)}*,telefono.ilike.*${encodeURIComponent(q)}*)&limit=8`);
+          const rows = r.ok ? await r.json() : [];
+          resultadosEl.innerHTML = (rows.length ? rows.map((c,i)=>
+            `<div class="lista" data-i="${i}" style="margin-top:4px; cursor:pointer">
+               <div class="l">${esc(c.nombre||'(sin nombre)')}</div>
+               <div class="v" style="font-size:13px">${esc(c.telefono||'sin tel')}</div>
+             </div>`).join('') : '<div class="note">Sin resultados.</div>')
+            + `<button class="fbtn" type="button" id="stCvClienteCrear" style="width:100%; margin-top:6px">➕ Crear cliente "${esc(q)}"</button>`;
+          [...resultadosEl.querySelectorAll('[data-i]')].forEach(el=> el.onclick=()=> elegirClienteCredito(rows[Number(el.dataset.i)]));
+          resultadosEl.querySelector('#stCvClienteCrear').onclick = async ()=>{
+            const tel = prompt(`Teléfono de ${q} (opcional, con código de área):`) || null;
+            try{
+              const rc = await sbAuthed('/rest/v1/clientes', { method:'POST',
+                headers:{ Prefer:'return=representation' },
+                body: JSON.stringify({ nombre: q, telefono: tel }) });
+              const nuevos = await rc.json().catch(()=>null);
+              if(!rc.ok || !nuevos || !nuevos[0]) throw new Error('No se pudo crear el cliente.');
+              elegirClienteCredito(nuevos[0]);
+            }catch(e){ resultadosEl.innerHTML = `<div class="note">No se pudo crear: ${esc(e.message||e)}</div>`; }
+          };
+        }catch(e){ resultadosEl.innerHTML = 'Error al buscar.'; }
+      }, 300);
+    });
+  };
   [...card.querySelectorAll('[data-fac]')].forEach(b=> b.onclick=()=>{
     facturar = b.dataset.fac==='si';
     [...card.querySelectorAll('[data-fac]')].forEach(x=>x.classList.remove('sel'));
@@ -1605,6 +1664,7 @@ function wireVentaCard(){
     if(!(total>0)){ err.textContent='Agregá al menos un producto al carrito.'; return; }
     if(saldoPendiente>0){ err.textContent='⚠ Falta cargar medios de pago — el saldo pendiente tiene que quedar en $0 para guardar la venta.'; return; }
     if(pagoTransf>0 && !transfAlias){ err.textContent='Elegí a qué alias se transfirió.'; return; }
+    if(pagoCPer>0 && !clienteCreditoId){ err.textContent='Elegí a qué cliente le corresponde el crédito personal.'; return; }
     if(facturar && tipo==='A' && cuit.length!==11){ err.textContent='Para Factura A escribí el CUIT del cliente (11 dígitos).'; return; }
     if(facturar && !fecha){ err.textContent='Elegí la fecha del comprobante.'; return; }
     err.textContent=''; ok.disabled=true; ok.textContent = 'Guardando…';
@@ -1622,6 +1682,7 @@ function wireVentaCard(){
           pago_tarjeta_credito: pagoTCred, pago_tarjeta_debito: pagoTDeb,
           pago_credito_personal: pagoCPer, pago_credito_financiero: pagoCFin, saldo_pendiente: saldoPendiente,
           tarjeta_credito_cuotas: cuotasTCred, tarjeta_credito_recargo_pct: recargoPct,
+          cliente_id: clienteCreditoId,
           facturada: false,
         }) });
       const ventaRows = await rVenta.json().catch(()=>null);
@@ -1633,6 +1694,15 @@ function wireVentaCard(){
       ok.textContent = 'Descontando stock…';
       await rpcAplicarVentaStock(stVentaItems, localSel, ventaId);
       stockAplicado = true;
+
+      // 2.b) Si parte de la venta quedó como crédito personal, se carga a la
+      // cuenta corriente del cliente elegido.
+      if(pagoCPer>0 && clienteCreditoId){
+        await sbAuthed('/rest/v1/cuenta_corriente_movimientos', { method:'POST', body: JSON.stringify({
+          cliente_id: clienteCreditoId, tipo:'cargo', monto: pagoCPer, local: localSel,
+          referencia_venta_id: ventaId, usuario: sbSession.email||null,
+        }) }).catch(e=>console.error('No se pudo registrar el cargo en cuenta corriente:', e));
+      }
 
       // 3) Si corresponde, se factura.
       let d = null;
@@ -1710,6 +1780,12 @@ document.getElementById('venderBtn').onclick = ()=>{
   history.pushState({detalle:1}, '');
   cargarMaps();
   drawVender();
+};
+document.getElementById('clientesBtn').onclick = ()=>{
+  stOpen = true;
+  document.getElementById('ov').classList.add('open','ov-full');
+  history.pushState({detalle:1}, '');
+  drawClientes();
 };
 function stCerrar(viaHistory){
   if(!stOpen) return;
@@ -1941,7 +2017,11 @@ function drawVender(){
             <div style="display:flex; gap:4px">
               <input id="stCvCPer" class="search" type="number" inputmode="decimal" value="0" style="flex:1">
               <button class="fbtn" type="button" data-usar-total="stCvCPer" style="flex:none; padding:0 10px" title="Usar el total del carrito">＝</button>
-            </div></div>
+            </div>
+            <button class="fbtn" type="button" id="stCvClienteBuscar" style="width:100%; margin-top:4px">👤 Elegir cliente</button>
+            <div id="stCvClientePicker"></div>
+            <div class="note" id="stCvClienteInfo" style="margin-top:2px"></div>
+          </div>
           <div><div class="note" style="margin:0 0 4px">Crédito financiero</div>
             <div style="display:flex; gap:4px">
               <input id="stCvCFin" class="search" type="number" inputmode="decimal" value="0" style="flex:1">
@@ -2070,13 +2150,161 @@ async function aplicarRestriccionLocal(bC, bG){
   otro.style.cursor = 'not-allowed';
 }
 
+// ===== 👤 Cuenta corriente de clientes: buscar, ver saldo/historial, cobrar =====
+function drawClientes(){
+  const sheet = document.getElementById('sheet');
+  sheet.classList.add('sheet-wide');
+  if(!sbSession){
+    sheet.innerHTML = `
+      <div class="topbtns"><button class="backbtn" id="stClose">✕ Cerrar</button></div>
+      <h2>👤 Cuenta corriente</h2>
+      <div class="scat">Iniciá sesión con tu usuario del panel para poder consultarla.</div>
+      <div class="label">Usuario</div>
+      <input id="stEmail" class="search" type="text" autocomplete="username">
+      <div class="label">Contraseña</div>
+      <input id="stPass" class="search" type="password" autocomplete="current-password">
+      <button class="addcart" id="stLoginBtn">Ingresar</button>
+      <div class="note" id="stLoginErr"></div>`;
+    document.getElementById('stClose').onclick = ()=> stCerrar(false);
+    document.getElementById('stLoginBtn').onclick = async ()=>{
+      const err = document.getElementById('stLoginErr');
+      const b = document.getElementById('stLoginBtn');
+      b.disabled = true; b.textContent = 'Ingresando…';
+      try{
+        await sbLogin(usuarioAEmail(document.getElementById('stEmail').value),
+                      document.getElementById('stPass').value);
+        drawClientes();
+      }catch(e){ b.disabled=false; b.textContent='Ingresar'; err.textContent = e.message; }
+    };
+    return;
+  }
+  sheet.innerHTML = `
+    <div class="topbtns"><button class="backbtn" id="stClose">✕ Cerrar</button></div>
+    <h2>👤 Cuenta corriente</h2>
+    <div class="scat">Sesión: ${esc(mostrarUsuario(sbSession.email))} · <a href="#" id="stLogout" style="color:var(--accent)">salir</a></div>
+    <div class="st-grid st-grid-3">
+      <div class="st-col-left">
+        <div class="label">Buscar cliente</div>
+        <input id="ccBuscarInput" class="search" placeholder="Nombre o teléfono…" autocomplete="off">
+        <div id="ccResultados"></div>
+      </div>
+      <div class="st-col-right" id="ccDetalle">
+        <div class="note">Buscá y elegí un cliente para ver su cuenta corriente.</div>
+      </div>
+      <div class="st-col-dia" id="ccConSaldo"></div>
+    </div>`;
+  document.getElementById('stClose').onclick = ()=> stCerrar(false);
+  document.getElementById('stLogout').onclick = (e)=>{ e.preventDefault();
+    sbSession=null; setLS('sb_session', null); miRolCache=null; miLocalAsignadoCache=undefined; drawClientes(); };
+  const buscarInput = document.getElementById('ccBuscarInput');
+  const resultadosEl = document.getElementById('ccResultados');
+  let t;
+  buscarInput.addEventListener('input', ()=>{
+    clearTimeout(t);
+    t = setTimeout(async ()=>{
+      const q = buscarInput.value.trim();
+      if(q.length<2){ resultadosEl.innerHTML=''; return; }
+      resultadosEl.innerHTML = '<div class="note">Buscando…</div>';
+      try{
+        const r = await sbAuthed(`/rest/v1/clientes?select=id,nombre,telefono&or=(nombre.ilike.*${encodeURIComponent(q)}*,telefono.ilike.*${encodeURIComponent(q)}*)&limit=10`);
+        const rows = r.ok ? await r.json() : [];
+        resultadosEl.innerHTML = rows.length ? rows.map((c,i)=>`
+          <div class="lista" data-i="${i}" style="margin-top:4px; cursor:pointer; text-align:left">
+            <div class="l">${esc(c.nombre||'(sin nombre)')}</div>
+            <div class="v" style="font-size:13px">${esc(c.telefono||'sin tel')}</div>
+          </div>`).join('') : '<div class="note">Sin resultados.</div>';
+        [...resultadosEl.querySelectorAll('[data-i]')].forEach(el=> el.onclick=()=> mostrarDetalleCliente(rows[Number(el.dataset.i)]));
+      }catch(e){ resultadosEl.innerHTML = '<div class="note">Error al buscar.</div>'; }
+    }, 300);
+  });
+  renderClientesConSaldo();
+}
+
+async function renderClientesConSaldo(){
+  const box = document.getElementById('ccConSaldo');
+  if(!box) return;
+  box.innerHTML = `<div class="label">⚠ Con saldo pendiente</div><div class="note">Cargando…</div>`;
+  try{
+    const r = await sbAuthed(`/rest/v1/v_cuenta_corriente_saldo?saldo=gt.0&order=saldo.desc&select=cliente_id,nombre,telefono,saldo&limit=50`);
+    const rows = r.ok ? await r.json() : [];
+    box.innerHTML = `
+      <div class="label">⚠ Con saldo pendiente (${rows.length})</div>
+      ${rows.length ? rows.map((r,i)=>`
+        <div class="lista" data-i="${i}" style="margin-top:6px; cursor:pointer; text-align:left">
+          <div style="display:flex; justify-content:space-between; gap:8px">
+            <span class="l">${esc(r.nombre||'(sin nombre)')}</span>
+            <span class="v" style="font-size:15px">${money(r.saldo)}</span>
+          </div>
+        </div>`).join('') : '<div class="note">Nadie tiene saldo pendiente ahora mismo.</div>'}`;
+    [...box.querySelectorAll('[data-i]')].forEach(el=> el.onclick=()=> mostrarDetalleCliente({id: rows[Number(el.dataset.i)].cliente_id, nombre: rows[Number(el.dataset.i)].nombre, telefono: rows[Number(el.dataset.i)].telefono}));
+  }catch(e){ box.innerHTML = `<div class="note">No se pudo cargar.</div>`; }
+}
+
+async function mostrarDetalleCliente(cliente){
+  const box = document.getElementById('ccDetalle');
+  if(!box || !cliente) return;
+  box.innerHTML = `<div class="note">Cargando cuenta de ${esc(cliente.nombre||'')}…</div>`;
+  try{
+    const [rSaldo, rMovs] = await Promise.all([
+      sbAuthed(`/rest/v1/v_cuenta_corriente_saldo?cliente_id=eq.${cliente.id}&select=saldo`),
+      sbAuthed(`/rest/v1/cuenta_corriente_movimientos?cliente_id=eq.${cliente.id}&order=created_at.desc&limit=30&select=*`),
+    ]);
+    const saldoRows = rSaldo.ok ? await rSaldo.json() : [];
+    const saldo = (saldoRows[0] && Number(saldoRows[0].saldo)) || 0;
+    const movs = rMovs.ok ? await rMovs.json() : [];
+    box.innerHTML = `
+      <div class="label">${esc(cliente.nombre||'(sin nombre)')}</div>
+      <div class="note">${esc(cliente.telefono||'sin teléfono')}</div>
+      <div class="lista" style="margin-top:8px; display:flex; align-items:center; justify-content:space-between; text-align:left; padding:10px 14px">
+        <div class="l" style="margin:0">Saldo actual</div>
+        <div class="v" id="ccSaldoActual" style="font-size:20px; margin:0; ${saldo>0?'color:var(--warn)':''}">${money(saldo)}</div>
+      </div>
+      ${saldo>0 ? `
+      <div class="label" style="margin-top:10px">Registrar pago</div>
+      <div style="display:flex; gap:4px">
+        <input id="ccPagoMonto" class="search" type="number" inputmode="decimal" placeholder="Monto" style="flex:1">
+        <button class="fbtn" type="button" id="ccPagoTotal" style="flex:none; padding:0 10px" title="Usar el saldo total">＝</button>
+      </div>
+      <input id="ccPagoNota" class="search" placeholder="Nota (opcional)" style="margin-top:4px">
+      <button class="addcart" id="ccPagoOk" style="margin-top:8px">💰 Registrar pago</button>
+      <div class="note" id="ccPagoErr"></div>` : ''}
+      <div class="label" style="margin-top:14px">Historial</div>
+      ${movs.length ? movs.map(m=>`
+        <div class="lista" style="margin-top:6px; text-align:left">
+          <div style="display:flex; justify-content:space-between; gap:8px">
+            <span class="l">${m.created_at ? new Date(m.created_at).toLocaleDateString('es-AR') : ''} · ${m.tipo==='cargo'?'Cargo':'Pago'}</span>
+            <span class="v" style="font-size:15px; color:${m.tipo==='cargo'?'var(--warn)':'inherit'}">${m.tipo==='cargo'?'+':'−'}${money(m.monto)}</span>
+          </div>
+          ${m.nota ? `<div class="note" style="margin-top:2px">${esc(m.nota)}</div>` : ''}
+        </div>`).join('') : '<div class="note">Todavía no hay movimientos.</div>'}`;
+    const totalBtn = box.querySelector('#ccPagoTotal');
+    if(totalBtn) totalBtn.onclick = ()=>{ box.querySelector('#ccPagoMonto').value = saldo; };
+    const pagoOk = box.querySelector('#ccPagoOk');
+    if(pagoOk) pagoOk.onclick = async ()=>{
+      const err = box.querySelector('#ccPagoErr');
+      const monto = Number(box.querySelector('#ccPagoMonto').value)||0;
+      const nota = box.querySelector('#ccPagoNota').value||null;
+      if(!(monto>0)){ err.textContent='Ingresá un monto mayor a 0.'; return; }
+      pagoOk.disabled = true; pagoOk.textContent = 'Guardando…';
+      try{
+        const r = await sbAuthed('/rest/v1/cuenta_corriente_movimientos', { method:'POST', body: JSON.stringify({
+          cliente_id: cliente.id, tipo:'pago', monto, local: stLocal(), usuario: sbSession.email||null, nota,
+        }) });
+        if(!r.ok) throw new Error('No se pudo registrar el pago.');
+        mostrarDetalleCliente(cliente);
+        renderClientesConSaldo();
+      }catch(e){ pagoOk.disabled=false; pagoOk.textContent='💰 Registrar pago'; err.textContent = e.message||e; }
+    };
+  }catch(e){ box.innerHTML = `<div class="note">No se pudo cargar la cuenta del cliente.</div>`; }
+}
+
 function mediosDePagoVenta(v){
   return [
     v.pago_contado>0 && `Efectivo ${money(v.pago_contado)}`,
     v.pago_transferencia>0 && `Transf.${v.transferencia_alias?` (${esc(v.transferencia_alias)})`:''} ${money(v.pago_transferencia)}${v.transferencia_descuento_pct>0?` (−${v.transferencia_descuento_pct}%)`:''}`,
     v.pago_tarjeta_credito>0 && `T.Créd ${money(v.pago_tarjeta_credito)}${v.tarjeta_credito_cuotas>1?` (${v.tarjeta_credito_cuotas} cuotas, +${v.tarjeta_credito_recargo_pct}%)`:''}`,
     v.pago_tarjeta_debito>0 && `T.Déb ${money(v.pago_tarjeta_debito)}`,
-    v.pago_credito_personal>0 && `Créd.Pers ${money(v.pago_credito_personal)}`,
+    v.pago_credito_personal>0 && `Créd.Pers ${money(v.pago_credito_personal)}${v.clientes&&v.clientes.nombre?` (${esc(v.clientes.nombre)})`:''}`,
     v.pago_credito_financiero>0 && `Créd.Fin ${money(v.pago_credito_financiero)}`,
   ].filter(Boolean).join(' · ') || 'Sin medio de pago cargado';
 }
@@ -2094,7 +2322,7 @@ async function renderResumenDia(){
     const localSel = stLocal();
     const [rol, r] = await Promise.all([
       cargarMiRol(),
-      sbAuthed(`/rest/v1/ventas?local=eq.${localSel}&fecha=eq.${hoyIso}&order=created_at.desc&select=*`),
+      sbAuthed(`/rest/v1/ventas?local=eq.${localSel}&fecha=eq.${hoyIso}&order=created_at.desc&select=*,clientes(nombre)`),
     ]);
     const rows = r.ok ? await r.json() : [];
     const totalDia = rows.reduce((a,v)=> a + Number(v.total||0), 0);
