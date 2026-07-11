@@ -1170,10 +1170,21 @@ async function sbAuthed(path, opts={}){
 }
 async function rpcAjustarStock(codigo, talle, color, local, delta){
   const r = await sbAuthed('/rest/v1/rpc/ajustar_stock', { method:'POST',
-    body: JSON.stringify({p_codigo:codigo, p_talle:talle, p_color:color, p_local:local, p_delta:delta}) });
+    body: JSON.stringify({p_codigo:codigo, p_talle:talle, p_color:color, p_local:local, p_delta:delta,
+      p_usuario: sbSession && sbSession.email || null}) });
   const d = await r.json().catch(()=>null);
   if(!r.ok) throw new Error((d && (d.message||d.hint)) || 'No se pudo actualizar el stock.');
   return d;   // el array `talles` ya actualizado
+}
+// Descuenta el stock de TODOS los items de una venta en una sola transacción
+// (todo o nada) y deja registrado en stock_movimientos motivo='venta'.
+async function rpcAplicarVentaStock(items, local, referenciaId){
+  const r = await sbAuthed('/rest/v1/rpc/aplicar_venta_stock', { method:'POST',
+    body: JSON.stringify({
+      p_items: items.map(it=>({codigo:it.codigo, talle:it.talle, color:it.color})),
+      p_local: local, p_usuario: sbSession && sbSession.email || null, p_referencia: referenciaId,
+    }) });
+  if(!r.ok){ const d = await r.json().catch(()=>null); throw new Error((d && (d.message||d.hint)) || 'No se pudo descontar el stock.'); }
 }
 async function cargarMaps(){
   try{
@@ -1552,15 +1563,34 @@ function wireVentaCard(){
     if(!(total>0)){ err.textContent='Agregá al menos un producto al carrito.'; return; }
     if(facturar && tipo==='A' && cuit.length!==11){ err.textContent='Para Factura A escribí el CUIT del cliente (11 dígitos).'; return; }
     if(facturar && !fecha){ err.textContent='Elegí la fecha del comprobante.'; return; }
-    err.textContent=''; ok.disabled=true; ok.textContent = 'Descontando stock…';
+    err.textContent=''; ok.disabled=true; ok.textContent = 'Guardando…';
+    let ventaId = null;
+    let stockAplicado = false;
     try{
-      // Recién ahora, al guardar, se descuenta el stock de cada producto del carrito.
-      for(const it of stVentaItems){
-        await rpcAjustarStock(it.codigo, it.talle, it.color, localSel, -1);
-      }
-      ok.textContent = facturar?'Emitiendo…':'Guardando…';
+      // 1) Se crea el registro de la venta primero (sin facturar todavía), para
+      //    poder referenciarlo en el historial de stock.
+      const rVenta = await sbAuthed('/rest/v1/ventas', { method:'POST',
+        headers:{ Prefer:'return=representation' },
+        body: JSON.stringify({
+          local: localSel, vendedor: sbSession.email||null, items: stVentaItems, total,
+          pago_contado: pagoContado, pago_tarjeta_credito: pagoTCred, pago_tarjeta_debito: pagoTDeb,
+          pago_credito_personal: pagoCPer, pago_credito_financiero: pagoCFin, saldo_pendiente: saldoPendiente,
+          facturada: false,
+        }) });
+      const ventaRows = await rVenta.json().catch(()=>null);
+      if(!rVenta.ok || !ventaRows || !ventaRows[0]) throw new Error('No se pudo guardar la venta.');
+      ventaId = ventaRows[0].id;
+
+      // 2) Recién ahora se descuenta el stock de todo el carrito, en una sola
+      //    transacción (todo o nada), referenciando la venta recién creada.
+      ok.textContent = 'Descontando stock…';
+      await rpcAplicarVentaStock(stVentaItems, localSel, ventaId);
+      stockAplicado = true;
+
+      // 3) Si corresponde, se factura.
       let d = null;
       if(facturar){
+        ok.textContent = 'Emitiendo…';
         const token = await sbToken();
         const r = await fetch(API_FACTURAR, {
           method:'POST',
@@ -1569,15 +1599,11 @@ function wireVentaCard(){
         });
         d = await r.json().catch(()=>({}));
         if(!r.ok) throw new Error(d.error || 'No se pudo facturar.');
+        await sbAuthed(`/rest/v1/ventas?id=eq.${ventaId}`, { method:'PATCH', body: JSON.stringify({
+          facturada: true, factura_tipo: d.tipo, factura_pto_vta: d.puntoVenta,
+          factura_numero: d.numero, factura_cae: d.cae,
+        }) }).catch(e=>console.error('No se pudo actualizar la venta con los datos de la factura:', e));
       }
-      await sbAuthed('/rest/v1/ventas', { method:'POST', body: JSON.stringify({
-        local: localSel, vendedor: sbSession.email||null, items: stVentaItems, total,
-        pago_contado: pagoContado, pago_tarjeta_credito: pagoTCred, pago_tarjeta_debito: pagoTDeb,
-        pago_credito_personal: pagoCPer, pago_credito_financiero: pagoCFin, saldo_pendiente: saldoPendiente,
-        facturada: facturar,
-        factura_tipo: facturar ? d.tipo : null, factura_pto_vta: facturar ? d.puntoVenta : null,
-        factura_numero: facturar ? d.numero : null, factura_cae: facturar ? d.cae : null,
-      })}).catch(e=>console.error('No se pudo guardar la venta:', e));
       if(facturar){
         card.querySelector('#stFcResultado').innerHTML = renderTicket(d, localSel);
         wireTicketButtons(card, d, localSel, clienteTelefono);
@@ -1591,7 +1617,18 @@ function wireVentaCard(){
       card.querySelector('#stFcCancel').onclick = ()=> drawVender();
     }catch(e){
       ok.disabled=false; ok.textContent = facturar?'Guardar y facturar':'Guardar venta';
-      err.textContent = e.message || 'No se pudo guardar la venta.';
+      if(ventaId && !stockAplicado){
+        // Todavía no se tocó el stock: la venta quedó a medio crear, se descarta.
+        await sbAuthed(`/rest/v1/ventas?id=eq.${ventaId}`, { method:'DELETE' }).catch(()=>{});
+        err.textContent = e.message || 'No se pudo guardar la venta.';
+      } else if(stockAplicado){
+        // El stock ya se descontó de verdad (la venta es real) — lo que falló
+        // fue la factura. Se deja la venta guardada sin facturar.
+        err.textContent = 'La venta se guardó y el stock ya se descontó, pero no se pudo facturar: '+(e.message||e)+
+          ' — todavía no hay forma de reintentar la factura sola, avisale a Juan si esto pasa.';
+      } else {
+        err.textContent = e.message || 'No se pudo guardar la venta.';
+      }
     }
   };
 }
