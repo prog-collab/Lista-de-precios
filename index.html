@@ -1641,11 +1641,14 @@ function wireVentaCard(){
           factura_numero: d.numero, factura_cae: d.cae,
         }) }).catch(e=>console.error('No se pudo actualizar la venta con los datos de la factura:', e));
       }
+      const resultadoEl = card.querySelector('#stFcResultado');
       if(facturar){
-        card.querySelector('#stFcResultado').innerHTML = renderTicket(d, localSel);
+        resultadoEl.style.flex = '1 1 100%';   // el ticket necesita todo el ancho, no comparte fila
+        resultadoEl.innerHTML = renderTicket(d, localSel);
         wireTicketButtons(card, d, localSel, clienteTelefono);
       } else {
-        card.querySelector('#stFcResultado').innerHTML = `<div class="lista" style="margin-top:10px"><div class="l">✓ Venta guardada</div><div class="v" style="font-size:20px">${money(total)}</div></div>`;
+        resultadoEl.style.flex = '2 1 200px';   // comparte fila con el botón "Nueva venta"
+        resultadoEl.innerHTML = `<div class="lista" style="display:flex; align-items:center; justify-content:space-between; text-align:left; padding:10px 14px; height:100%; box-sizing:border-box"><div class="l" style="margin:0">✓ Venta guardada</div><div class="v" style="font-size:20px; margin:0">${money(total)}</div></div>`;
       }
       stVentaTotal = 0; stVentaItems = [];
       renderCarrito();
@@ -1935,14 +1938,16 @@ function drawVender(){
             </div></div>
         </div>
         <div class="note">Tocá "＝" al lado de un medio de pago para cargarle el total del carrito de una — pone el resto en $0.</div>
-        <div class="lista" style="margin-top:8px">
-          <div class="l">Saldo pendiente</div>
-          <div class="v" id="stCvSaldo" style="font-size:22px">${money(0)}</div>
+        <div class="lista" style="margin-top:8px; display:flex; align-items:center; justify-content:space-between; text-align:left; padding:10px 14px">
+          <div class="l" style="margin:0">Saldo pendiente</div>
+          <div class="v" id="stCvSaldo" style="font-size:20px; margin:0">${money(0)}</div>
         </div>
-        <div class="label">¿Facturar esta venta?</div>
-        <div class="talles">
-          <button class="talle sel" data-fac="no">No</button>
-          <button class="talle" data-fac="si">Sí</button>
+        <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-top:6px">
+          <div class="label" style="margin:0">¿Facturar?</div>
+          <div class="talles" style="margin:0">
+            <button class="talle sel" data-fac="no">No</button>
+            <button class="talle" data-fac="si">Sí</button>
+          </div>
         </div>
         <div id="stCvFacturarBox" style="display:none">
           <div class="label">Tipo de factura</div>
@@ -1963,9 +1968,11 @@ function drawVender(){
           <div class="note">AFIP solo acepta hasta 5 días antes o después de hoy.</div>
         </div>
         <button class="addcart" id="stFcOk" style="margin-top:10px">Guardar venta</button>
-        <button class="fbtn" id="stFcCancel" style="width:100%; margin-top:6px">Vaciar carrito</button>
+        <div style="display:flex; align-items:stretch; gap:8px; margin-top:6px; flex-wrap:wrap">
+          <button class="fbtn" id="stFcCancel" style="flex:1 1 auto; min-width:120px">Vaciar carrito</button>
+          <div id="stFcResultado" style="flex:2 1 200px"></div>
+        </div>
         <div class="note" id="stFcErr"></div>
-        <div id="stFcResultado"></div>
       </div>
       <div class="st-col-dia" id="stResumenDia"></div>
     </div>`;
