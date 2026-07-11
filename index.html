@@ -90,6 +90,10 @@
     .sheet.sheet-wide{max-width:1040px; padding-left:32px; padding-right:32px}
     .sheet.sheet-wide .st-grid{display:grid; grid-template-columns:1fr 1fr; gap:32px; align-items:start}
     .sheet.sheet-wide .st-col-right{position:sticky; top:18px}
+    /* Vender (POS), pantalla completa: 3 columnas equidistantes en vez de 2
+       (escaneo/carrito, medios de pago/facturar, ventas de hoy). */
+    .sheet.sheet-wide .st-grid-3{display:grid; grid-template-columns:1fr 1fr 1fr; gap:28px; align-items:start}
+    .sheet.sheet-wide .st-grid-3 > *{position:sticky; top:18px; max-height:calc(100vh - 36px); overflow-y:auto}
   }
   .sheet h2{margin:0 0 2px; font-size:20px; padding-right:8px}
   .sheet .scod{color:var(--accent); font-weight:700; font-size:14px}
@@ -1776,7 +1780,7 @@ function drawVender(){
     <div class="topbtns"><button class="backbtn" id="stClose">✕ Cerrar</button></div>
     <h2>🛍️ Vender (POS)</h2>
     <div class="scat">Sesión: ${esc(sbSession.email||'')} · <a href="#" id="stLogout" style="color:var(--accent)">salir</a></div>
-    <div class="st-grid">
+    <div class="st-grid st-grid-3">
       <div class="st-col-left">
         <div class="label">Local donde se vende</div>
         <div class="talles">
@@ -1844,8 +1848,8 @@ function drawVender(){
         <div class="note" id="stFcErr"></div>
         <div id="stFcResultado"></div>
       </div>
-    </div>
-    <div id="stResumenDia" style="margin-top:22px"></div>`;
+      <div class="st-col-dia" id="stResumenDia"></div>
+    </div>`;
   document.getElementById('stClose').onclick = ()=> stCerrar(false);
   document.getElementById('stLogout').onclick = (e)=>{ e.preventDefault();
     sbSession=null; setLS('sb_session', null); drawVender(); };
