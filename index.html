@@ -1531,19 +1531,23 @@ function wireVentaCard(){
     recalcSaldoVenta();
   });
   const clienteInfoEl = card.querySelector('#stCvClienteInfo');
+  function renderClienteInfo(sufijo){
+    clienteInfoEl.innerHTML = `Cliente: ${esc(clienteCreditoNombre)}${sufijo}` +
+      ` · <a href="#" id="stCvClienteQuitar" style="color:var(--accent)">quitar</a>`;
+    const q = clienteInfoEl.querySelector('#stCvClienteQuitar');
+    if(q) q.onclick = (e)=>{ e.preventDefault(); clienteCreditoId=null; clienteCreditoNombre=null; clienteInfoEl.textContent=''; };
+  }
   async function elegirClienteCredito(cliente){
     clienteCreditoId = cliente.id;
     clienteCreditoNombre = cliente.nombre || '(sin nombre)';
     card.querySelector('#stCvClientePicker').innerHTML = '';
-    clienteInfoEl.textContent = `Cliente: ${clienteCreditoNombre} — consultando saldo…`;
+    renderClienteInfo(' — consultando saldo…');
     try{
       const r = await sbAuthed(`/rest/v1/v_cuenta_corriente_saldo?cliente_id=eq.${cliente.id}&select=saldo`);
       const rows = r.ok ? await r.json() : [];
       const saldo = (rows[0] && Number(rows[0].saldo)) || 0;
-      clienteInfoEl.textContent = saldo>0
-        ? `Cliente: ${clienteCreditoNombre} — ⚠ ya debe ${money(saldo)}`
-        : `Cliente: ${clienteCreditoNombre} — sin saldo pendiente`;
-    }catch(e){ clienteInfoEl.textContent = `Cliente: ${clienteCreditoNombre}`; }
+      renderClienteInfo(saldo>0 ? ` — ⚠ ya debe ${money(saldo)}` : ' — sin saldo pendiente');
+    }catch(e){ renderClienteInfo(''); }
   }
   card.querySelector('#stCvClienteBuscar').onclick = ()=>{
     const picker = card.querySelector('#stCvClientePicker');
@@ -1704,7 +1708,7 @@ function wireVentaCard(){
     if(!(total>0)){ err.textContent='Agregá al menos un producto al carrito.'; return; }
     if(saldoPendiente>0){ err.textContent='⚠ Falta cargar medios de pago — el saldo pendiente tiene que quedar en $0 para guardar la venta.'; return; }
     if(pagoTransf>0 && !transfAlias){ err.textContent='Elegí a qué alias se transfirió.'; return; }
-    if(pagoCPer>0 && !clienteCreditoId){ err.textContent='Elegí a qué cliente le corresponde el crédito personal.'; return; }
+    if(pagoCPer>0 && !clienteCreditoId){ err.textContent='Elegí un cliente (arriba, junto al total) para el crédito personal.'; return; }
     if(facturar && tipo==='A' && cuit.length!==11){ err.textContent='Para Factura A escribí el CUIT del cliente (11 dígitos).'; return; }
     if(facturar && !fecha){ err.textContent='Elegí la fecha del comprobante.'; return; }
     err.textContent=''; ok.disabled=true; ok.textContent = 'Verificando caja…';
@@ -2069,6 +2073,11 @@ function drawVender(){
           <div class="l">Total del carrito</div>
           <div class="v" id="stCvTotalDisplay" style="font-size:28px">${money(stVentaTotal)}</div>
         </div>
+        <div class="label">Cliente de esta venta (opcional)</div>
+        <div class="note">Elegilo para que la compra quede en su historial, tenga o no crédito personal.</div>
+        <button class="fbtn" type="button" id="stCvClienteBuscar" style="width:100%; margin-top:4px">👤 Elegir cliente</button>
+        <div id="stCvClientePicker"></div>
+        <div class="note" id="stCvClienteInfo" style="margin-top:2px"></div>
         <div class="label">Medios de pago</div>
         <div class="grid">
           <div><div class="note" style="margin:0 0 4px">Efectivo (contado)</div>
@@ -2085,6 +2094,7 @@ function drawVender(){
               <option value="">¿A qué alias?</option>
               <option value="juan01">juan01</option>
               <option value="giustozzi.mp">giustozzi.mp</option>
+              <option value="flor.barberis.86">flor.barberis.86</option>
             </select>
             <label class="note" style="display:flex; align-items:center; gap:6px; margin-top:4px; cursor:pointer">
               <input id="stCvTransfDescuento" type="checkbox" style="margin:0">
@@ -2114,9 +2124,7 @@ function drawVender(){
               <input id="stCvCPer" class="search" type="number" inputmode="decimal" value="0" style="flex:1">
               <button class="fbtn" type="button" data-usar-total="stCvCPer" style="flex:none; padding:0 10px" title="Usar el total del carrito">＝</button>
             </div>
-            <button class="fbtn" type="button" id="stCvClienteBuscar" style="width:100%; margin-top:4px">👤 Elegir cliente</button>
-            <div id="stCvClientePicker"></div>
-            <div class="note" id="stCvClienteInfo" style="margin-top:2px"></div>
+            <div class="note">Elegí el cliente arriba, junto al total.</div>
           </div>
           <div><div class="note" style="margin:0 0 4px">Crédito financiero</div>
             <div style="display:flex; gap:4px">
@@ -2285,7 +2293,7 @@ async function armarCerrarCaja(formBox, sesion, localSel){
         <div><div class="note" style="margin:0 0 4px">Adelantos</div><input id="ccAdelantos" class="search" type="number" value="0"></div>
         <div><div class="note" style="margin:0 0 4px">Arqueo (efectivo contado a mano)</div><input id="ccArqueo" class="search" type="number" value="0"></div>
       </div>
-      <input id="ccObs" class="search" placeholder="Observaciones (opcional)" style="margin-top:6px">
+      <input id="ccObs" class="search" placeholder="Observaciones (detalle de gastos, retiros, adelantos)" style="margin-top:6px">
       <div class="note" id="ccEsperadoInfo" style="margin-top:6px"></div>
       <button class="addcart" id="stCajaCerrarOk" style="margin-top:8px">🔒 Confirmar cierre</button>
       <button class="fbtn" id="stCajaCancelar" style="width:100%; margin-top:6px">Cancelar</button>
@@ -2615,7 +2623,7 @@ async function mostrarDetalleCliente(clienteParcial){
 
       <div class="label" style="margin-top:14px">Compras (${compras.length})${compras.length?` · total ${money(totalGastado)}`:''}</div>
       ${compras.length ? `<div class="note">Última: ${compras[0].created_at ? new Date(compras[0].created_at).toLocaleDateString('es-AR') : ''} en ${esc(stLocalNombre(compras[0].local))}</div>`
-        : '<div class="note">Sin compras vinculadas todavía (por ahora solo se vinculan automáticamente las que usaron crédito personal).</div>'}
+        : '<div class="note">Sin compras vinculadas todavía — se vinculan cuando se elige este cliente al vender.</div>'}
 
       <div class="label" style="margin-top:14px">Historial de cuenta corriente</div>
       ${movs.length ? movs.map(m=>`
@@ -3246,6 +3254,7 @@ function armarEditarVentaExistente(box, v, localSel){
           <option value="" ${!v.transferencia_alias?'selected':''}>—</option>
           <option value="juan01" ${v.transferencia_alias==='juan01'?'selected':''}>juan01</option>
           <option value="giustozzi.mp" ${v.transferencia_alias==='giustozzi.mp'?'selected':''}>giustozzi.mp</option>
+          <option value="flor.barberis.86" ${v.transferencia_alias==='flor.barberis.86'?'selected':''}>flor.barberis.86</option>
         </select></div>
       <div><div class="note" style="margin:0 0 4px">Descuento transf. (%)</div><input id="veTransfDesc" class="search" type="number" step="0.1" value="${v.transferencia_descuento_pct||0}"></div>
       <div><div class="note" style="margin:0 0 4px">Tarjeta de crédito</div><input id="veTCred" class="search" type="number" value="${v.pago_tarjeta_credito}"></div>
