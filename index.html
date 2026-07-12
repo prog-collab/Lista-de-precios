@@ -184,6 +184,7 @@
       <button id="venderBtn" class="fbtn" title="Vender (POS)">🛍️</button>
       <button id="clientesBtn" class="fbtn" title="Cuenta corriente de clientes">👤</button>
       <button id="traspasosBtn" class="fbtn" title="Traspaso de stock entre locales">🔁</button>
+      <button id="devolucionesBtn" class="fbtn" title="Devoluciones de mercadería">↩️</button>
       <button id="helpBtn" class="fbtn" title="Ayuda">❓</button>
       <button id="cartBtn" class="fbtn" title="Carrito">🛒<span id="cartN" class="cbadge" style="display:none"></span></button>
     </div>
@@ -1840,6 +1841,12 @@ document.getElementById('traspasosBtn').onclick = ()=>{
   history.pushState({detalle:1}, '');
   drawTraspasos();
 };
+document.getElementById('devolucionesBtn').onclick = ()=>{
+  stOpen = true;
+  document.getElementById('ov').classList.add('open','ov-full');
+  history.pushState({detalle:1}, '');
+  drawDevoluciones();
+};
 function stCerrar(viaHistory){
   if(!stOpen) return;
   stOpen=false; stStopped=true; stBusy=false;
@@ -1866,6 +1873,7 @@ function navIconsHtml(){
     <button type="button" class="fbtn" data-nav="venderBtn" title="Vender (POS)">🛍️</button>
     <button type="button" class="fbtn" data-nav="clientesBtn" title="Cuenta corriente de clientes">👤</button>
     <button type="button" class="fbtn" data-nav="traspasosBtn" title="Traspaso de stock entre locales">🔁</button>
+    <button type="button" class="fbtn" data-nav="devolucionesBtn" title="Devoluciones de mercadería">↩️</button>
     <button type="button" class="fbtn" data-nav="helpBtn" title="Ayuda">❓</button>
     <button type="button" class="fbtn" data-nav="cartBtn" title="Carrito">🛒</button>
   </div>`;
@@ -2771,6 +2779,186 @@ async function renderHistorialTraspasos(){
           <div class="note" style="margin-top:1px">${esc(stLocalNombre(t.local_origen))} → ${esc(stLocalNombre(t.local_destino))}</div>
         </div>`;
       }).join('') : '<div class="note">Todavía no se hicieron traspasos.</div>'}`;
+  }catch(e){ box.innerHTML = `<div class="note">No se pudo cargar el historial.</div>`; }
+}
+
+// ===== ↩️ Devoluciones de mercadería: buscar la venta original, elegir qué
+// productos vuelven, reponer stock y registrar el reintegro. Bloqueada si la
+// venta ya está facturada (ahí corresponde una Nota de Crédito, no esto). Si
+// el reintegro es en efectivo, exige que haya una caja abierta en ese local
+// (y se descuenta del efectivo esperado al cerrarla). =====
+function drawDevoluciones(){
+  const sheet = document.getElementById('sheet');
+  sheet.classList.add('sheet-wide');
+  if(!sbSession){
+    sheet.innerHTML = `
+      ${navIconsHtml()}
+      <div class="topbtns"><button class="backbtn" id="stClose">✕ Cerrar</button></div>
+      <h2>↩️ Devoluciones</h2>
+      <div class="scat">Iniciá sesión con tu usuario del panel para poder usarlo.</div>
+      <div class="label">Usuario</div>
+      <input id="stEmail" class="search" type="text" autocomplete="username">
+      <div class="label">Contraseña</div>
+      <input id="stPass" class="search" type="password" autocomplete="current-password">
+      <button class="addcart" id="stLoginBtn">Ingresar</button>
+      <div class="note" id="stLoginErr"></div>`;
+    wireNavIcons(sheet);
+    document.getElementById('stClose').onclick = ()=> stCerrar(false);
+    document.getElementById('stLoginBtn').onclick = async ()=>{
+      const err = document.getElementById('stLoginErr');
+      const b = document.getElementById('stLoginBtn');
+      b.disabled = true; b.textContent = 'Ingresando…';
+      try{
+        await sbLogin(usuarioAEmail(document.getElementById('stEmail').value),
+                      document.getElementById('stPass').value);
+        drawDevoluciones();
+      }catch(e){ b.disabled=false; b.textContent='Ingresar'; err.textContent = e.message; }
+    };
+    return;
+  }
+  sheet.innerHTML = `
+    ${navIconsHtml()}
+    <div class="topbtns"><button class="backbtn" id="stClose">✕ Cerrar</button></div>
+    <h2>↩️ Devoluciones</h2>
+    <div class="scat">Sesión: ${esc(mostrarUsuario(sbSession.email))} · <a href="#" id="stLogout" style="color:var(--accent)">salir</a></div>
+    <div class="st-grid st-grid-3">
+      <div class="st-col-left">
+        <div class="label">Buscar la venta original</div>
+        <input id="dvFecha" class="search" type="date" value="${isoLocal(new Date())}">
+        <div class="talles" style="margin-top:6px">
+          <button class="talle" id="dvLocCam">Camerino</button>
+          <button class="talle" id="dvLocGiu">Giustozzi</button>
+        </div>
+        <div id="dvVentas" style="margin-top:8px"></div>
+      </div>
+      <div class="st-col-right" id="dvDetalle">
+        <div class="note">Elegí una fecha y un local para ver las ventas de ese día.</div>
+      </div>
+      <div class="st-col-dia" id="dvHistorial"></div>
+    </div>`;
+  wireNavIcons(sheet);
+  document.getElementById('stClose').onclick = ()=> stCerrar(false);
+  document.getElementById('stLogout').onclick = (e)=>{ e.preventDefault();
+    sbSession=null; setLS('sb_session', null); miRolCache=null; miLocalAsignadoCache=undefined; drawDevoluciones(); };
+  const bC=document.getElementById('dvLocCam'), bG=document.getElementById('dvLocGiu');
+  const refLoc=()=>{ const l=stLocal();
+    bC.classList.toggle('sel', l==='camerino'); bG.classList.toggle('sel', l==='giustozzi'); };
+  bC.onclick=()=>{ if(bC.disabled) return; setLS('stock_local','camerino'); refLoc(); renderVentasDevolucion(); };
+  bG.onclick=()=>{ if(bG.disabled) return; setLS('stock_local','giustozzi'); refLoc(); renderVentasDevolucion(); };
+  refLoc();
+  aplicarRestriccionLocal(bC, bG).then(()=>{ refLoc(); renderVentasDevolucion(); });
+  document.getElementById('dvFecha').addEventListener('change', renderVentasDevolucion);
+  renderVentasDevolucion();
+  renderHistorialDevoluciones();
+}
+
+async function renderVentasDevolucion(){
+  const box = document.getElementById('dvVentas');
+  if(!box) return;
+  const fecha = document.getElementById('dvFecha').value;
+  const localSel = stLocal();
+  box.innerHTML = `<div class="note">Cargando…</div>`;
+  try{
+    const r = await sbAuthed(`/rest/v1/ventas?local=eq.${localSel}&fecha=eq.${fecha}&facturada=eq.false&order=created_at.desc&select=*`);
+    const rows = r.ok ? await r.json() : [];
+    box.innerHTML = rows.length ? rows.map((v,i)=>{
+      const hora = v.created_at ? new Date(v.created_at).toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'}) : '';
+      const items = (v.items||[]).map(it=> `${esc(it.codigo)} ${esc(it.nombre)}`).join(', ');
+      return `<div class="lista" data-i="${i}" style="margin-top:6px; cursor:pointer; text-align:left">
+        <div style="display:flex; justify-content:space-between; gap:8px">
+          <span class="l">${hora}</span>
+          <span class="v" style="font-size:15px">${money(v.total)}</span>
+        </div>
+        <div class="note" style="margin-top:2px">${items || '(sin detalle)'}</div>
+      </div>`;
+    }).join('') : '<div class="note">No hay ventas no facturadas ese día en este local.</div>';
+    [...box.querySelectorAll('[data-i]')].forEach(el=> el.onclick=()=> armarDetalleDevolucion(rows[Number(el.dataset.i)]));
+  }catch(e){ box.innerHTML = `<div class="note">No se pudo cargar.</div>`; }
+}
+
+function armarDetalleDevolucion(venta){
+  const box = document.getElementById('dvDetalle');
+  const items = venta.items || [];
+  box.innerHTML = `
+    <div class="label">Venta de ${money(venta.total)}</div>
+    <div class="note">${venta.created_at ? new Date(venta.created_at).toLocaleString('es-AR') : ''}</div>
+    <div class="label" style="margin-top:8px">Elegí qué productos vuelven</div>
+    ${items.length ? items.map((it,i)=>`
+      <label class="lista" style="margin-top:6px; text-align:left; display:flex; align-items:center; gap:8px; cursor:pointer">
+        <input type="checkbox" class="dvItem" data-i="${i}" style="flex:none; width:auto">
+        <span style="flex:1">
+          <div class="l">${esc(it.codigo)} ${esc(it.nombre)}${it.talle?` (${esc(it.talle)}${it.color?' · '+esc(it.color):''})`:''}</div>
+        </span>
+        <span class="v" style="font-size:14px">${money(it.precio)}</span>
+      </label>`).join('') : '<div class="note">Esta venta no tiene detalle de items.</div>'}
+    <div class="label" style="margin-top:10px">Medio de reintegro</div>
+    <div class="talles">
+      <button class="talle sel" data-medio="efectivo">Efectivo</button>
+      <button class="talle" data-medio="transferencia">Transferencia</button>
+    </div>
+    <input id="dvMotivo" class="search" placeholder="Motivo (opcional)" style="margin-top:6px">
+    <div class="note" id="dvMontoInfo" style="margin-top:6px">Monto a devolver: $0</div>
+    <button class="addcart" id="dvOk" style="margin-top:8px">↩️ Confirmar devolución</button>
+    <div class="note" id="dvErr"></div>`;
+  let medio = 'efectivo';
+  const montoInfo = box.querySelector('#dvMontoInfo');
+  const actualizarMonto = ()=>{
+    const monto = [...box.querySelectorAll('.dvItem:checked')].reduce((acc,el)=> acc + (Number(items[Number(el.dataset.i)].precio)||0), 0);
+    montoInfo.textContent = `Monto a devolver: ${money(monto)}`;
+  };
+  box.querySelectorAll('.dvItem').forEach(cb=> cb.addEventListener('change', actualizarMonto));
+  [...box.querySelectorAll('[data-medio]')].forEach(b=> b.onclick=()=>{
+    medio = b.dataset.medio;
+    [...box.querySelectorAll('[data-medio]')].forEach(x=>x.classList.remove('sel'));
+    b.classList.add('sel');
+  });
+  box.querySelector('#dvOk').onclick = async ()=>{
+    const err = box.querySelector('#dvErr');
+    const ok = box.querySelector('#dvOk');
+    const elegidos = [...box.querySelectorAll('.dvItem:checked')].map(el=> items[Number(el.dataset.i)]);
+    if(!elegidos.length){ err.textContent='Elegí al menos un producto.'; return; }
+    err.textContent=''; ok.disabled=true; ok.textContent='Procesando…';
+    try{
+      const r = await sbAuthed('/rest/v1/rpc/registrar_devolucion', { method:'POST', body: JSON.stringify({
+        p_venta_id: venta.id,
+        p_items: elegidos.map(it=>({codigo:it.codigo, talle:it.talle, color:it.color, precio:it.precio})),
+        p_medio_devolucion: medio,
+        p_motivo: box.querySelector('#dvMotivo').value||null,
+      }) });
+      if(!r.ok){ const d = await r.json().catch(()=>({})); throw new Error(d.message || 'No se pudo registrar la devolución.'); }
+      await cargarCatalogo();
+      box.innerHTML = `<div class="note">✓ Devolución registrada.</div>`;
+      renderVentasDevolucion();
+      renderHistorialDevoluciones();
+    }catch(e){
+      ok.disabled=false; ok.textContent='↩️ Confirmar devolución';
+      err.textContent = e.message||e;
+    }
+  };
+}
+
+async function renderHistorialDevoluciones(){
+  const box = document.getElementById('dvHistorial');
+  if(!box) return;
+  box.innerHTML = `<div class="label">🕒 Últimas devoluciones</div><div class="note">Cargando…</div>`;
+  try{
+    const r = await sbAuthed(`/rest/v1/devoluciones?order=created_at.desc&limit=30&select=*`);
+    const rows = r.ok ? await r.json() : [];
+    box.innerHTML = `
+      <div class="label">🕒 Últimas devoluciones</div>
+      ${rows.length ? rows.map(d=>{
+        const hora = d.created_at ? new Date(d.created_at).toLocaleString('es-AR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '';
+        const items = (d.items||[]).map(it=> `${esc(it.codigo)} ${esc(it.nombre||'')}`).join(', ');
+        return `
+        <div class="lista" style="margin-top:6px; text-align:left">
+          <div style="display:flex; justify-content:space-between; gap:8px">
+            <span class="l">${hora}</span>
+            <span class="v" style="font-size:14px">${money(d.monto)} · ${esc(d.medio_devolucion)}</span>
+          </div>
+          <div class="note" style="margin-top:2px">${items || '(sin detalle)'}</div>
+          ${d.usuario ? `<div class="note" style="margin-top:1px">${esc(mostrarUsuario(d.usuario))}</div>` : ''}
+        </div>`;
+      }).join('') : '<div class="note">Todavía no se registraron devoluciones.</div>'}`;
   }catch(e){ box.innerHTML = `<div class="note">No se pudo cargar el historial.</div>`; }
 }
 
