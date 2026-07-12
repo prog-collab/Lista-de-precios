@@ -2403,16 +2403,18 @@ function drawClientes(){
   sheet.innerHTML = `
     ${navIconsHtml()}
     <div class="topbtns"><button class="backbtn" id="stClose">✕ Cerrar</button></div>
-    <h2>👤 Cuenta corriente</h2>
+    <h2>👤 Clientes</h2>
     <div class="scat">Sesión: ${esc(mostrarUsuario(sbSession.email))} · <a href="#" id="stLogout" style="color:var(--accent)">salir</a></div>
+    <div class="scat">Compartidos entre Camerino y Giustozzi — cualquier usuario ve el panorama completo.</div>
     <div class="st-grid st-grid-3">
       <div class="st-col-left">
+        <button class="addcart" id="ccNuevoBtn" style="margin-bottom:8px">➕ Nuevo cliente</button>
         <div class="label">Buscar cliente</div>
         <input id="ccBuscarInput" class="search" placeholder="Nombre o teléfono…" autocomplete="off">
         <div id="ccResultados"></div>
       </div>
       <div class="st-col-right" id="ccDetalle">
-        <div class="note">Buscá y elegí un cliente para ver su cuenta corriente.</div>
+        <div class="note">Buscá y elegí un cliente, o creá uno nuevo.</div>
       </div>
       <div class="st-col-dia" id="ccConSaldo"></div>
     </div>`;
@@ -2420,6 +2422,7 @@ function drawClientes(){
   document.getElementById('stClose').onclick = ()=> stCerrar(false);
   document.getElementById('stLogout').onclick = (e)=>{ e.preventDefault();
     sbSession=null; setLS('sb_session', null); miRolCache=null; miLocalAsignadoCache=undefined; drawClientes(); };
+  document.getElementById('ccNuevoBtn').onclick = ()=> armarFormCliente(document.getElementById('ccDetalle'), null);
   const buscarInput = document.getElementById('ccBuscarInput');
   const resultadosEl = document.getElementById('ccResultados');
   let t;
@@ -2430,14 +2433,14 @@ function drawClientes(){
       if(q.length<2){ resultadosEl.innerHTML=''; return; }
       resultadosEl.innerHTML = '<div class="note">Buscando…</div>';
       try{
-        const r = await sbAuthed(`/rest/v1/clientes?select=id,nombre,telefono&or=(nombre.ilike.*${encodeURIComponent(q)}*,telefono.ilike.*${encodeURIComponent(q)}*)&limit=10`);
+        const r = await sbAuthed(`/rest/v1/clientes?select=id,nombre,telefono,etiqueta&or=(nombre.ilike.*${encodeURIComponent(q)}*,telefono.ilike.*${encodeURIComponent(q)}*)&limit=10`);
         const rows = r.ok ? await r.json() : [];
         resultadosEl.innerHTML = rows.length ? rows.map((c,i)=>`
           <div class="lista" data-i="${i}" style="margin-top:4px; cursor:pointer; text-align:left">
-            <div class="l">${esc(c.nombre||'(sin nombre)')}</div>
+            <div class="l">${esc(c.nombre||'(sin nombre)')}${c.etiqueta?` · <span style="text-transform:none">${esc(c.etiqueta)}</span>`:''}</div>
             <div class="v" style="font-size:13px">${esc(c.telefono||'sin tel')}</div>
           </div>`).join('') : '<div class="note">Sin resultados.</div>';
-        [...resultadosEl.querySelectorAll('[data-i]')].forEach(el=> el.onclick=()=> mostrarDetalleCliente(rows[Number(el.dataset.i)]));
+        [...resultadosEl.querySelectorAll('[data-i]')].forEach(el=> el.onclick=()=> mostrarDetalleCliente({id: rows[Number(el.dataset.i)].id}));
       }catch(e){ resultadosEl.innerHTML = '<div class="note">Error al buscar.</div>'; }
     }, 300);
   });
@@ -2449,42 +2452,159 @@ async function renderClientesConSaldo(){
   if(!box) return;
   box.innerHTML = `<div class="label">⚠ Con saldo pendiente</div><div class="note">Cargando…</div>`;
   try{
-    const r = await sbAuthed(`/rest/v1/v_cuenta_corriente_saldo?saldo=gt.0&order=saldo.desc&select=cliente_id,nombre,telefono,saldo&limit=50`);
+    const r = await sbAuthed(`/rest/v1/v_cuenta_corriente_saldo?saldo=gt.0&order=ultimo_movimiento.asc&select=cliente_id,nombre,telefono,saldo,ultimo_movimiento&limit=50`);
     const rows = r.ok ? await r.json() : [];
+    const ahora = Date.now();
     box.innerHTML = `
       <div class="label">⚠ Con saldo pendiente (${rows.length})</div>
-      ${rows.length ? rows.map((r,i)=>`
-        <div class="lista" data-i="${i}" style="margin-top:6px; cursor:pointer; text-align:left">
+      <div class="note">Ordenados por más atrasados primero.</div>
+      ${rows.length ? rows.map((r,i)=>{
+        const dias = r.ultimo_movimiento ? Math.floor((ahora - new Date(r.ultimo_movimiento).getTime())/86400000) : null;
+        const urgente = dias!=null && dias>=30;
+        return `
+        <div class="lista" data-i="${i}" style="margin-top:6px; cursor:pointer; text-align:left; ${urgente?'border:1px solid var(--warn)':''}">
           <div style="display:flex; justify-content:space-between; gap:8px">
-            <span class="l">${esc(r.nombre||'(sin nombre)')}</span>
+            <span class="l">${esc(r.nombre||'(sin nombre)')}${urgente?' ⚠':''}</span>
             <span class="v" style="font-size:15px">${money(r.saldo)}</span>
           </div>
-        </div>`).join('') : '<div class="note">Nadie tiene saldo pendiente ahora mismo.</div>'}`;
-    [...box.querySelectorAll('[data-i]')].forEach(el=> el.onclick=()=> mostrarDetalleCliente({id: rows[Number(el.dataset.i)].cliente_id, nombre: rows[Number(el.dataset.i)].nombre, telefono: rows[Number(el.dataset.i)].telefono}));
+          ${dias!=null ? `<div class="note" style="margin-top:2px">Sin movimientos hace ${dias} día${dias===1?'':'s'}</div>` : ''}
+        </div>`;
+      }).join('') : '<div class="note">Nadie tiene saldo pendiente ahora mismo.</div>'}`;
+    [...box.querySelectorAll('[data-i]')].forEach(el=> el.onclick=()=> mostrarDetalleCliente({id: rows[Number(el.dataset.i)].cliente_id}));
   }catch(e){ box.innerHTML = `<div class="note">No se pudo cargar.</div>`; }
 }
 
-async function mostrarDetalleCliente(cliente){
+// Formulario de alta/edición de cliente. cliente=null para uno nuevo.
+function armarFormCliente(box, cliente){
+  const esEdit = !!cliente;
+  box.innerHTML = `
+    <div class="label">${esEdit?'✏️ Editar cliente':'➕ Nuevo cliente'}</div>
+    <div class="label" style="margin-top:8px">Nombre</div>
+    <input id="cfNombre" class="search" value="${esEdit?esc(cliente.nombre||''):''}">
+    <div class="label">Teléfono</div>
+    <input id="cfTelefono" class="search" placeholder="con código de área" value="${esEdit?esc(cliente.telefono||''):''}">
+    <div class="label">Email</div>
+    <input id="cfEmail" class="search" type="email" value="${esEdit?esc(cliente.email||''):''}">
+    <div class="label">CUIT (para Factura A)</div>
+    <input id="cfCuit" class="search" inputmode="numeric" value="${esEdit?esc(cliente.cuit||''):''}">
+    <div class="label">Dirección</div>
+    <input id="cfDireccion" class="search" placeholder="Calle, número, ciudad" value="${esEdit?esc(cliente.direccion||''):''}">
+    <div class="label">Instagram</div>
+    <input id="cfInstagram" class="search" placeholder="@usuario (opcional)" value="${esEdit?esc(cliente.instagram||''):''}">
+    <div class="label">Facebook</div>
+    <input id="cfFacebook" class="search" placeholder="usuario o nombre de perfil (opcional)" value="${esEdit?esc(cliente.facebook||''):''}">
+    <div class="label">Fecha de nacimiento</div>
+    <input id="cfNacimiento" class="search" type="date" value="${esEdit&&cliente.fecha_nacimiento?cliente.fecha_nacimiento:''}">
+    <div class="label">Etiqueta</div>
+    <input id="cfEtiqueta" class="search" placeholder="ej. VIP, mayorista…" value="${esEdit?esc(cliente.etiqueta||''):''}">
+    <div class="label">Notas</div>
+    <textarea id="cfNotas" class="search" style="min-height:60px">${esEdit?esc(cliente.notas||''):''}</textarea>
+    <button class="addcart" id="cfOk" style="margin-top:8px">💾 ${esEdit?'Guardar cambios':'Crear cliente'}</button>
+    <button class="fbtn" id="cfCancelar" style="width:100%; margin-top:6px">Cancelar</button>
+    <div class="note" id="cfErr"></div>`;
+  document.getElementById('cfCancelar').onclick = ()=>{ esEdit ? mostrarDetalleCliente(cliente) : box.innerHTML=''; };
+  document.getElementById('cfOk').onclick = async ()=>{
+    const err = document.getElementById('cfErr');
+    const ok = document.getElementById('cfOk');
+    const nombre = document.getElementById('cfNombre').value.trim();
+    if(!nombre){ err.textContent='Falta el nombre.'; return; }
+    const body = {
+      nombre,
+      telefono: document.getElementById('cfTelefono').value.trim()||null,
+      email: document.getElementById('cfEmail').value.trim()||null,
+      cuit: document.getElementById('cfCuit').value.trim()||null,
+      direccion: document.getElementById('cfDireccion').value.trim()||null,
+      instagram: document.getElementById('cfInstagram').value.trim()||null,
+      facebook: document.getElementById('cfFacebook').value.trim()||null,
+      fecha_nacimiento: document.getElementById('cfNacimiento').value||null,
+      etiqueta: document.getElementById('cfEtiqueta').value.trim()||null,
+      notas: document.getElementById('cfNotas').value.trim()||null,
+    };
+    err.textContent=''; ok.disabled=true; ok.textContent='Guardando…';
+    try{
+      let clienteId = esEdit ? cliente.id : null;
+      const r = esEdit
+        ? await sbAuthed(`/rest/v1/clientes?id=eq.${cliente.id}`, { method:'PATCH', body: JSON.stringify(body) })
+        : await sbAuthed('/rest/v1/clientes', { method:'POST', headers:{Prefer:'return=representation'}, body: JSON.stringify(body) });
+      if(!r.ok){ const d = await r.json().catch(()=>({})); throw new Error(d.message || 'No se pudo guardar.'); }
+      if(!esEdit){ const rows = await r.json().catch(()=>null); clienteId = rows && rows[0] && rows[0].id; }
+      renderClientesConSaldo();
+      mostrarDetalleCliente({id: clienteId});
+    }catch(e){
+      ok.disabled=false; ok.textContent = esEdit?'💾 Guardar cambios':'💾 Crear cliente';
+      err.textContent = e.message||e;
+    }
+  };
+}
+
+async function mostrarDetalleCliente(clienteParcial){
   const box = document.getElementById('ccDetalle');
-  if(!box || !cliente) return;
-  box.innerHTML = `<div class="note">Cargando cuenta de ${esc(cliente.nombre||'')}…</div>`;
+  if(!box || !clienteParcial) return;
+  box.innerHTML = `<div class="note">Cargando…</div>`;
   try{
-    const [rSaldo, rMovs] = await Promise.all([
-      sbAuthed(`/rest/v1/v_cuenta_corriente_saldo?cliente_id=eq.${cliente.id}&select=saldo`),
-      sbAuthed(`/rest/v1/cuenta_corriente_movimientos?cliente_id=eq.${cliente.id}&order=created_at.desc&limit=30&select=*`),
+    const [rCliente, rSaldo, rSaldoLocal, rMovs, rCompras] = await Promise.all([
+      sbAuthed(`/rest/v1/clientes?id=eq.${clienteParcial.id}&select=*`),
+      sbAuthed(`/rest/v1/v_cuenta_corriente_saldo?cliente_id=eq.${clienteParcial.id}&select=saldo`),
+      sbAuthed(`/rest/v1/v_cuenta_corriente_saldo_local?cliente_id=eq.${clienteParcial.id}&select=local,saldo`),
+      sbAuthed(`/rest/v1/cuenta_corriente_movimientos?cliente_id=eq.${clienteParcial.id}&order=created_at.desc&limit=30&select=*`),
+      sbAuthed(`/rest/v1/ventas?cliente_id=eq.${clienteParcial.id}&order=created_at.desc&select=id,total,local,created_at`),
     ]);
+    const clienteRows = rCliente.ok ? await rCliente.json() : [];
+    const cliente = clienteRows[0] || clienteParcial;
     const saldoRows = rSaldo.ok ? await rSaldo.json() : [];
     const saldo = (saldoRows[0] && Number(saldoRows[0].saldo)) || 0;
+    const saldoLocalRows = (rSaldoLocal.ok ? await rSaldoLocal.json() : []).filter(r=> Number(r.saldo)!==0);
     const movs = rMovs.ok ? await rMovs.json() : [];
+    const compras = rCompras.ok ? await rCompras.json() : [];
+    const totalGastado = compras.reduce((a,v)=> a+Number(v.total||0), 0);
+
+    let cumpleHtml = '';
+    if(cliente.fecha_nacimiento){
+      const hoy = new Date();
+      const partes = cliente.fecha_nacimiento.split('-').map(Number);
+      const esHoy = (hoy.getMonth()+1)===partes[1] && hoy.getDate()===partes[2];
+      cumpleHtml = `<div class="note" style="margin-top:2px">🎂 ${String(partes[2]).padStart(2,'0')}/${String(partes[1]).padStart(2,'0')}${esHoy?' · 🎉 ¡Es hoy!':''}</div>`;
+    }
+
+    const saldoLocalHtml = saldoLocalRows.length>1
+      ? saldoLocalRows.map(r=> `<div class="note" style="margin-top:2px">Saldo en ${esc(stLocalNombre(r.local))}: <b>${money(r.saldo)}</b></div>`).join('')
+      : '';
+
+    const localSel = stLocal();
+    const domicilioLocal = (LOCAL_INFO[localSel] && LOCAL_INFO[localSel].domicilio) || '';
+    const mapsHtml = cliente.direccion ? `
+      <a href="https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(domicilioLocal+', Santa Fe, Argentina')}&destination=${encodeURIComponent(cliente.direccion)}" target="_blank" rel="noopener" class="fbtn" style="display:block; text-decoration:none; text-align:center; margin-top:6px">🗺️ Ver distancia desde ${esc(stLocalNombre(localSel))}</a>` : '';
+
+    const nombreEnc = encodeURIComponent(cliente.nombre||'');
+    const redesHtml = `
+      <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:6px">
+        <a href="https://www.google.com/search?q=${nombreEnc}" target="_blank" rel="noopener" class="fbtn" style="text-decoration:none; flex:1; text-align:center">🔎 Google</a>
+        <a href="${cliente.instagram ? 'https://instagram.com/'+encodeURIComponent(cliente.instagram.replace('@','')) : 'https://www.instagram.com/explore/search/keyword/?q='+nombreEnc}" target="_blank" rel="noopener" class="fbtn" style="text-decoration:none; flex:1; text-align:center">📷 Instagram</a>
+        <a href="${cliente.facebook ? 'https://www.facebook.com/'+encodeURIComponent(cliente.facebook) : 'https://www.facebook.com/search/people/?q='+nombreEnc}" target="_blank" rel="noopener" class="fbtn" style="text-decoration:none; flex:1; text-align:center">📘 Facebook</a>
+      </div>
+      <div class="note" style="margin-top:2px">Estos botones abren la búsqueda en tu navegador — no mandamos ningún dato del cliente a esos sitios.</div>`;
+
     box.innerHTML = `
-      <div class="label">${esc(cliente.nombre||'(sin nombre)')}</div>
-      <div class="note">${esc(cliente.telefono||'sin teléfono')}</div>
-      <div class="lista" style="margin-top:8px; display:flex; align-items:center; justify-content:space-between; text-align:left; padding:10px 14px">
-        <div class="l" style="margin:0">Saldo actual</div>
+      <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px">
+        <div class="label" style="margin:0">${esc(cliente.nombre||'(sin nombre)')}${cliente.etiqueta?` · <span style="text-transform:none">${esc(cliente.etiqueta)}</span>`:''}</div>
+        <button class="fbtn" id="ccEditar" style="flex:none">✏️ Editar</button>
+      </div>
+      <div class="note" style="margin-top:4px">${esc(cliente.telefono||'sin teléfono')}${cliente.email?' · '+esc(cliente.email):''}</div>
+      ${cliente.direccion ? `<div class="note" style="margin-top:2px">📍 ${esc(cliente.direccion)}</div>` : ''}
+      ${cumpleHtml}
+      ${cliente.notas ? `<div class="note" style="margin-top:4px; font-style:italic">${esc(cliente.notas)}</div>` : ''}
+      ${redesHtml}
+      ${mapsHtml}
+
+      <div class="lista" style="margin-top:10px; display:flex; align-items:center; justify-content:space-between; text-align:left; padding:10px 14px">
+        <div class="l" style="margin:0">Saldo actual (los 2 locales)</div>
         <div class="v" id="ccSaldoActual" style="font-size:20px; margin:0; ${saldo>0?'color:var(--warn)':''}">${money(saldo)}</div>
       </div>
+      ${saldoLocalHtml}
+      ${saldo>0 ? `<button class="fbtn" id="ccRecordarBtn" style="width:100%; margin-top:6px">📱 Recordar deuda por WhatsApp</button>` : ''}
+
       ${saldo>0 ? `
-      <div class="label" style="margin-top:10px">Registrar pago</div>
+      <div class="label" style="margin-top:10px">Registrar pago (en ${esc(stLocalNombre(stLocal()))})</div>
       <div style="display:flex; gap:4px">
         <input id="ccPagoMonto" class="search" type="number" inputmode="decimal" placeholder="Monto" style="flex:1">
         <button class="fbtn" type="button" id="ccPagoTotal" style="flex:none; padding:0 10px" title="Usar el saldo total">＝</button>
@@ -2492,22 +2612,35 @@ async function mostrarDetalleCliente(cliente){
       <input id="ccPagoNota" class="search" placeholder="Nota (opcional)" style="margin-top:4px">
       <button class="addcart" id="ccPagoOk" style="margin-top:8px">💰 Registrar pago</button>
       <div class="note" id="ccPagoErr"></div>` : ''}
-      <div class="label" style="margin-top:14px">Historial</div>
+
+      <div class="label" style="margin-top:14px">Compras (${compras.length})${compras.length?` · total ${money(totalGastado)}`:''}</div>
+      ${compras.length ? `<div class="note">Última: ${compras[0].created_at ? new Date(compras[0].created_at).toLocaleDateString('es-AR') : ''} en ${esc(stLocalNombre(compras[0].local))}</div>`
+        : '<div class="note">Sin compras vinculadas todavía (por ahora solo se vinculan automáticamente las que usaron crédito personal).</div>'}
+
+      <div class="label" style="margin-top:14px">Historial de cuenta corriente</div>
       ${movs.length ? movs.map(m=>`
         <div class="lista" style="margin-top:6px; text-align:left">
           <div style="display:flex; justify-content:space-between; gap:8px">
-            <span class="l">${m.created_at ? new Date(m.created_at).toLocaleDateString('es-AR') : ''} · ${m.tipo==='cargo'?'Cargo':'Pago'}</span>
+            <span class="l">${m.created_at ? new Date(m.created_at).toLocaleDateString('es-AR') : ''} · ${m.tipo==='cargo'?'Cargo':'Pago'} · ${esc(stLocalNombre(m.local))}</span>
             <span class="v" style="font-size:15px; color:${m.tipo==='cargo'?'var(--warn)':'inherit'}">${m.tipo==='cargo'?'+':'−'}${money(m.monto)}</span>
           </div>
           ${m.nota ? `<div class="note" style="margin-top:2px">${esc(m.nota)}</div>` : ''}
         </div>`).join('') : '<div class="note">Todavía no hay movimientos.</div>'}`;
-    const totalBtn = box.querySelector('#ccPagoTotal');
-    if(totalBtn) totalBtn.onclick = ()=>{ box.querySelector('#ccPagoMonto').value = saldo; };
-    const pagoOk = box.querySelector('#ccPagoOk');
+
+    document.getElementById('ccEditar').onclick = ()=> armarFormCliente(box, cliente);
+    const recordarBtn = document.getElementById('ccRecordarBtn');
+    if(recordarBtn) recordarBtn.onclick = ()=>{
+      const msg = `Hola ${cliente.nombre||''}! Te escribimos de ${stLocalNombre(stLocal())} para recordarte que tenés un saldo pendiente de ${money(saldo)}. Cualquier consulta, ¡estamos para ayudarte! 😊`;
+      const tel = cliente.telefono || prompt('Este cliente no tiene teléfono cargado. Ingresalo para enviar el recordatorio:');
+      if(tel) window.open(`https://wa.me/${telParaWA(tel)}?text=${encodeURIComponent(msg)}`, '_blank');
+    };
+    const totalBtn = document.getElementById('ccPagoTotal');
+    if(totalBtn) totalBtn.onclick = ()=>{ document.getElementById('ccPagoMonto').value = saldo; };
+    const pagoOk = document.getElementById('ccPagoOk');
     if(pagoOk) pagoOk.onclick = async ()=>{
-      const err = box.querySelector('#ccPagoErr');
-      const monto = Number(box.querySelector('#ccPagoMonto').value)||0;
-      const nota = box.querySelector('#ccPagoNota').value||null;
+      const err = document.getElementById('ccPagoErr');
+      const monto = Number(document.getElementById('ccPagoMonto').value)||0;
+      const nota = document.getElementById('ccPagoNota').value||null;
       if(!(monto>0)){ err.textContent='Ingresá un monto mayor a 0.'; return; }
       pagoOk.disabled = true; pagoOk.textContent = 'Guardando…';
       try{
