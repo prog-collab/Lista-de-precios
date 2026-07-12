@@ -1027,6 +1027,23 @@ function loadTesseract(){
   });
 }
 
+// Beep corto al capturar un código en la pantalla de Vender (confirmación
+// sonora de que el escaneo se registró, sin depender de mirar la pantalla).
+let stAudioCtx = null;
+function beepScan(){
+  try{
+    if(!stAudioCtx) stAudioCtx = new (window.AudioContext||window.webkitAudioContext)();
+    if(stAudioCtx.state==='suspended') stAudioCtx.resume();
+    const osc = stAudioCtx.createOscillator();
+    const gain = stAudioCtx.createGain();
+    osc.type = 'sine'; osc.frequency.value = 1300;
+    gain.gain.setValueAtTime(0.25, stAudioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, stAudioCtx.currentTime+0.15);
+    osc.connect(gain); gain.connect(stAudioCtx.destination);
+    osc.start(); osc.stop(stAudioCtx.currentTime+0.15);
+  }catch(e){}
+}
+
 // Carga perezosa de ZXing: lector de códigos de barra en JS puro, para
 // navegadores que no tienen la API nativa BarcodeDetector (Safari/iPhone,
 // y la mayoría de los navegadores de escritorio) — sin esto, en esos
@@ -1586,10 +1603,11 @@ function wireVentaCard(){
     const picker = card.querySelector('#stCvClientePicker');
     if(picker.innerHTML){ picker.innerHTML=''; return; }
     picker.innerHTML = `
-      <input id="stCvClienteBuscarInput" class="search" placeholder="Buscar por nombre o teléfono…" style="margin-top:6px">
+      <input id="stCvClienteBuscarInput" class="search" placeholder="Buscar por nombre, teléfono o DNI…" style="margin-top:6px">
       <div id="stCvClienteResultados"></div>`;
     const buscarInput = picker.querySelector('#stCvClienteBuscarInput');
     const resultadosEl = picker.querySelector('#stCvClienteResultados');
+    makeClearable(buscarInput);
     buscarInput.focus();
     let t;
     buscarInput.addEventListener('input', ()=>{
@@ -1599,12 +1617,12 @@ function wireVentaCard(){
         if(q.length<2){ resultadosEl.innerHTML=''; return; }
         resultadosEl.innerHTML = 'Buscando…';
         try{
-          const r = await sbAuthed(`/rest/v1/clientes?select=id,nombre,telefono&or=(nombre.ilike.*${encodeURIComponent(q)}*,telefono.ilike.*${encodeURIComponent(q)}*)&limit=8`);
+          const r = await sbAuthed(`/rest/v1/clientes?select=id,nombre,telefono,dni&or=(nombre.ilike.*${encodeURIComponent(q)}*,telefono.ilike.*${encodeURIComponent(q)}*,dni.ilike.*${encodeURIComponent(q)}*)&limit=8`);
           const rows = r.ok ? await r.json() : [];
           resultadosEl.innerHTML = (rows.length ? rows.map((c,i)=>
             `<div class="lista" data-i="${i}" style="margin-top:4px; cursor:pointer">
                <div class="l">${esc(c.nombre||'(sin nombre)')}</div>
-               <div class="v" style="font-size:13px">${esc(c.telefono||'sin tel')}</div>
+               <div class="v" style="font-size:13px">${esc(c.telefono||'sin tel')}${c.dni?' · DNI '+esc(c.dni):''}</div>
              </div>`).join('') : '<div class="note">Sin resultados.</div>')
             + `<button class="fbtn" type="button" id="stCvClienteCrear" style="width:100%; margin-top:6px">➕ Crear cliente "${esc(q)}"</button>`;
           [...resultadosEl.querySelectorAll('[data-i]')].forEach(el=> el.onclick=()=> elegirClienteCredito(rows[Number(el.dataset.i)]));
@@ -1688,6 +1706,7 @@ function wireVentaCard(){
       <div id="stFcBuscarResultados"></div>`;
     const buscarInput = picker.querySelector('#stFcBuscarInput');
     const resultadosEl = picker.querySelector('#stFcBuscarResultados');
+    makeClearable(buscarInput);
     buscarInput.focus();
     let t;
     buscarInput.addEventListener('input', ()=>{
@@ -2453,7 +2472,7 @@ function drawClientes(){
       <div class="st-col-left">
         <button class="addcart" id="ccNuevoBtn" style="margin-bottom:8px">➕ Nuevo cliente</button>
         <div class="label">Buscar cliente</div>
-        <input id="ccBuscarInput" class="search" placeholder="Nombre o teléfono…" autocomplete="off">
+        <input id="ccBuscarInput" class="search" placeholder="Nombre, teléfono o DNI…" autocomplete="off">
         <div id="ccResultados"></div>
       </div>
       <div class="st-col-right" id="ccDetalle">
@@ -2468,6 +2487,7 @@ function drawClientes(){
   document.getElementById('ccNuevoBtn').onclick = ()=> armarFormCliente(document.getElementById('ccDetalle'), null);
   const buscarInput = document.getElementById('ccBuscarInput');
   const resultadosEl = document.getElementById('ccResultados');
+  makeClearable(buscarInput);
   let t;
   buscarInput.addEventListener('input', ()=>{
     clearTimeout(t);
@@ -2476,12 +2496,12 @@ function drawClientes(){
       if(q.length<2){ resultadosEl.innerHTML=''; return; }
       resultadosEl.innerHTML = '<div class="note">Buscando…</div>';
       try{
-        const r = await sbAuthed(`/rest/v1/clientes?select=id,nombre,telefono,etiqueta&or=(nombre.ilike.*${encodeURIComponent(q)}*,telefono.ilike.*${encodeURIComponent(q)}*)&limit=10`);
+        const r = await sbAuthed(`/rest/v1/clientes?select=id,nombre,telefono,etiqueta,dni&or=(nombre.ilike.*${encodeURIComponent(q)}*,telefono.ilike.*${encodeURIComponent(q)}*,dni.ilike.*${encodeURIComponent(q)}*)&limit=10`);
         const rows = r.ok ? await r.json() : [];
         resultadosEl.innerHTML = rows.length ? rows.map((c,i)=>`
           <div class="lista" data-i="${i}" style="margin-top:4px; cursor:pointer; text-align:left">
             <div class="l">${esc(c.nombre||'(sin nombre)')}${c.etiqueta?` · <span style="text-transform:none">${esc(c.etiqueta)}</span>`:''}</div>
-            <div class="v" style="font-size:13px">${esc(c.telefono||'sin tel')}</div>
+            <div class="v" style="font-size:13px">${esc(c.telefono||'sin tel')}${c.dni?' · DNI '+esc(c.dni):''}</div>
           </div>`).join('') : '<div class="note">Sin resultados.</div>';
         [...resultadosEl.querySelectorAll('[data-i]')].forEach(el=> el.onclick=()=> mostrarDetalleCliente({id: rows[Number(el.dataset.i)].id}));
       }catch(e){ resultadosEl.innerHTML = '<div class="note">Error al buscar.</div>'; }
@@ -2526,6 +2546,8 @@ function armarFormCliente(box, cliente){
     <input id="cfNombre" class="search" value="${esEdit?esc(cliente.nombre||''):''}">
     <div class="label">Teléfono</div>
     <input id="cfTelefono" class="search" placeholder="con código de área" value="${esEdit?esc(cliente.telefono||''):''}">
+    <div class="label">DNI</div>
+    <input id="cfDni" class="search" inputmode="numeric" placeholder="ej. 30123456" value="${esEdit?esc(cliente.dni||''):''}">
     <div class="label">Email</div>
     <input id="cfEmail" class="search" type="email" value="${esEdit?esc(cliente.email||''):''}">
     <div class="label">CUIT (para Factura A)</div>
@@ -2554,6 +2576,7 @@ function armarFormCliente(box, cliente){
     const body = {
       nombre,
       telefono: document.getElementById('cfTelefono').value.trim()||null,
+      dni: document.getElementById('cfDni').value.trim()||null,
       email: document.getElementById('cfEmail').value.trim()||null,
       cuit: document.getElementById('cfCuit').value.trim()||null,
       direccion: document.getElementById('cfDireccion').value.trim()||null,
@@ -2632,7 +2655,7 @@ async function mostrarDetalleCliente(clienteParcial){
         <div class="label" style="margin:0">${esc(cliente.nombre||'(sin nombre)')}${cliente.etiqueta?` · <span style="text-transform:none">${esc(cliente.etiqueta)}</span>`:''}</div>
         <button class="fbtn" id="ccEditar" style="flex:none">✏️ Editar</button>
       </div>
-      <div class="note" style="margin-top:4px">${esc(cliente.telefono||'sin teléfono')}${cliente.email?' · '+esc(cliente.email):''}</div>
+      <div class="note" style="margin-top:4px">${esc(cliente.telefono||'sin teléfono')}${cliente.dni?' · DNI '+esc(cliente.dni):''}${cliente.email?' · '+esc(cliente.email):''}</div>
       ${cliente.direccion ? `<div class="note" style="margin-top:2px">📍 ${esc(cliente.direccion)}</div>` : ''}
       ${cumpleHtml}
       ${cliente.notas ? `<div class="note" style="margin-top:4px; font-style:italic">${esc(cliente.notas)}</div>` : ''}
@@ -3598,6 +3621,7 @@ async function stCamara(){
               // no re-leer la misma prenda apenas confirmada
               if(digits && !(digits===stCoolCode && now<stCoolUntil)){
                 stCoolCode=digits; stCoolUntil=now+2500;
+                if(stSeccion==='venta') beepScan();
                 stProcesar(digits);
               }
             }
@@ -3630,6 +3654,7 @@ async function stCamara(){
         const now = Date.now();
         if(digits && !(digits===stCoolCode && now<stCoolUntil)){
           stCoolCode=digits; stCoolUntil=now+2500;
+          if(stSeccion==='venta') beepScan();
           stProcesar(digits);
         }
       });
