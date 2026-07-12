@@ -727,6 +727,7 @@ listEl.addEventListener('click', e=>{
 function esc(s){ return (s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
 let curProd=null, curTalle=0, promoSel=20;
+let addProductOpen=false;   // true mientras está abierto "Agregar/Editar producto"
 function openDetail(p){
   curProd=p; curTalle=0;
   pushHist(p.codigo);
@@ -735,12 +736,15 @@ function openDetail(p){
   drawDetail();
 }
 function hideDetail(){ document.getElementById('ov').classList.remove('open'); curProd=null; render(); }
+function hideAddProduct(){ document.getElementById('ov').classList.remove('open'); addProductOpen=false; curProd=null; render(); }
 function closeDetail(){
   if(history.state && history.state.detalle) history.back();
+  else if(addProductOpen) hideAddProduct();
   else hideDetail();
 }
 window.addEventListener('popstate', ()=>{
   if(cartOpen) hideCart();
+  else if(addProductOpen) hideAddProduct();
   else if(curProd) hideDetail();
 });
 document.getElementById('ov').addEventListener('click',e=>{ if(e.target.id==='ov' && !stOpen) closeDetail(); });
@@ -867,6 +871,7 @@ function openAddProduct(edit){
   const esEdit = !!edit;
   document.getElementById('sheet').classList.remove('sheet-wide');
   document.getElementById('sheet').innerHTML = `
+    ${navIconsHtml()}
     <div class="topbtns"><button class="backbtn" onclick="closeDetail()">← Atrás</button></div>
     <h2>${esEdit?'✏️ Editar producto':'➕ Agregar producto'}</h2>
     <div class="scat">${esEdit?'Se guarda en el catálogo compartido (Supabase) — se ve en todos los dispositivos.':'Se crea en el catálogo compartido (Supabase) — se ve en todos los dispositivos.'}</div>
@@ -896,7 +901,9 @@ function openAddProduct(edit){
     <div id="apMsg" class="note"></div>
     <button id="apSave" class="addcart" style="margin-top:8px">💾 ${esEdit?'Guardar cambios':'Guardar producto'}</button>`;
   document.getElementById('ov').classList.add('open');
+  addProductOpen = true;
   history.pushState({detalle:1}, '');
+  wireNavIcons(document.getElementById('sheet'));
   const cont = document.getElementById('apTalles');
   function addRow(talle, precio){
     const div = document.createElement('div'); div.className='row';
@@ -1835,11 +1842,38 @@ function stCerrar(viaHistory){
 }
 window.addEventListener('popstate', ()=>{ if(stOpen) stCerrar(true); });
 
+// Barra de navegación duplicada: el header real queda tapado por cualquier
+// pantalla de pantalla completa (Cargar/Vender/Clientes/Traspasos/Agregar
+// producto/Detalle), así que cada una de esas pantallas repite estos
+// mismos íconos arriba de todo, para no tener que cerrarla para cambiar de
+// sección. No duplica lógica: cada botón solo reenvía el click al botón
+// real del header (que sigue existiendo en el DOM, solo tapado).
+function navIconsHtml(){
+  return `<div class="hbtns" style="justify-content:flex-end; flex-wrap:wrap; margin-bottom:10px">
+    <button type="button" class="fbtn" data-nav="fMinus" title="Achicar letra">A−</button>
+    <button type="button" class="fbtn" data-nav="fPlus" title="Agrandar letra">A+</button>
+    <button type="button" class="fbtn" data-nav="themeBtn" title="Cambiar tema">🌙</button>
+    <button type="button" class="fbtn" data-nav="addBtn" title="Agregar producto">➕</button>
+    <button type="button" class="fbtn" data-nav="stockBtn" title="Cargar stock (escaneo)">📦</button>
+    <button type="button" class="fbtn" data-nav="venderBtn" title="Vender (POS)">🛍️</button>
+    <button type="button" class="fbtn" data-nav="clientesBtn" title="Cuenta corriente de clientes">👤</button>
+    <button type="button" class="fbtn" data-nav="traspasosBtn" title="Traspaso de stock entre locales">🔁</button>
+    <button type="button" class="fbtn" data-nav="helpBtn" title="Ayuda">❓</button>
+    <button type="button" class="fbtn" data-nav="cartBtn" title="Carrito">🛒</button>
+  </div>`;
+}
+function wireNavIcons(container){
+  (container||document).querySelectorAll('[data-nav]').forEach(b=>{
+    b.onclick = ()=>{ const orig = document.getElementById(b.dataset.nav); if(orig) orig.click(); };
+  });
+}
+
 function drawStock(){
   const sheet = document.getElementById('sheet');
   sheet.classList.add('sheet-wide');
   if(!sbSession){
     sheet.innerHTML = `
+      ${navIconsHtml()}
       <div class="topbtns"><button class="backbtn" id="stClose">✕ Cerrar</button></div>
       <h2>📦 Cargar stock</h2>
       <div class="scat">Iniciá sesión con tu usuario del panel para poder cargar stock.</div>
@@ -1849,6 +1883,7 @@ function drawStock(){
       <input id="stPass" class="search" type="password" autocomplete="current-password">
       <button class="addcart" id="stLoginBtn">Ingresar</button>
       <div class="note" id="stLoginErr"></div>`;
+    wireNavIcons(sheet);
     document.getElementById('stClose').onclick = ()=> stCerrar(false);
     document.getElementById('stLoginBtn').onclick = async ()=>{
       const err = document.getElementById('stLoginErr');
@@ -1863,6 +1898,7 @@ function drawStock(){
     return;
   }
   sheet.innerHTML = `
+    ${navIconsHtml()}
     <div class="topbtns"><button class="backbtn" id="stClose">✕ Cerrar</button></div>
     <h2>📦 Cargar stock</h2>
     <div class="scat">Sesión: ${esc(mostrarUsuario(sbSession.email))} · <a href="#" id="stLogout" style="color:var(--accent)">salir</a></div>
@@ -1887,6 +1923,7 @@ function drawStock(){
       </div>
       <div class="st-col-dia" id="stHistorialCarga"></div>
     </div>`;
+  wireNavIcons(sheet);
   document.getElementById('stClose').onclick = ()=> stCerrar(false);
   document.getElementById('stLogout').onclick = (e)=>{ e.preventDefault();
     sbSession=null; setLS('sb_session', null); miRolCache=null; miLocalAsignadoCache=undefined; drawStock(); };
@@ -1960,6 +1997,7 @@ function drawVender(){
   sheet.classList.add('sheet-wide');
   if(!sbSession){
     sheet.innerHTML = `
+      ${navIconsHtml()}
       <div class="topbtns"><button class="backbtn" id="stClose">✕ Cerrar</button></div>
       <h2>🛍️ Vender (POS)</h2>
       <div class="scat">Iniciá sesión con tu usuario del panel para poder vender.</div>
@@ -1969,6 +2007,7 @@ function drawVender(){
       <input id="stPass" class="search" type="password" autocomplete="current-password">
       <button class="addcart" id="stLoginBtn">Ingresar</button>
       <div class="note" id="stLoginErr"></div>`;
+    wireNavIcons(sheet);
     document.getElementById('stClose').onclick = ()=> stCerrar(false);
     document.getElementById('stLoginBtn').onclick = async ()=>{
       const err = document.getElementById('stLoginErr');
@@ -1986,6 +2025,7 @@ function drawVender(){
   const fMin = new Date(hoy); fMin.setDate(fMin.getDate()-5);
   const fMax = new Date(hoy); fMax.setDate(fMax.getDate()+5);
   sheet.innerHTML = `
+    ${navIconsHtml()}
     <div class="topbtns"><button class="backbtn" id="stClose">✕ Cerrar</button></div>
     <h2>🛍️ Vender (POS)</h2>
     <div class="scat">Sesión: ${esc(mostrarUsuario(sbSession.email))} · <a href="#" id="stLogout" style="color:var(--accent)">salir</a></div>
@@ -2105,6 +2145,7 @@ function drawVender(){
       </div>
       <div class="st-col-dia" id="stResumenDia"></div>
     </div>`;
+  wireNavIcons(sheet);
   document.getElementById('stClose').onclick = ()=> stCerrar(false);
   document.getElementById('stLogout').onclick = (e)=>{ e.preventDefault();
     sbSession=null; setLS('sb_session', null); miRolCache=null; miLocalAsignadoCache=undefined; drawVender(); };
@@ -2194,6 +2235,7 @@ function drawClientes(){
   sheet.classList.add('sheet-wide');
   if(!sbSession){
     sheet.innerHTML = `
+      ${navIconsHtml()}
       <div class="topbtns"><button class="backbtn" id="stClose">✕ Cerrar</button></div>
       <h2>👤 Cuenta corriente</h2>
       <div class="scat">Iniciá sesión con tu usuario del panel para poder consultarla.</div>
@@ -2203,6 +2245,7 @@ function drawClientes(){
       <input id="stPass" class="search" type="password" autocomplete="current-password">
       <button class="addcart" id="stLoginBtn">Ingresar</button>
       <div class="note" id="stLoginErr"></div>`;
+    wireNavIcons(sheet);
     document.getElementById('stClose').onclick = ()=> stCerrar(false);
     document.getElementById('stLoginBtn').onclick = async ()=>{
       const err = document.getElementById('stLoginErr');
@@ -2217,6 +2260,7 @@ function drawClientes(){
     return;
   }
   sheet.innerHTML = `
+    ${navIconsHtml()}
     <div class="topbtns"><button class="backbtn" id="stClose">✕ Cerrar</button></div>
     <h2>👤 Cuenta corriente</h2>
     <div class="scat">Sesión: ${esc(mostrarUsuario(sbSession.email))} · <a href="#" id="stLogout" style="color:var(--accent)">salir</a></div>
@@ -2231,6 +2275,7 @@ function drawClientes(){
       </div>
       <div class="st-col-dia" id="ccConSaldo"></div>
     </div>`;
+  wireNavIcons(sheet);
   document.getElementById('stClose').onclick = ()=> stCerrar(false);
   document.getElementById('stLogout').onclick = (e)=>{ e.preventDefault();
     sbSession=null; setLS('sb_session', null); miRolCache=null; miLocalAsignadoCache=undefined; drawClientes(); };
@@ -2342,6 +2387,7 @@ function drawTraspasos(){
   sheet.classList.add('sheet-wide');
   if(!sbSession){
     sheet.innerHTML = `
+      ${navIconsHtml()}
       <div class="topbtns"><button class="backbtn" id="stClose">✕ Cerrar</button></div>
       <h2>🔁 Traspaso entre locales</h2>
       <div class="scat">Iniciá sesión con tu usuario del panel para poder usarlo.</div>
@@ -2351,6 +2397,7 @@ function drawTraspasos(){
       <input id="stPass" class="search" type="password" autocomplete="current-password">
       <button class="addcart" id="stLoginBtn">Ingresar</button>
       <div class="note" id="stLoginErr"></div>`;
+    wireNavIcons(sheet);
     document.getElementById('stClose').onclick = ()=> stCerrar(false);
     document.getElementById('stLoginBtn').onclick = async ()=>{
       const err = document.getElementById('stLoginErr');
@@ -2365,10 +2412,12 @@ function drawTraspasos(){
     return;
   }
   sheet.innerHTML = `
+    ${navIconsHtml()}
     <div class="topbtns"><button class="backbtn" id="stClose">✕ Cerrar</button></div>
     <h2>🔁 Traspaso entre locales</h2>
     <div class="scat">Sesión: ${esc(mostrarUsuario(sbSession.email))} · <a href="#" id="stLogout" style="color:var(--accent)">salir</a></div>
     <div id="tsBody"><div class="note">Verificando permisos…</div></div>`;
+  wireNavIcons(sheet);
   document.getElementById('stClose').onclick = ()=> stCerrar(false);
   document.getElementById('stLogout').onclick = (e)=>{ e.preventDefault();
     sbSession=null; setLS('sb_session', null); miRolCache=null; miLocalAsignadoCache=undefined; drawTraspasos(); };
@@ -3397,6 +3446,7 @@ function drawDetail(){
 
   document.getElementById('sheet').classList.remove('sheet-wide');
   document.getElementById('sheet').innerHTML = `
+    ${navIconsHtml()}
     <div class="topbtns">
       <button class="star ${fav?'on':''}" onclick="toggleFav('${esc(p.codigo)}')" title="Favorito">${fav?'★':'☆'}</button>
       <button class="backbtn" onclick="closeDetail()">← Atrás</button>
@@ -3435,6 +3485,7 @@ function drawDetail(){
         onclick="borrarProducto('${esc(p.codigo)}')">🗑 Borrar</button>
     </div>` : ''}`;
 
+  wireNavIcons(document.getElementById('sheet'));
   [...document.querySelectorAll('.talle')].forEach(b=>
     b.onclick=()=>{ curTalle=+b.dataset.t; drawDetail(); });
   const tasaEl=document.getElementById('tasa');
