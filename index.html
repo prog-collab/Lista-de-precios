@@ -2368,34 +2368,33 @@ function drawTraspasos(){
     <div class="topbtns"><button class="backbtn" id="stClose">✕ Cerrar</button></div>
     <h2>🔁 Traspaso entre locales</h2>
     <div class="scat">Sesión: ${esc(mostrarUsuario(sbSession.email))} · <a href="#" id="stLogout" style="color:var(--accent)">salir</a></div>
-    <div id="tsCheckingRol" class="note">Verificando permisos…</div>
-    <div id="tsBody" style="display:none"></div>`;
+    <div id="tsBody"><div class="note">Verificando permisos…</div></div>`;
   document.getElementById('stClose').onclick = ()=> stCerrar(false);
   document.getElementById('stLogout').onclick = (e)=>{ e.preventDefault();
     sbSession=null; setLS('sb_session', null); miRolCache=null; miLocalAsignadoCache=undefined; drawTraspasos(); };
-  cargarMiRol().then(rol=>{
-    document.getElementById('tsCheckingRol').style.display = 'none';
-    const body = document.getElementById('tsBody');
-    body.style.display = '';
-    if(rol!=='gerente'){
-      body.innerHTML = `<div class="error-a" style="padding:12px; border-radius:10px; background:var(--card2)">Esta sección es solo para gerentes.</div>`;
-      return;
-    }
-    armarTraspasos(body);
+  Promise.all([cargarMiRol(), cargarMiLocalAsignado()]).then(([rol, localAsignado])=>{
+    armarTraspasos(document.getElementById('tsBody'), rol, localAsignado);
   });
 }
 
-function armarTraspasos(body){
+// Cualquier admin puede enviar stock (desde su propio local, si está
+// restringido) y confirmar/cancelar recepciones de su local. El gerente,
+// sin restricción, ve y puede operar los dos locales, y además tiene a mano
+// el traspaso directo (sin paso de confirmación) para cuando mueve la
+// mercadería él mismo entre los dos negocios.
+function armarTraspasos(body, rol, localAsignado){
   body.innerHTML = `
+    ${localAsignado ? `<div class="note">Tu usuario envía desde <b>${esc(stLocalNombre(localAsignado))}</b> y confirma lo que llega ahí.</div>` : ''}
     <div class="st-grid st-grid-3">
       <div class="st-col-left">
-        <div class="label">Buscar artículo</div>
+        <div class="label">📤 Buscar artículo para enviar</div>
         <input id="tsBuscarInput" class="search" placeholder="Código o nombre…" autocomplete="off">
         <div id="tsResultados"></div>
+        <div id="tsDetalle" style="margin-top:8px">
+          <div class="note">Buscá un artículo para ver su stock en cada local.</div>
+        </div>
       </div>
-      <div class="st-col-right" id="tsDetalle">
-        <div class="note">Buscá un artículo para ver su stock en cada local.</div>
-      </div>
+      <div class="st-col-right" id="tsPendientes"></div>
       <div class="st-col-dia" id="tsHistorial"></div>
     </div>`;
   const buscarInput = document.getElementById('tsBuscarInput');
@@ -2413,12 +2412,13 @@ function armarTraspasos(body){
         <div class="l">${esc(p.codigo)} · ${esc(p.categoria||'')}</div>
         <div class="v" style="font-size:15px">${esc(p.nombre)}</div>
       </div>`).join('') : '<div class="note">Sin resultados.</div>';
-    [...resultadosEl.querySelectorAll('[data-i]')].forEach(el=> el.onclick=()=> armarDetalleTraspaso(encontrados[Number(el.dataset.i)]));
+    [...resultadosEl.querySelectorAll('[data-i]')].forEach(el=> el.onclick=()=> armarDetalleTraspaso(encontrados[Number(el.dataset.i)], localAsignado, rol));
   });
+  renderPendientesTraspaso(localAsignado);
   renderHistorialTraspasos();
 }
 
-function armarDetalleTraspaso(p){
+function armarDetalleTraspaso(p, localAsignado, rol){
   const box = document.getElementById('tsDetalle');
   let talleIdx = 0;
   function talleColorOpciones(){
@@ -2442,32 +2442,38 @@ function armarDetalleTraspaso(p){
         </div>`).join('')}
       <div id="tsFormBox" style="margin-top:8px"></div>`;
     [...box.querySelectorAll('[data-ti]')].forEach(el=> el.onclick=()=>{ talleIdx = Number(el.dataset.ti); render(); });
-    [...box.querySelectorAll('[data-ci]')].forEach(el=> el.onclick=()=> armarFormTraspaso(box.querySelector('#tsFormBox'), p, t.talle, colores[Number(el.dataset.ci)]));
+    [...box.querySelectorAll('[data-ci]')].forEach(el=> el.onclick=()=> armarFormTraspaso(box.querySelector('#tsFormBox'), p, t.talle, colores[Number(el.dataset.ci)], localAsignado, rol));
   }
   render();
 }
 
-function armarFormTraspaso(formBox, p, talle, colorObj){
+function armarFormTraspaso(formBox, p, talle, colorObj, localAsignado, rol){
   const color = colorObj.color || 'Único';
   const cam = Number(colorObj.camerino)||0, giu = Number(colorObj.giustozzi)||0;
+  let dir = localAsignado==='giustozzi' ? 'gc' : 'cg';   // por defecto, el propio local como origen
+  const direccionHtml = localAsignado
+    ? `<div class="note">Enviando: <b>${esc(stLocalNombre(localAsignado))} → ${esc(stLocalNombre(localAsignado==='camerino'?'giustozzi':'camerino'))}</b></div>`
+    : `<div class="talles">
+        <button class="talle ${dir==='cg'?'sel':''}" data-dir="cg">Camerino → Giustozzi</button>
+        <button class="talle ${dir==='gc'?'sel':''}" data-dir="gc">Giustozzi → Camerino</button>
+      </div>`;
   formBox.innerHTML = `
-    <div class="label">Traspasar "${esc(color)}"</div>
-    <div class="talles">
-      <button class="talle sel" data-dir="cg">Camerino → Giustozzi</button>
-      <button class="talle" data-dir="gc">Giustozzi → Camerino</button>
-    </div>
-    <div class="note" id="tsDisponible" style="margin-top:4px">Disponible en Camerino: ${cam}</div>
+    <div class="label">Enviar "${esc(color)}"</div>
+    ${direccionHtml}
+    <div class="note" id="tsDisponible" style="margin-top:4px">Disponible en ${esc(stLocalNombre(dir==='cg'?'camerino':'giustozzi'))}: ${dir==='cg'?cam:giu}</div>
     <input id="tsCantidad" class="search" type="number" min="1" placeholder="Cantidad" style="margin-top:6px">
-    <button class="addcart" id="tsOk" style="margin-top:8px">🔁 Confirmar traspaso</button>
-    <div class="note" id="tsErr"></div>`;
-  let dir = 'cg';
+    <button class="addcart" id="tsOk" style="margin-top:8px">📤 Enviar</button>
+    <div class="note" id="tsErr"></div>
+    ${rol==='gerente' ? `<button class="fbtn" id="tsDirecto" style="width:100%; margin-top:10px">⚡ Traspaso directo, sin esperar confirmación</button>` : ''}`;
   const disponibleEl = formBox.querySelector('#tsDisponible');
-  [...formBox.querySelectorAll('[data-dir]')].forEach(b=> b.onclick=()=>{
-    dir = b.dataset.dir;
-    [...formBox.querySelectorAll('[data-dir]')].forEach(x=>x.classList.remove('sel'));
-    b.classList.add('sel');
-    disponibleEl.textContent = dir==='cg' ? `Disponible en Camerino: ${cam}` : `Disponible en Giustozzi: ${giu}`;
-  });
+  if(!localAsignado){
+    [...formBox.querySelectorAll('[data-dir]')].forEach(b=> b.onclick=()=>{
+      dir = b.dataset.dir;
+      [...formBox.querySelectorAll('[data-dir]')].forEach(x=>x.classList.remove('sel'));
+      b.classList.add('sel');
+      disponibleEl.textContent = `Disponible en ${stLocalNombre(dir==='cg'?'camerino':'giustozzi')}: ${dir==='cg'?cam:giu}`;
+    });
+  }
   formBox.querySelector('#tsOk').onclick = async ()=>{
     const err = formBox.querySelector('#tsErr');
     const ok = formBox.querySelector('#tsOk');
@@ -2475,7 +2481,31 @@ function armarFormTraspaso(formBox, p, talle, colorObj){
     if(!(cantidad>0)){ err.textContent='Ingresá una cantidad mayor a 0.'; return; }
     const origen = dir==='cg' ? 'camerino' : 'giustozzi';
     const destino = dir==='cg' ? 'giustozzi' : 'camerino';
-    err.textContent=''; ok.disabled=true; ok.textContent='Traspasando…';
+    err.textContent=''; ok.disabled=true; ok.textContent='Enviando…';
+    try{
+      const r = await sbAuthed('/rest/v1/rpc/iniciar_traspaso_stock', { method:'POST', body: JSON.stringify({
+        p_codigo: p.codigo, p_talle: talle, p_color: color,
+        p_local_origen: origen, p_local_destino: destino, p_cantidad: cantidad,
+      }) });
+      if(!r.ok){ const d = await r.json().catch(()=>({})); throw new Error(d.message || 'No se pudo enviar.'); }
+      await cargarCatalogo();
+      const pActualizado = BYCOD[p.codigo];
+      if(pActualizado) armarDetalleTraspaso(pActualizado, localAsignado, rol);
+      renderPendientesTraspaso(localAsignado);
+      renderHistorialTraspasos();
+    }catch(e){
+      ok.disabled=false; ok.textContent='📤 Enviar';
+      err.textContent = e.message||e;
+    }
+  };
+  const directoBtn = formBox.querySelector('#tsDirecto');
+  if(directoBtn) directoBtn.onclick = async ()=>{
+    const err = formBox.querySelector('#tsErr');
+    const cantidad = Number(formBox.querySelector('#tsCantidad').value)||0;
+    if(!(cantidad>0)){ err.textContent='Ingresá una cantidad mayor a 0.'; return; }
+    const origen = dir==='cg' ? 'camerino' : 'giustozzi';
+    const destino = dir==='cg' ? 'giustozzi' : 'camerino';
+    err.textContent=''; directoBtn.disabled=true; directoBtn.textContent='Traspasando…';
     try{
       const r = await sbAuthed('/rest/v1/rpc/gerente_traspasar_stock', { method:'POST', body: JSON.stringify({
         p_codigo: p.codigo, p_talle: talle, p_color: color,
@@ -2484,34 +2514,79 @@ function armarFormTraspaso(formBox, p, talle, colorObj){
       if(!r.ok){ const d = await r.json().catch(()=>({})); throw new Error(d.message || 'No se pudo traspasar.'); }
       await cargarCatalogo();
       const pActualizado = BYCOD[p.codigo];
-      if(pActualizado) armarDetalleTraspaso(pActualizado);
+      if(pActualizado) armarDetalleTraspaso(pActualizado, localAsignado, rol);
       renderHistorialTraspasos();
     }catch(e){
-      ok.disabled=false; ok.textContent='🔁 Confirmar traspaso';
+      directoBtn.disabled=false; directoBtn.textContent='⚡ Traspaso directo, sin esperar confirmación';
       err.textContent = e.message||e;
     }
   };
 }
 
+async function renderPendientesTraspaso(localAsignado){
+  const box = document.getElementById('tsPendientes');
+  if(!box) return;
+  box.innerHTML = `<div class="label">📥 Traspasos en tránsito</div><div class="note">Cargando…</div>`;
+  try{
+    const r = await sbAuthed(`/rest/v1/traspasos_stock?estado=eq.enviado&order=enviado_at.desc&select=*&limit=30`);
+    const rows = r.ok ? await r.json() : [];
+    box.innerHTML = `
+      <div class="label">📥 Traspasos en tránsito (${rows.length})</div>
+      ${rows.length ? rows.map(t=>{
+        const puedeConfirmar = !localAsignado || localAsignado===t.local_destino;
+        const puedeCancelar = !localAsignado || localAsignado===t.local_origen;
+        const hora = t.enviado_at ? new Date(t.enviado_at).toLocaleString('es-AR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '';
+        return `
+        <div class="lista" style="margin-top:6px; text-align:left">
+          <div class="l">${esc(t.codigo)} · ${esc(t.talle)}${t.color?' · '+esc(t.color):''} — ${t.cantidad} u.</div>
+          <div class="note" style="margin-top:2px">${esc(stLocalNombre(t.local_origen))} → ${esc(stLocalNombre(t.local_destino))} · ${hora}</div>
+          ${t.enviado_por ? `<div class="note" style="margin-top:1px">Envió: ${esc(mostrarUsuario(t.enviado_por))}</div>` : ''}
+          <div style="display:flex; gap:6px; margin-top:6px">
+            ${puedeConfirmar ? `<button class="fbtn" data-accion="confirmar" data-id="${t.id}" style="flex:1">✅ Confirmar</button>` : ''}
+            ${puedeCancelar ? `<button class="fbtn" data-accion="cancelar" data-id="${t.id}" style="flex:1">✕ Cancelar</button>` : ''}
+          </div>
+        </div>`;
+      }).join('') : '<div class="note">No hay traspasos esperando confirmación.</div>'}`;
+    [...box.querySelectorAll('[data-accion="confirmar"]')].forEach(b=> b.onclick=()=> resolverTraspaso(b, 'confirmar_traspaso_stock', localAsignado));
+    [...box.querySelectorAll('[data-accion="cancelar"]')].forEach(b=> b.onclick=()=> resolverTraspaso(b, 'cancelar_traspaso_stock', localAsignado));
+  }catch(e){ box.innerHTML = `<div class="note">No se pudo cargar.</div>`; }
+}
+
+async function resolverTraspaso(btn, rpcName, localAsignado){
+  const id = btn.dataset.id;
+  btn.disabled = true; const original = btn.textContent; btn.textContent = '…';
+  try{
+    const r = await sbAuthed(`/rest/v1/rpc/${rpcName}`, { method:'POST', body: JSON.stringify({ p_traspaso_id: id }) });
+    if(!r.ok){ const d = await r.json().catch(()=>({})); throw new Error(d.message || 'No se pudo completar.'); }
+    await cargarCatalogo();
+    renderPendientesTraspaso(localAsignado);
+    renderHistorialTraspasos();
+  }catch(e){
+    btn.disabled = false; btn.textContent = original;
+    alert(e.message||e);
+  }
+}
+
 async function renderHistorialTraspasos(){
   const box = document.getElementById('tsHistorial');
   if(!box) return;
-  box.innerHTML = `<div class="label">🕒 Últimos traspasos</div><div class="note">Cargando…</div>`;
+  box.innerHTML = `<div class="label">🕒 Historial</div><div class="note">Cargando…</div>`;
   try{
-    const r = await sbAuthed(`/rest/v1/stock_movimientos?motivo=eq.traspaso_salida&order=created_at.desc&limit=30&select=*`);
+    const r = await sbAuthed(`/rest/v1/traspasos_stock?order=enviado_at.desc&limit=30&select=*`);
     const rows = r.ok ? await r.json() : [];
+    const estadoTxt = {enviado:'En tránsito', recibido:'Recibido', cancelado:'Cancelado'};
     box.innerHTML = `
-      <div class="label">🕒 Últimos traspasos</div>
-      ${rows.length ? rows.map(m=>{
-        const hora = m.created_at ? new Date(m.created_at).toLocaleString('es-AR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '';
+      <div class="label">🕒 Historial</div>
+      ${rows.length ? rows.map(t=>{
+        const hora = t.enviado_at ? new Date(t.enviado_at).toLocaleString('es-AR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '';
         return `
         <div class="lista" style="margin-top:6px; text-align:left">
           <div style="display:flex; justify-content:space-between; gap:8px">
             <span class="l">${hora}</span>
-            <span class="v" style="font-size:14px">${esc(m.local)} → otro local: ${Math.abs(m.delta)}</span>
+            <span class="v" style="font-size:13px">${estadoTxt[t.estado]||t.estado}</span>
           </div>
-          <div class="note" style="margin-top:2px">${esc(m.codigo)} · ${esc(m.talle)}${m.color?' · '+esc(m.color):''}</div>
-          ${m.usuario ? `<div class="note" style="margin-top:1px">${esc(mostrarUsuario(m.usuario))}</div>` : ''}
+          <div class="note" style="margin-top:2px">${esc(t.codigo)} · ${esc(t.talle)}${t.color?' · '+esc(t.color):''} — ${t.cantidad} u.</div>
+          <div class="note" style="margin-top:1px">${esc(stLocalNombre(t.local_origen))} → ${esc(stLocalNombre(t.local_destino))}</div>
         </div>`;
       }).join('') : '<div class="note">Todavía no se hicieron traspasos.</div>'}`;
   }catch(e){ box.innerHTML = `<div class="note">No se pudo cargar el historial.</div>`; }
