@@ -1027,6 +1027,19 @@ function loadTesseract(){
   });
 }
 
+// Carga perezosa de ZXing: lector de códigos de barra en JS puro, para
+// navegadores que no tienen la API nativa BarcodeDetector (Safari/iPhone,
+// y la mayoría de los navegadores de escritorio) — sin esto, en esos
+// navegadores la cámara del POS no leía sola, solo quedaba la carga manual.
+function loadZXing(){
+  if(window.ZXing) return Promise.resolve();
+  return new Promise((res,rej)=>{
+    const s=document.createElement('script');
+    s.src='https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js';
+    s.onload=res; s.onerror=rej; document.head.appendChild(s);
+  });
+}
+
 // Worker de Tesseract reutilizable, configurado para leer solo dígitos en una
 // sola línea (mucho más preciso que el modo "texto en inglés" por defecto,
 // que es la razón principal por la que "Leer número" casi nunca funcionaba).
@@ -1106,7 +1119,9 @@ document.getElementById('scanBtn').onclick = async ()=>{
   video.play();
 
   let stopped = false;
-  function stop(){ stopped=true; try{ stream.getTracks().forEach(t=>t.stop()); }catch(e){} }
+  let scanZXingReader = null;
+  function stop(){ stopped=true; try{ stream.getTracks().forEach(t=>t.stop()); }catch(e){}
+    try{ if(scanZXingReader) scanZXingReader.reset(); }catch(e){} scanZXingReader=null; }
   function finish(val){
     if(stopped) return;
     stop();                                   // apaga la cámara
@@ -1178,6 +1193,24 @@ document.getElementById('scanBtn').onclick = async ()=>{
         await new Promise(r=>setTimeout(r, 120));
       }
     })();
+  }else{
+    // Sin BarcodeDetector nativo (Safari/iPhone, y varios de escritorio):
+    // ZXing como respaldo, igual que en la cámara de Cargar/Vender.
+    loadZXing().then(()=>{
+      if(stopped) return;
+      const hints = new Map();
+      hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
+        ZXing.BarcodeFormat.EAN_13, ZXing.BarcodeFormat.EAN_8,
+        ZXing.BarcodeFormat.UPC_A, ZXing.BarcodeFormat.UPC_E,
+        ZXing.BarcodeFormat.CODE_128,
+      ]);
+      const reader = new ZXing.BrowserMultiFormatReader(hints);
+      scanZXingReader = reader;
+      reader.decodeFromVideoElementContinuously(video, (result)=>{
+        if(stopped || !result) return;
+        finish(result.getText());
+      });
+    }).catch(()=>{});
   }
 };
 
@@ -1188,7 +1221,7 @@ document.getElementById('scanBtn').onclick = async ()=>{
    Escribir stock exige iniciar sesión con una cuenta del panel (RLS is_admin);
    el PIN del modo editor NO alcanza. */
 let sbSession = getLS('sb_session', null);
-let stOpen=false, stStream=null, stStopped=true, stBusy=false, stCount=0, stLast=null, stVentaTotal=0, stVentaItems=[];
+let stOpen=false, stStream=null, stStopped=true, stBusy=false, stCount=0, stLast=null, stVentaTotal=0, stVentaItems=[], stZXingReader=null;
 let stSeccion='carga';   // 'carga' (cargar stock, descuenta al toque) o 'venta' (carrito, descuenta al Guardar venta)
 let stCoolCode='', stCoolUntil=0;
 let MAPS = {color:{}, talle:{}};   // código de barras → nombre (compartido, tabla barcode_maps)
@@ -1856,6 +1889,8 @@ function stCerrar(viaHistory){
   stOpen=false; stStopped=true; stBusy=false;
   try{ if(stStream) stStream.getTracks().forEach(t=>t.stop()); }catch(e){}
   stStream=null;
+  try{ if(stZXingReader) stZXingReader.reset(); }catch(e){}
+  stZXingReader=null;
   document.getElementById('ov').classList.remove('open','ov-full');
   if(!viaHistory && history.state && history.state.detalle) history.back();
 }
@@ -2613,11 +2648,42 @@ async function mostrarDetalleCliente(clienteParcial){
 
       ${saldo>0 ? `
       <div class="label" style="margin-top:10px">Registrar pago (en ${esc(stLocalNombre(stLocal()))})</div>
-      <div style="display:flex; gap:4px">
-        <input id="ccPagoMonto" class="search" type="number" inputmode="decimal" placeholder="Monto" style="flex:1">
-        <button class="fbtn" type="button" id="ccPagoTotal" style="flex:none; padding:0 10px" title="Usar el saldo total">＝</button>
+      <div class="grid">
+        <div><div class="note" style="margin:0 0 4px">Efectivo</div>
+          <div style="display:flex; gap:4px">
+            <input id="ccPgContado" class="search" type="number" inputmode="decimal" value="0" style="flex:1">
+            <button class="fbtn" type="button" data-cc-usar-total="ccPgContado" style="flex:none; padding:0 10px" title="Usar el saldo total">＝</button>
+          </div></div>
+        <div><div class="note" style="margin:0 0 4px">Transferencia</div>
+          <div style="display:flex; gap:4px">
+            <input id="ccPgTransf" class="search" type="number" inputmode="decimal" value="0" style="flex:1">
+            <button class="fbtn" type="button" data-cc-usar-total="ccPgTransf" style="flex:none; padding:0 10px" title="Usar el saldo total">＝</button>
+          </div>
+          <select id="ccPgTransfAlias" class="search" style="margin-top:4px">
+            <option value="">¿A qué alias?</option>
+            <option value="juan01">juan01</option>
+            <option value="giustozzi.mp">giustozzi.mp</option>
+            <option value="flor.barberis.86">flor.barberis.86</option>
+          </select></div>
+        <div><div class="note" style="margin:0 0 4px">Tarjeta de débito</div>
+          <div style="display:flex; gap:4px">
+            <input id="ccPgTDeb" class="search" type="number" inputmode="decimal" value="0" style="flex:1">
+            <button class="fbtn" type="button" data-cc-usar-total="ccPgTDeb" style="flex:none; padding:0 10px" title="Usar el saldo total">＝</button>
+          </div></div>
+        <div><div class="note" style="margin:0 0 4px">Tarjeta de crédito</div>
+          <div style="display:flex; gap:4px">
+            <input id="ccPgTCred" class="search" type="number" inputmode="decimal" value="0" style="flex:1">
+            <button class="fbtn" type="button" data-cc-usar-total="ccPgTCred" style="flex:none; padding:0 10px" title="Usar el saldo total">＝</button>
+          </div>
+          <select id="ccPgTCredCuotas" class="search" style="margin-top:4px">
+            <option value="1">1 cuota</option>
+            <option value="3">3 cuotas sin interés</option>
+            ${CUOTAS_INT.map(n=>`<option value="${n}">${n} cuotas (+${(tasaMensual*n).toFixed(1)}%)</option>`).join('')}
+          </select>
+          <div class="note" id="ccPgRecargoInfo" style="margin-top:2px"></div></div>
       </div>
-      <input id="ccPagoNota" class="search" placeholder="Nota (opcional)" style="margin-top:4px">
+      <div class="note" id="ccPgTotalInfo" style="margin-top:4px"></div>
+      <input id="ccPagoNota" class="search" placeholder="Nota (opcional)" style="margin-top:6px">
       <button class="addcart" id="ccPagoOk" style="margin-top:8px">💰 Registrar pago</button>
       <div class="note" id="ccPagoErr"></div>` : ''}
 
@@ -2632,6 +2698,12 @@ async function mostrarDetalleCliente(clienteParcial){
             <span class="l">${m.created_at ? new Date(m.created_at).toLocaleDateString('es-AR') : ''} · ${m.tipo==='cargo'?'Cargo':'Pago'} · ${esc(stLocalNombre(m.local))}</span>
             <span class="v" style="font-size:15px; color:${m.tipo==='cargo'?'var(--warn)':'inherit'}">${m.tipo==='cargo'?'+':'−'}${money(m.monto)}</span>
           </div>
+          ${m.tipo==='pago' && (m.pago_contado||m.pago_transferencia||m.pago_tarjeta_debito||m.pago_tarjeta_credito) ? `<div class="note" style="margin-top:2px">${[
+              m.pago_contado>0 && `Efectivo ${money(m.pago_contado)}`,
+              m.pago_transferencia>0 && `Transf.${m.transferencia_alias?` (${esc(m.transferencia_alias)})`:''} ${money(m.pago_transferencia)}`,
+              m.pago_tarjeta_debito>0 && `Débito ${money(m.pago_tarjeta_debito)}`,
+              m.pago_tarjeta_credito>0 && `Crédito ${money(m.pago_tarjeta_credito)}${m.tarjeta_credito_cuotas>1?` (${m.tarjeta_credito_cuotas} cuotas)`:''}`,
+            ].filter(Boolean).join(' · ')}</div>` : ''}
           ${m.nota ? `<div class="note" style="margin-top:2px">${esc(m.nota)}</div>` : ''}
         </div>`).join('') : '<div class="note">Todavía no hay movimientos.</div>'}`;
 
@@ -2642,20 +2714,59 @@ async function mostrarDetalleCliente(clienteParcial){
       const tel = cliente.telefono || prompt('Este cliente no tiene teléfono cargado. Ingresalo para enviar el recordatorio:');
       if(tel) window.open(`https://wa.me/${telParaWA(tel)}?text=${encodeURIComponent(msg)}`, '_blank');
     };
-    const totalBtn = document.getElementById('ccPagoTotal');
-    if(totalBtn) totalBtn.onclick = ()=>{ document.getElementById('ccPagoMonto').value = saldo; };
+    const CC_CAMPOS_PAGO = ['ccPgContado','ccPgTransf','ccPgTDeb','ccPgTCred'];
+    const ccCuotasSel = ()=>{ const el=document.getElementById('ccPgTCredCuotas'); return el ? Number(el.value)||1 : 1; };
+    const ccMontoBaseTCred = ()=>{ const el=document.getElementById('ccPgTCred'); return el ? Number(el.value)||0 : 0; };
+    const ccMontoFinalTCred = ()=> ccMontoBaseTCred() * factorCuotas(ccCuotasSel());
+    const ccRecalcInfo = ()=>{
+      const recargoEl = document.getElementById('ccPgRecargoInfo');
+      if(recargoEl){
+        const n = ccCuotasSel(), base = ccMontoBaseTCred(), final = ccMontoFinalTCred();
+        recargoEl.textContent = base>0 && n>1
+          ? (final>base ? `Con ${n} cuotas: ${money(final)} (recargo +${money(final-base)})` : `${n} cuotas sin interés: ${money(final)}`)
+          : '';
+      }
+      const totalInfoEl = document.getElementById('ccPgTotalInfo');
+      if(totalInfoEl){
+        const contado = Number(document.getElementById('ccPgContado').value)||0;
+        const transf = Number(document.getElementById('ccPgTransf').value)||0;
+        const tdeb = Number(document.getElementById('ccPgTDeb').value)||0;
+        const totalPago = contado + transf + tdeb + ccMontoFinalTCred();
+        totalInfoEl.textContent = totalPago>0 ? `Total a registrar: ${money(totalPago)}${totalPago>saldo?' — más que el saldo pendiente':''}` : '';
+      }
+    };
+    CC_CAMPOS_PAGO.forEach(id=>{ const el=document.getElementById(id); if(el) el.addEventListener('input', ccRecalcInfo); });
+    const ccCuotasEl = document.getElementById('ccPgTCredCuotas');
+    if(ccCuotasEl) ccCuotasEl.addEventListener('change', ccRecalcInfo);
+    [...document.querySelectorAll('[data-cc-usar-total]')].forEach(b=> b.onclick=()=>{
+      const campo = b.dataset.ccUsarTotal;
+      CC_CAMPOS_PAGO.forEach(id=>{ const el=document.getElementById(id); if(el) el.value = id===campo ? saldo : 0; });
+      ccRecalcInfo();
+    });
     const pagoOk = document.getElementById('ccPagoOk');
     if(pagoOk) pagoOk.onclick = async ()=>{
       const err = document.getElementById('ccPagoErr');
-      const monto = Number(document.getElementById('ccPagoMonto').value)||0;
+      const localSel = stLocal();
+      const pagoContado = Number(document.getElementById('ccPgContado').value)||0;
+      const pagoTransf = Number(document.getElementById('ccPgTransf').value)||0;
+      const transfAlias = document.getElementById('ccPgTransfAlias').value||null;
+      const pagoTDeb = Number(document.getElementById('ccPgTDeb').value)||0;
+      const cuotasTCred = ccCuotasSel();
+      const recargoPct = CUOTAS_INT.includes(cuotasTCred) ? Number((tasaMensual*cuotasTCred).toFixed(2)) : 0;
+      const pagoTCred = ccMontoFinalTCred();
       const nota = document.getElementById('ccPagoNota').value||null;
-      if(!(monto>0)){ err.textContent='Ingresá un monto mayor a 0.'; return; }
-      pagoOk.disabled = true; pagoOk.textContent = 'Guardando…';
+      if(!(pagoContado+pagoTransf+pagoTDeb+pagoTCred>0)){ err.textContent='Ingresá un monto mayor a 0 en algún medio de pago.'; return; }
+      if(pagoTransf>0 && !transfAlias){ err.textContent='Elegí a qué alias se transfirió.'; return; }
+      err.textContent=''; pagoOk.disabled = true; pagoOk.textContent = 'Guardando…';
       try{
-        const r = await sbAuthed('/rest/v1/cuenta_corriente_movimientos', { method:'POST', body: JSON.stringify({
-          cliente_id: cliente.id, tipo:'pago', monto, local: stLocal(), usuario: sbSession.email||null, nota,
+        const r = await sbAuthed('/rest/v1/rpc/registrar_pago_cuenta_corriente', { method:'POST', body: JSON.stringify({
+          p_cliente_id: cliente.id, p_local: localSel,
+          p_pago_contado: pagoContado, p_pago_transferencia: pagoTransf, p_transferencia_alias: transfAlias,
+          p_pago_tarjeta_debito: pagoTDeb, p_pago_tarjeta_credito: pagoTCred,
+          p_tarjeta_credito_cuotas: cuotasTCred>1?cuotasTCred:null, p_tarjeta_credito_recargo_pct: recargoPct||null,
+          p_nota: nota,
         }) });
-        if(!r.ok) throw new Error('No se pudo registrar el pago.');
+        if(!r.ok){ const d = await r.json().catch(()=>({})); throw new Error(d.message || 'No se pudo registrar el pago.'); }
         mostrarDetalleCliente(cliente);
         renderClientesConSaldo();
       }catch(e){ pagoOk.disabled=false; pagoOk.textContent='💰 Registrar pago'; err.textContent = e.message||e; }
@@ -3496,9 +3607,35 @@ async function stCamara(){
       }
     })();
   }else{
+    // Este navegador no tiene BarcodeDetector nativo (típico en iPhone/Safari
+    // y en varios de escritorio) — usamos ZXing (JS puro) como respaldo,
+    // leyendo cuadro a cuadro del mismo <video> ya abierto.
     const n=document.createElement('div'); n.className='note';
-    n.textContent='Este navegador no lee códigos de barras solo: escribí el código a mano abajo.';
+    n.textContent='Cargando lector de códigos…';
     box.appendChild(n);
+    loadZXing().then(()=>{
+      if(stStopped) return;
+      const hints = new Map();
+      hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
+        ZXing.BarcodeFormat.EAN_13, ZXing.BarcodeFormat.EAN_8,
+        ZXing.BarcodeFormat.UPC_A, ZXing.BarcodeFormat.UPC_E,
+        ZXing.BarcodeFormat.CODE_128, ZXing.BarcodeFormat.ITF,
+      ]);
+      const reader = new ZXing.BrowserMultiFormatReader(hints);
+      stZXingReader = reader;
+      n.textContent = 'Apuntá la cámara al código de barras.';
+      reader.decodeFromVideoElementContinuously(video, (result)=>{
+        if(stStopped || stBusy || !result) return;
+        const digits = (result.getText()||'').replace(/\D/g,'');
+        const now = Date.now();
+        if(digits && !(digits===stCoolCode && now<stCoolUntil)){
+          stCoolCode=digits; stCoolUntil=now+2500;
+          stProcesar(digits);
+        }
+      });
+    }).catch(()=>{
+      n.textContent='No se pudo cargar el lector automático (¿sin internet?): escribí el código a mano abajo.';
+    });
   }
 }
 
