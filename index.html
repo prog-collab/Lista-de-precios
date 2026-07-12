@@ -1706,7 +1706,14 @@ function wireVentaCard(){
     if(pagoCPer>0 && !clienteCreditoId){ err.textContent='Elegí a qué cliente le corresponde el crédito personal.'; return; }
     if(facturar && tipo==='A' && cuit.length!==11){ err.textContent='Para Factura A escribí el CUIT del cliente (11 dígitos).'; return; }
     if(facturar && !fecha){ err.textContent='Elegí la fecha del comprobante.'; return; }
-    err.textContent=''; ok.disabled=true; ok.textContent = 'Guardando…';
+    err.textContent=''; ok.disabled=true; ok.textContent = 'Verificando caja…';
+    const sesionAbierta = await obtenerCajaAbierta(localSel);
+    if(!sesionAbierta){
+      ok.disabled=false; ok.textContent = facturar?'Guardar y facturar':'Guardar venta';
+      err.textContent = `⚠ No hay caja abierta en ${stLocalNombre(localSel)} — abrila arriba antes de vender.`;
+      return;
+    }
+    ok.textContent = 'Guardando…';
     let ventaId = null;
     let stockAplicado = false;
     try{
@@ -1722,6 +1729,7 @@ function wireVentaCard(){
           pago_credito_personal: pagoCPer, pago_credito_financiero: pagoCFin, saldo_pendiente: saldoPendiente,
           tarjeta_credito_cuotas: cuotasTCred, tarjeta_credito_recargo_pct: recargoPct,
           cliente_id: clienteCreditoId,
+          caja_sesion_id: sesionAbierta.id,
           facturada: false,
         }) });
       const ventaRows = await rVenta.json().catch(()=>null);
@@ -2029,6 +2037,8 @@ function drawVender(){
     <div class="topbtns"><button class="backbtn" id="stClose">✕ Cerrar</button></div>
     <h2>🛍️ Vender (POS)</h2>
     <div class="scat">Sesión: ${esc(mostrarUsuario(sbSession.email))} · <a href="#" id="stLogout" style="color:var(--accent)">salir</a></div>
+    <div id="stCajaStatus" class="note" style="margin-top:6px">Verificando estado de caja…</div>
+    <div id="stCajaFormBox"></div>
     <div class="st-grid st-grid-3">
       <div class="st-col-left">
         <div class="label">Local donde se vende</div>
@@ -2152,10 +2162,10 @@ function drawVender(){
   const bC=document.getElementById('stLocCam'), bG=document.getElementById('stLocGiu');
   const refLoc=()=>{ const l=stLocal();
     bC.classList.toggle('sel', l==='camerino'); bG.classList.toggle('sel', l==='giustozzi'); };
-  bC.onclick=()=>{ if(bC.disabled) return; setLS('stock_local','camerino'); refLoc(); renderResumenDia(); };
-  bG.onclick=()=>{ if(bG.disabled) return; setLS('stock_local','giustozzi'); refLoc(); renderResumenDia(); };
+  bC.onclick=()=>{ if(bC.disabled) return; setLS('stock_local','camerino'); refLoc(); renderResumenDia(); renderCajaStatus(); };
+  bG.onclick=()=>{ if(bG.disabled) return; setLS('stock_local','giustozzi'); refLoc(); renderResumenDia(); renderCajaStatus(); };
   refLoc();
-  aplicarRestriccionLocal(bC, bG).then(()=>{ refLoc(); renderResumenDia(); });
+  aplicarRestriccionLocal(bC, bG).then(()=>{ refLoc(); renderResumenDia(); renderCajaStatus(); });
   const man=document.getElementById('stManual');
   const resultadosBox = document.getElementById('stManualResultados');
   const go=()=>{ if(man.value.trim()){ stProcesar(man.value); man.value=''; resultadosBox.innerHTML=''; } };
@@ -2184,7 +2194,130 @@ function drawVender(){
   renderCarrito();
   wireVentaCard();
   renderResumenDia();
+  renderCajaStatus();
   stCamara();
+}
+
+// ===== Sesión de caja real: hay que abrirla (con un fondo inicial) antes de
+// poder guardar una venta en ese local, y se cierra con arqueo/gastos/
+// retiros/adelantos, calculando la diferencia contra lo esperado.
+async function obtenerCajaAbierta(local){
+  try{
+    const r = await sbAuthed(`/rest/v1/caja_sesiones?local=eq.${local}&estado=eq.abierta&select=*&limit=1`);
+    const rows = r.ok ? await r.json() : [];
+    return rows[0] || null;
+  }catch(e){ return null; }
+}
+
+async function renderCajaStatus(){
+  const box = document.getElementById('stCajaStatus');
+  const formBox = document.getElementById('stCajaFormBox');
+  if(!box) return;
+  box.textContent = 'Verificando estado de caja…';
+  formBox.innerHTML = '';
+  const localSel = stLocal();
+  const sesion = await obtenerCajaAbierta(localSel);
+  if(!sesion){
+    box.innerHTML = `🔒 No hay caja abierta en <b>${esc(stLocalNombre(localSel))}</b> — hay que abrirla para poder vender.
+      <button class="fbtn" id="stCajaAbrirBtn" style="margin-left:6px">Abrir caja</button>`;
+    document.getElementById('stCajaAbrirBtn').onclick = ()=> armarAbrirCaja(formBox, localSel);
+  } else {
+    const hora = sesion.abierta_at ? new Date(sesion.abierta_at).toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'}) : '';
+    box.innerHTML = `🔓 Caja abierta en <b>${esc(stLocalNombre(localSel))}</b> desde las ${hora} · fondo inicial ${money(sesion.fondo_inicial)}
+      <button class="fbtn" id="stCajaCerrarBtn" style="margin-left:6px">Cerrar caja</button>`;
+    document.getElementById('stCajaCerrarBtn').onclick = ()=> armarCerrarCaja(formBox, sesion, localSel);
+  }
+}
+
+function armarAbrirCaja(formBox, localSel){
+  formBox.innerHTML = `
+    <div class="lista" style="margin-top:8px; text-align:left">
+      <div class="label" style="margin:0">Abrir caja en ${esc(stLocalNombre(localSel))}</div>
+      <div class="note" style="margin-top:4px">Fondo inicial (efectivo con el que arranca)</div>
+      <input id="stCajaFondo" class="search" type="number" inputmode="decimal" value="0" style="margin-top:4px">
+      <button class="addcart" id="stCajaAbrirOk" style="margin-top:8px">🔓 Abrir caja</button>
+      <div class="note" id="stCajaErr"></div>
+    </div>`;
+  document.getElementById('stCajaAbrirOk').onclick = async ()=>{
+    const err = document.getElementById('stCajaErr');
+    const ok = document.getElementById('stCajaAbrirOk');
+    const fondo = Number(document.getElementById('stCajaFondo').value)||0;
+    err.textContent=''; ok.disabled=true; ok.textContent='Abriendo…';
+    try{
+      const r = await sbAuthed('/rest/v1/rpc/abrir_caja_sesion', { method:'POST', body: JSON.stringify({
+        p_local: localSel, p_fondo_inicial: fondo,
+      }) });
+      if(!r.ok){ const d = await r.json().catch(()=>({})); throw new Error(d.message || 'No se pudo abrir la caja.'); }
+      renderCajaStatus();
+    }catch(e){
+      ok.disabled=false; ok.textContent='🔓 Abrir caja';
+      err.textContent = e.message||e;
+    }
+  };
+}
+
+async function armarCerrarCaja(formBox, sesion, localSel){
+  formBox.innerHTML = `<div class="note" style="margin-top:8px">Calculando ventas de esta caja…</div>`;
+  const r = await sbAuthed(`/rest/v1/ventas?caja_sesion_id=eq.${sesion.id}&select=*`);
+  const ventas = r.ok ? await r.json() : [];
+  const totales = ventas.reduce((acc,v)=>({
+    contado: acc.contado + Number(v.pago_contado||0),
+    total: acc.total + Number(v.total||0),
+    cant: acc.cant + 1,
+  }), {contado:0, total:0, cant:0});
+  formBox.innerHTML = `
+    <div class="lista" style="margin-top:8px; text-align:left">
+      <div class="label" style="margin:0">Cerrar caja de ${esc(stLocalNombre(localSel))}</div>
+      <div class="note" style="margin-top:4px">Ventas de esta caja: ${totales.cant} · efectivo vendido ${money(totales.contado)} · total ${money(totales.total)}</div>
+      <div class="grid" style="margin-top:6px">
+        <div><div class="note" style="margin:0 0 4px">Fondo inicial</div><input id="ccFondo" class="search" type="number" value="${sesion.fondo_inicial}" readonly></div>
+        <div><div class="note" style="margin:0 0 4px">Cambio</div><input id="ccCambio" class="search" type="number" value="0"></div>
+        <div><div class="note" style="margin:0 0 4px">Gastos</div><input id="ccGastos" class="search" type="number" value="0"></div>
+        <div><div class="note" style="margin:0 0 4px">Retiros</div><input id="ccRetiros" class="search" type="number" value="0"></div>
+        <div><div class="note" style="margin:0 0 4px">Adelantos</div><input id="ccAdelantos" class="search" type="number" value="0"></div>
+        <div><div class="note" style="margin:0 0 4px">Arqueo (efectivo contado a mano)</div><input id="ccArqueo" class="search" type="number" value="0"></div>
+      </div>
+      <input id="ccObs" class="search" placeholder="Observaciones (opcional)" style="margin-top:6px">
+      <div class="note" id="ccEsperadoInfo" style="margin-top:6px"></div>
+      <button class="addcart" id="stCajaCerrarOk" style="margin-top:8px">🔒 Confirmar cierre</button>
+      <button class="fbtn" id="stCajaCancelar" style="width:100%; margin-top:6px">Cancelar</button>
+      <div class="note" id="stCajaErr"></div>
+    </div>`;
+  const recalc = ()=>{
+    const cambio = Number(document.getElementById('ccCambio').value)||0;
+    const gastos = Number(document.getElementById('ccGastos').value)||0;
+    const retiros = Number(document.getElementById('ccRetiros').value)||0;
+    const adelantos = Number(document.getElementById('ccAdelantos').value)||0;
+    const arqueo = Number(document.getElementById('ccArqueo').value)||0;
+    const esperado = Number(sesion.fondo_inicial) + totales.contado + cambio - gastos - retiros - adelantos;
+    const diferencia = arqueo - esperado;
+    document.getElementById('ccEsperadoInfo').innerHTML = `Efectivo esperado: <b>${money(esperado)}</b> · Diferencia: <b style="${diferencia!==0?'color:var(--warn)':''}">${money(diferencia)}</b>`;
+  };
+  ['ccCambio','ccGastos','ccRetiros','ccAdelantos','ccArqueo'].forEach(id=> document.getElementById(id).addEventListener('input', recalc));
+  recalc();
+  document.getElementById('stCajaCancelar').onclick = ()=>{ formBox.innerHTML=''; };
+  document.getElementById('stCajaCerrarOk').onclick = async ()=>{
+    const err = document.getElementById('stCajaErr');
+    const ok = document.getElementById('stCajaCerrarOk');
+    err.textContent=''; ok.disabled=true; ok.textContent='Cerrando…';
+    try{
+      const rc = await sbAuthed('/rest/v1/rpc/cerrar_caja_sesion', { method:'POST', body: JSON.stringify({
+        p_sesion_id: sesion.id,
+        p_gastos: Number(document.getElementById('ccGastos').value)||0,
+        p_retiros: Number(document.getElementById('ccRetiros').value)||0,
+        p_adelantos: Number(document.getElementById('ccAdelantos').value)||0,
+        p_cambio: Number(document.getElementById('ccCambio').value)||0,
+        p_arqueo: Number(document.getElementById('ccArqueo').value)||0,
+        p_observaciones: document.getElementById('ccObs').value||null,
+      }) });
+      if(!rc.ok){ const d = await rc.json().catch(()=>({})); throw new Error(d.message || 'No se pudo cerrar la caja.'); }
+      formBox.innerHTML = '';
+      renderCajaStatus();
+    }catch(e){
+      ok.disabled=false; ok.textContent='🔒 Confirmar cierre';
+      err.textContent = e.message||e;
+    }
+  };
 }
 
 // Rol del usuario logueado (vendedor|gerente), consultado una sola vez por
