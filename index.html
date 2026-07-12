@@ -567,6 +567,16 @@ catEl.addEventListener('change', render);
 sortEl.addEventListener('change', ()=>{ setLS('sort_order', sortEl.value); render(); });
 sortEl.value = getLS('sort_order', 'cod');
 
+// En cualquier campo de importe (type=number), seleccionar todo el texto al
+// entrar — así el "0" por defecto se reemplaza al primer tacleo en vez de
+// quedar y que lo nuevo se escriba a su derecha (ej. "0" + "5" → "05").
+// Delegado a nivel documento: cubre todos los campos de número actuales y
+// los que se arman dinámicamente en cada pantalla, sin tener que cablearlo
+// campo por campo.
+document.addEventListener('focusin', e=>{
+  if(e.target && e.target.tagName==='INPUT' && e.target.type==='number') e.target.select();
+});
+
 function isFav(cod){ return FAV.includes(cod); }
 function toggleFav(cod){
   if(!cod) return;
