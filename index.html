@@ -1870,6 +1870,33 @@ function wireVentaCard(){
       }
     }
   };
+
+  // Atajo de teclado: con el carrito cargado y el saldo pendiente en $0, Enter
+  // pide confirmar "Guardar venta" y con otro Enter se guarda — para cobrar
+  // sin soltar el teclado. Si además se va a facturar, hay una segunda
+  // confirmación aparte (autorizar la factura real ante AFIP) antes de
+  // ejecutar. Se ignoran los buscadores de cliente y el campo de CUIT, que ya
+  // usan su propio Enter para buscar/consultar.
+  const ENTER_EXCLUIR = ['stCvClienteBuscarInput','stFcBuscarInput','stFcCuit'];
+  card.addEventListener('keydown', e=>{
+    if(e.key!=='Enter') return;
+    if(e.target && ENTER_EXCLUIR.includes(e.target.id)) return;
+    const btn = card.querySelector('#stFcOk');
+    if(!btn || btn.disabled || btn.style.display==='none') return;
+    if(!(stVentaTotal>0)) return;
+    const total = totalConRecargo();
+    const pagado = ['stCvContado','stCvTDeb','stCvCPer','stCvCFin']
+      .reduce((acc,id)=>{ const el=card.querySelector('#'+id); return acc + (el ? Number(el.value)||0 : 0); }, 0)
+      + montoFinalTarjeta() + montoFinalTransferencia();
+    if(Math.max(0, total-pagado) > 0) return; // todavía falta cargar medios de pago
+    e.preventDefault();
+    const upsell = stVentaItems.length===1
+      ? '\n\n🛍️ Es una sola prenda — ¿le ofreciste al cliente algún producto nuevo o alguna promoción para ampliar la compra?'
+      : '';
+    if(!confirm(`¿Guardar venta por ${money(total)}?${upsell}`)) return;
+    if(facturar && !confirm(`¿Confirmás FACTURAR esta venta por ${money(total)} (Factura ${tipo})? Se emite un comprobante real ante AFIP.`)) return;
+    btn.click();
+  });
 }
 const stMapTalles = ret => ret.map(t=>({ talle:t.talle, precio:Number(t.precio),
   stock: Array.isArray(t.stock) ? t.stock : [] }));
@@ -2726,6 +2753,7 @@ async function mostrarDetalleCliente(clienteParcial){
       ${saldo>0 ? `<button class="fbtn" id="ccRecordarBtn" style="width:100%; margin-top:6px">📱 Recordar deuda por WhatsApp</button>` : ''}
 
       ${saldo>0 ? `
+      <div id="ccPagoBox">
       <div class="label" style="margin-top:10px">Registrar pago (en ${esc(stLocalNombre(stLocal()))})</div>
       <div class="grid">
         <div><div class="note" style="margin:0 0 4px">Efectivo</div>
@@ -2764,7 +2792,8 @@ async function mostrarDetalleCliente(clienteParcial){
       <div class="note" id="ccPgTotalInfo" style="margin-top:4px"></div>
       <input id="ccPagoNota" class="search" placeholder="Nota (opcional)" style="margin-top:6px">
       <button class="addcart" id="ccPagoOk" style="margin-top:8px">💰 Registrar pago</button>
-      <div class="note" id="ccPagoErr"></div>` : ''}
+      <div class="note" id="ccPagoErr"></div>
+      </div>` : ''}
 
       <div class="label" style="margin-top:14px">Compras (${compras.length})${compras.length?` · total ${money(totalGastado)}`:''}</div>
       ${compras.length ? `<div class="note">Última: ${compras[0].created_at ? new Date(compras[0].created_at).toLocaleDateString('es-AR') : ''} en ${esc(stLocalNombre(compras[0].local))}</div>`
@@ -2853,6 +2882,23 @@ async function mostrarDetalleCliente(clienteParcial){
         renderClientesConSaldo();
       }catch(e){ pagoOk.disabled=false; pagoOk.textContent='💰 Registrar pago'; err.textContent = e.message||e; }
     };
+    // Atajo de teclado: con algún importe cargado, Enter pide confirmar y con
+    // otro Enter se registra — mismo criterio que en Vender, para cobrar sin
+    // soltar el teclado. Acotado a esta caja (no al form de editar cliente,
+    // que comparte el mismo contenedor #ccDetalle).
+    const ccPagoBox = document.getElementById('ccPagoBox');
+    if(ccPagoBox) ccPagoBox.addEventListener('keydown', e=>{
+      if(e.key!=='Enter') return;
+      if(pagoOk.disabled) return;
+      const totalPago = Number(document.getElementById('ccPgContado').value||0)
+        + Number(document.getElementById('ccPgTransf').value||0)
+        + Number(document.getElementById('ccPgTDeb').value||0)
+        + ccMontoFinalTCred();
+      if(!(totalPago>0)) return;
+      e.preventDefault();
+      if(!confirm(`¿Registrar un pago de ${money(totalPago)}?`)) return;
+      pagoOk.click();
+    });
   }catch(e){ box.innerHTML = `<div class="note">No se pudo cargar la cuenta del cliente.</div>`; }
 }
 
