@@ -1604,6 +1604,7 @@ function wireVentaCard(){
   async function elegirClienteCredito(cliente){
     clienteCreditoId = cliente.id;
     clienteCreditoNombre = cliente.nombre || '(sin nombre)';
+    pushHistCliente(cliente);
     card.querySelector('#stCvClientePicker').innerHTML = '';
     renderClienteInfo(' — consultando saldo…');
     try{
@@ -1622,13 +1623,14 @@ function wireVentaCard(){
     const buscarInput = picker.querySelector('#stCvClienteBuscarInput');
     const resultadosEl = picker.querySelector('#stCvClienteResultados');
     makeClearable(buscarInput);
+    mostrarHistClientesEnBox(resultadosEl, elegirClienteCredito);
     buscarInput.focus();
     let t;
     buscarInput.addEventListener('input', ()=>{
       clearTimeout(t);
       t = setTimeout(async ()=>{
         const q = buscarInput.value.trim();
-        if(q.length<2){ resultadosEl.innerHTML=''; return; }
+        if(q.length<2){ mostrarHistClientesEnBox(resultadosEl, elegirClienteCredito); return; }
         resultadosEl.innerHTML = 'Buscando…';
         try{
           const r = await sbAuthed(`/rest/v1/clientes?select=id,nombre,telefono,dni&or=(nombre.ilike.*${encodeURIComponent(q)}*,telefono.ilike.*${encodeURIComponent(q)}*,dni.ilike.*${encodeURIComponent(q)}*)&limit=8`);
@@ -1721,28 +1723,31 @@ function wireVentaCard(){
     const buscarInput = picker.querySelector('#stFcBuscarInput');
     const resultadosEl = picker.querySelector('#stFcBuscarResultados');
     makeClearable(buscarInput);
+    const subtCuit = c=> `${c.cuit||'sin CUIT'} · ${c.telefono||'sin tel'}`;
+    const elegir = c=>{
+      clienteTelefono = c.telefono || null;
+      if(c.cuit){ card.querySelector('#stFcCuit').value = c.cuit; consultarCuit(); }
+      picker.innerHTML='';
+      pushHistCliente(c);
+    };
+    mostrarHistClientesEnBox(resultadosEl, elegir, subtCuit);
     buscarInput.focus();
     let t;
     buscarInput.addEventListener('input', ()=>{
       clearTimeout(t);
       t = setTimeout(async ()=>{
         const q = buscarInput.value.trim();
-        if(q.length<2){ resultadosEl.innerHTML=''; return; }
+        if(q.length<2){ mostrarHistClientesEnBox(resultadosEl, elegir, subtCuit); return; }
         resultadosEl.innerHTML = 'Buscando…';
         try{
-          const r = await sbAuthed(`/rest/v1/clientes?select=cuit,nombre,telefono&or=(nombre.ilike.*${encodeURIComponent(q)}*,telefono.ilike.*${encodeURIComponent(q)}*)&limit=8`);
+          const r = await sbAuthed(`/rest/v1/clientes?select=id,cuit,nombre,telefono&or=(nombre.ilike.*${encodeURIComponent(q)}*,telefono.ilike.*${encodeURIComponent(q)}*)&limit=8`);
           const rows = r.ok ? await r.json() : [];
           resultadosEl.innerHTML = rows.length ? rows.map((c,i)=>
             `<div class="lista" data-i="${i}" style="margin-top:4px; cursor:pointer">
                <div class="l">${esc(c.nombre||'(sin nombre)')}</div>
-               <div class="v" style="font-size:13px">${esc(c.cuit||'sin CUIT')} · ${esc(c.telefono||'sin tel')}</div>
+               <div class="v" style="font-size:13px">${esc(subtCuit(c))}</div>
              </div>`).join('') : '<div class="note">Sin resultados.</div>';
-          [...resultadosEl.querySelectorAll('[data-i]')].forEach(el=> el.onclick=()=>{
-            const c = rows[Number(el.dataset.i)];
-            clienteTelefono = c.telefono || null;
-            if(c.cuit){ card.querySelector('#stFcCuit').value = c.cuit; consultarCuit(); }
-            picker.innerHTML='';
-          });
+          [...resultadosEl.querySelectorAll('[data-i]')].forEach(el=> el.onclick=()=> elegir(rows[Number(el.dataset.i)]));
         }catch(e){ resultadosEl.innerHTML = 'Error al buscar.'; }
       }, 300);
     });
@@ -1915,6 +1920,7 @@ document.getElementById('stockBtn').onclick = ()=>{
   stOpen = true; stCount = 0; stLast = null; stBusy = false;
   document.getElementById('ov').classList.add('open','ov-full');
   history.pushState({detalle:1}, '');
+  setLS('pantalla_actual', 'stock');
   cargarMaps();
   drawStock();
 };
@@ -1923,6 +1929,7 @@ document.getElementById('venderBtn').onclick = ()=>{
   stOpen = true; stBusy = false;
   document.getElementById('ov').classList.add('open','ov-full');
   history.pushState({detalle:1}, '');
+  setLS('pantalla_actual', 'vender');
   cargarMaps();
   drawVender();
 };
@@ -1930,18 +1937,21 @@ document.getElementById('clientesBtn').onclick = ()=>{
   stOpen = true;
   document.getElementById('ov').classList.add('open','ov-full');
   history.pushState({detalle:1}, '');
+  setLS('pantalla_actual', 'clientes');
   drawClientes();
 };
 document.getElementById('traspasosBtn').onclick = ()=>{
   stOpen = true;
   document.getElementById('ov').classList.add('open','ov-full');
   history.pushState({detalle:1}, '');
+  setLS('pantalla_actual', 'traspasos');
   drawTraspasos();
 };
 document.getElementById('devolucionesBtn').onclick = ()=>{
   stOpen = true;
   document.getElementById('ov').classList.add('open','ov-full');
   history.pushState({detalle:1}, '');
+  setLS('pantalla_actual', 'devoluciones');
   drawDevoluciones();
 };
 function stCerrar(viaHistory){
@@ -1952,9 +1962,19 @@ function stCerrar(viaHistory){
   try{ if(stZXingReader) stZXingReader.reset(); }catch(e){}
   stZXingReader=null;
   document.getElementById('ov').classList.remove('open','ov-full');
+  setLS('pantalla_actual', null);
   if(!viaHistory && history.state && history.state.detalle) history.back();
 }
 window.addEventListener('popstate', ()=>{ if(stOpen) stCerrar(true); });
+
+// Si se refrescó la página estando en una de estas pantallas (Cargar/Vender/
+// Clientes/Traspasos/Devoluciones), la reabre en vez de volver siempre al
+// catálogo — mismo botón que si el usuario lo tocara de nuevo.
+(function restaurarPantalla(){
+  const p = getLS('pantalla_actual', null);
+  const btn = p && document.getElementById(p+'Btn');
+  if(btn) btn.click();
+})();
 
 // Barra de navegación duplicada: el header real queda tapado por cualquier
 // pantalla de pantalla completa (Cargar/Vender/Clientes/Traspasos/Agregar
@@ -2529,12 +2549,13 @@ function drawClientes(){
   const buscarInput = document.getElementById('ccBuscarInput');
   const resultadosEl = document.getElementById('ccResultados');
   makeClearable(buscarInput);
+  mostrarHistClientesEnBox(resultadosEl, c=> mostrarDetalleCliente({id:c.id}));
   let t;
   buscarInput.addEventListener('input', ()=>{
     clearTimeout(t);
     t = setTimeout(async ()=>{
       const q = buscarInput.value.trim();
-      if(q.length<2){ resultadosEl.innerHTML=''; return; }
+      if(q.length<2){ mostrarHistClientesEnBox(resultadosEl, c=> mostrarDetalleCliente({id:c.id})); return; }
       resultadosEl.innerHTML = '<div class="note">Buscando…</div>';
       try{
         const r = await sbAuthed(`/rest/v1/clientes?select=id,nombre,telefono,etiqueta,dni&or=(nombre.ilike.*${encodeURIComponent(q)}*,telefono.ilike.*${encodeURIComponent(q)}*,dni.ilike.*${encodeURIComponent(q)}*)&limit=10`);
@@ -2576,6 +2597,37 @@ async function renderClientesConSaldo(){
       }).join('') : '<div class="note">Nadie tiene saldo pendiente ahora mismo.</div>'}`;
     [...box.querySelectorAll('[data-i]')].forEach(el=> el.onclick=()=> mostrarDetalleCliente({id: rows[Number(el.dataset.i)].cliente_id}));
   }catch(e){ box.innerHTML = `<div class="note">No se pudo cargar.</div>`; }
+}
+
+// Últimos 5 clientes elegidos (en cualquier buscador de cliente de la app),
+// para acceso rápido sin tener que volver a tipear. Guarda lo que se sepa de
+// cada uno y conserva el cuit/dni ya conocido de una vez anterior si esta
+// vez se eligió desde un buscador que no lo trae (ej. el de Vender).
+function pushHistCliente(cliente){
+  if(!cliente || !cliente.id) return;
+  let hist = getLS('hist_clientes', []);
+  const previo = hist.find(c=>c.id===cliente.id);
+  hist = hist.filter(c=>c.id!==cliente.id);
+  hist.unshift({
+    id: cliente.id,
+    nombre: cliente.nombre || (previo && previo.nombre) || '',
+    telefono: cliente.telefono || (previo && previo.telefono) || '',
+    cuit: cliente.cuit || (previo && previo.cuit) || null,
+  });
+  setLS('hist_clientes', hist.slice(0,5));
+}
+// Pinta la lista de "últimos buscados" dentro de un contenedor de resultados
+// de búsqueda — se usa cuando el campo todavía está vacío, en los 3 lugares
+// donde se elige un cliente (Clientes, Vender, Facturar con CUIT).
+function mostrarHistClientesEnBox(box, onPick, subtitulo){
+  const hist = getLS('hist_clientes', []);
+  subtitulo = subtitulo || (c=> c.telefono||'sin tel');
+  box.innerHTML = hist.length ? `<div class="note" style="margin-top:2px">🕒 Últimos buscados</div>` + hist.map((c,i)=>`
+    <div class="lista" data-hist-i="${i}" style="margin-top:4px; cursor:pointer">
+      <div class="l">${esc(c.nombre||'(sin nombre)')}</div>
+      <div class="v" style="font-size:13px">${esc(subtitulo(c))}</div>
+    </div>`).join('') : '';
+  [...box.querySelectorAll('[data-hist-i]')].forEach(el=> el.onclick=()=> onPick(hist[Number(el.dataset.histI)]));
 }
 
 // Formulario de alta/edición de cliente. cliente=null para uno nuevo.
@@ -2700,6 +2752,7 @@ async function mostrarDetalleCliente(clienteParcial){
     ]);
     const clienteRows = rCliente.ok ? await rCliente.json() : [];
     const cliente = clienteRows[0] || clienteParcial;
+    pushHistCliente(cliente);
     const saldoRows = rSaldo.ok ? await rSaldo.json() : [];
     const saldo = (saldoRows[0] && Number(saldoRows[0].saldo)) || 0;
     const saldoLocalRows = (rSaldoLocal.ok ? await rSaldoLocal.json() : []).filter(r=> Number(r.saldo)!==0);
@@ -3203,7 +3256,15 @@ function drawDevoluciones(){
     <div class="scat">Sesión: ${esc(mostrarUsuario(sbSession.email))} · <a href="#" id="stLogout" style="color:var(--accent)">salir</a></div>
     <div class="st-grid st-grid-3">
       <div class="st-col-left">
-        <div class="label">Buscar la venta original</div>
+        <div class="label">Buscar por producto</div>
+        <input id="dvBuscarProducto" class="search" placeholder="Código o nombre del producto…" autocomplete="off">
+        <div class="note"><a href="#" id="dvRangoToggle" style="color:var(--accent)">📅 Cambiar período (por defecto, últimos 2 meses)</a></div>
+        <div id="dvRangoBox" style="display:none; margin-top:4px">
+          <div class="label">Desde</div><input id="dvDesde" class="search" type="date">
+          <div class="label">Hasta</div><input id="dvHasta" class="search" type="date">
+        </div>
+        <div id="dvBuscarResultados" style="margin-top:6px"></div>
+        <div class="label" style="margin-top:14px">Buscar la venta original por fecha</div>
         <input id="dvFecha" class="search" type="date" value="${isoLocal(new Date())}">
         <div class="talles" style="margin-top:6px">
           <button class="talle" id="dvLocCam">Camerino</button>
@@ -3212,7 +3273,7 @@ function drawDevoluciones(){
         <div id="dvVentas" style="margin-top:8px"></div>
       </div>
       <div class="st-col-right" id="dvDetalle">
-        <div class="note">Elegí una fecha y un local para ver las ventas de ese día.</div>
+        <div class="note">Elegí una fecha y un local para ver las ventas de ese día, o buscá directamente por producto.</div>
       </div>
       <div class="st-col-dia" id="dvHistorial"></div>
     </div>`;
@@ -3223,13 +3284,65 @@ function drawDevoluciones(){
   const bC=document.getElementById('dvLocCam'), bG=document.getElementById('dvLocGiu');
   const refLoc=()=>{ const l=stLocal();
     bC.classList.toggle('sel', l==='camerino'); bG.classList.toggle('sel', l==='giustozzi'); };
-  bC.onclick=()=>{ if(bC.disabled) return; setLS('stock_local','camerino'); refLoc(); renderVentasDevolucion(); };
-  bG.onclick=()=>{ if(bG.disabled) return; setLS('stock_local','giustozzi'); refLoc(); renderVentasDevolucion(); };
+  bC.onclick=()=>{ if(bC.disabled) return; setLS('stock_local','camerino'); refLoc(); renderVentasDevolucion(); buscarDevolucionPorProducto(); };
+  bG.onclick=()=>{ if(bG.disabled) return; setLS('stock_local','giustozzi'); refLoc(); renderVentasDevolucion(); buscarDevolucionPorProducto(); };
   refLoc();
   aplicarRestriccionLocal(bC, bG).then(()=>{ refLoc(); renderVentasDevolucion(); });
   document.getElementById('dvFecha').addEventListener('change', renderVentasDevolucion);
   renderVentasDevolucion();
   renderHistorialDevoluciones();
+
+  // Buscador por producto: cubre los últimos 2 meses por defecto (para no
+  // tener que saber la fecha exacta de la venta), con un selector de
+  // período aparte, colapsado, para buscar más atrás si hace falta.
+  const hoyDv = new Date();
+  const desdeDefaultDv = new Date(hoyDv); desdeDefaultDv.setMonth(desdeDefaultDv.getMonth()-2);
+  document.getElementById('dvDesde').value = isoLocal(desdeDefaultDv);
+  document.getElementById('dvHasta').value = isoLocal(hoyDv);
+  document.getElementById('dvRangoToggle').onclick = (e)=>{
+    e.preventDefault();
+    const box = document.getElementById('dvRangoBox');
+    box.style.display = box.style.display==='none' ? '' : 'none';
+  };
+  makeClearable(document.getElementById('dvBuscarProducto'));
+  let dvBuscarT;
+  const dispararBusquedaProducto = ()=>{ clearTimeout(dvBuscarT); dvBuscarT = setTimeout(buscarDevolucionPorProducto, 300); };
+  document.getElementById('dvBuscarProducto').addEventListener('input', dispararBusquedaProducto);
+  document.getElementById('dvDesde').addEventListener('change', dispararBusquedaProducto);
+  document.getElementById('dvHasta').addEventListener('change', dispararBusquedaProducto);
+}
+
+// Busca en las ventas no facturadas (del local elegido, en el período
+// elegido) algún item cuyo código o nombre coincida — para encontrar la
+// venta original sin tener que saber la fecha exacta.
+async function buscarDevolucionPorProducto(){
+  const box = document.getElementById('dvBuscarResultados');
+  const inputEl = document.getElementById('dvBuscarProducto');
+  if(!box || !inputEl) return;
+  const q = norm(inputEl.value.trim());
+  if(q.length<2){ box.innerHTML=''; return; }
+  const localSel = stLocal();
+  const desde = document.getElementById('dvDesde').value;
+  const hasta = document.getElementById('dvHasta').value;
+  box.innerHTML = '<div class="note">Buscando…</div>';
+  try{
+    const r = await sbAuthed(`/rest/v1/ventas?local=eq.${localSel}&facturada=eq.false&fecha=gte.${desde}&fecha=lte.${hasta}&order=created_at.desc&select=*&limit=500`);
+    const rows = r.ok ? await r.json() : [];
+    const encontradas = rows.filter(v=> (v.items||[]).some(it=> norm((it.codigo||'')+' '+(it.nombre||'')).includes(q)));
+    box.innerHTML = encontradas.length ? encontradas.map((v,i)=>{
+      const fechaTxt = v.created_at ? new Date(v.created_at).toLocaleDateString('es-AR') : v.fecha;
+      const hora = v.created_at ? new Date(v.created_at).toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'}) : '';
+      const items = (v.items||[]).map(it=> `${esc(it.codigo)} ${esc(it.nombre)}`).join(', ');
+      return `<div class="lista" data-i="${i}" style="margin-top:6px; cursor:pointer; text-align:left">
+        <div style="display:flex; justify-content:space-between; gap:8px">
+          <span class="l">${esc(fechaTxt)} ${hora}</span>
+          <span class="v" style="font-size:15px">${money(v.total)}</span>
+        </div>
+        <div class="note" style="margin-top:2px">${items || '(sin detalle)'}</div>
+      </div>`;
+    }).join('') : '<div class="note">No se encontraron ventas con ese producto en el período elegido.</div>';
+    [...box.querySelectorAll('[data-i]')].forEach(el=> el.onclick=()=> armarDetalleDevolucion(encontradas[Number(el.dataset.i)]));
+  }catch(e){ box.innerHTML = '<div class="note">No se pudo buscar.</div>'; }
 }
 
 async function renderVentasDevolucion(){
