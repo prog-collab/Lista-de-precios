@@ -3326,22 +3326,31 @@ async function buscarDevolucionPorProducto(){
   const hasta = document.getElementById('dvHasta').value;
   box.innerHTML = '<div class="note">Buscando…</div>';
   try{
-    const r = await sbAuthed(`/rest/v1/ventas?local=eq.${localSel}&facturada=eq.false&fecha=gte.${desde}&fecha=lte.${hasta}&order=created_at.desc&select=*&limit=500`);
+    // Ojo: trae también las facturadas (a diferencia del listado por fecha),
+    // para no dar la falsa impresión de "no se encontró" cuando la venta
+    // existe pero ya tiene factura — en ese caso se muestra igual, marcada,
+    // señalando que hace falta una Nota de Crédito en vez de dejarla afuera
+    // en silencio.
+    const r = await sbAuthed(`/rest/v1/ventas?local=eq.${localSel}&fecha=gte.${desde}&fecha=lte.${hasta}&order=created_at.desc&select=*&limit=500`);
     const rows = r.ok ? await r.json() : [];
     const encontradas = rows.filter(v=> (v.items||[]).some(it=> norm((it.codigo||'')+' '+(it.nombre||'')).includes(q)));
     box.innerHTML = encontradas.length ? encontradas.map((v,i)=>{
       const fechaTxt = v.created_at ? new Date(v.created_at).toLocaleDateString('es-AR') : v.fecha;
       const hora = v.created_at ? new Date(v.created_at).toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'}) : '';
       const items = (v.items||[]).map(it=> `${esc(it.codigo)} ${esc(it.nombre)}`).join(', ');
-      return `<div class="lista" data-i="${i}" style="margin-top:6px; cursor:pointer; text-align:left">
+      return `<div class="lista" data-i="${i}" style="margin-top:6px; ${v.facturada?'':'cursor:pointer'}; text-align:left">
         <div style="display:flex; justify-content:space-between; gap:8px">
           <span class="l">${esc(fechaTxt)} ${hora}</span>
           <span class="v" style="font-size:15px">${money(v.total)}</span>
         </div>
         <div class="note" style="margin-top:2px">${items || '(sin detalle)'}</div>
+        ${v.facturada ? '<div class="note" style="margin-top:2px; color:var(--warn)">🧾 Facturada — para devolver esto hace falta una Nota de Crédito, no se puede desde acá.</div>' : ''}
       </div>`;
     }).join('') : '<div class="note">No se encontraron ventas con ese producto en el período elegido.</div>';
-    [...box.querySelectorAll('[data-i]')].forEach(el=> el.onclick=()=> armarDetalleDevolucion(encontradas[Number(el.dataset.i)]));
+    [...box.querySelectorAll('[data-i]')].forEach(el=>{
+      const v = encontradas[Number(el.dataset.i)];
+      if(!v.facturada) el.onclick = ()=> armarDetalleDevolucion(v);
+    });
   }catch(e){ box.innerHTML = '<div class="note">No se pudo buscar.</div>'; }
 }
 
