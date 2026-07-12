@@ -219,6 +219,10 @@
   <div class="sheet" id="sheetCart"></div>
 </div>
 
+<div class="overlay" id="ovPopup">
+  <div class="sheet" id="sheetPopup" style="max-width:420px"></div>
+</div>
+
 <script>
 // Registro del service worker (instalable como app + funciona sin internet)
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
@@ -2613,6 +2617,48 @@ function armarFormCliente(box, cliente){
   };
 }
 
+// Popup genérico chico (ej. detalle de la compra que originó un cargo en la
+// cuenta corriente) — mismo patrón visual overlay+sheet que el resto de la
+// app, pero sin ocupar toda la pantalla ni pisar el historial de navegación.
+function abrirPopup(html){
+  document.getElementById('sheetPopup').innerHTML = html;
+  document.getElementById('ovPopup').classList.add('open');
+}
+function cerrarPopup(){ document.getElementById('ovPopup').classList.remove('open'); }
+document.getElementById('ovPopup').addEventListener('click', e=>{ if(e.target.id==='ovPopup') cerrarPopup(); });
+
+async function mostrarDetalleCompraDeCargo(ventaId){
+  abrirPopup('<div class="note">Cargando…</div>');
+  try{
+    const r = await sbAuthed(`/rest/v1/ventas?id=eq.${ventaId}&select=*`);
+    const rows = r.ok ? await r.json() : [];
+    const v = rows[0];
+    if(!v){ abrirPopup('<div class="note">No se encontró la venta.</div><button class="fbtn" id="ppCerrar" style="width:100%; margin-top:8px">Cerrar</button>'); document.getElementById('ppCerrar').onclick = cerrarPopup; return; }
+    const fecha = v.created_at ? new Date(v.created_at).toLocaleString('es-AR') : '';
+    const items = (v.items||[]);
+    abrirPopup(`
+      <div style="display:flex; justify-content:space-between; align-items:center">
+        <div class="label" style="margin:0">🧾 Detalle de la compra</div>
+        <button class="fbtn" id="ppCerrar">✕</button>
+      </div>
+      <div class="note" style="margin-top:6px">${esc(fecha)} · ${esc(stLocalNombre(v.local))}</div>
+      ${items.length ? items.map(it=>`
+        <div class="lista" style="margin-top:6px; text-align:left">
+          <div class="l">${esc(it.nombre||it.codigo||'')}</div>
+          <div class="v" style="font-size:14px">${esc(it.codigo||'')}${it.talle?` · ${esc(it.talle)}`:''}${it.color?` · ${esc(it.color)}`:''} — ${money(it.precio)}</div>
+        </div>`).join('') : '<div class="note">Sin detalle de items para esta venta.</div>'}
+      <div class="lista" style="margin-top:8px; display:flex; align-items:center; justify-content:space-between; text-align:left; padding:10px 14px">
+        <div class="l" style="margin:0">Total</div>
+        <div class="v" style="font-size:18px; margin:0">${money(v.total)}</div>
+      </div>
+      <div class="note" style="margin-top:4px">${mediosDePagoVenta(v)}</div>`);
+    document.getElementById('ppCerrar').onclick = cerrarPopup;
+  }catch(e){
+    abrirPopup('<div class="note">No se pudo cargar el detalle.</div><button class="fbtn" id="ppCerrar" style="width:100%; margin-top:8px">Cerrar</button>');
+    document.getElementById('ppCerrar').onclick = cerrarPopup;
+  }
+}
+
 async function mostrarDetalleCliente(clienteParcial){
   const box = document.getElementById('ccDetalle');
   if(!box || !clienteParcial) return;
@@ -2727,8 +2773,9 @@ async function mostrarDetalleCliente(clienteParcial){
       <div class="label" style="margin-top:14px">Historial de cuenta corriente</div>
       ${movs.length ? movs.map(m=>`
         <div class="lista" style="margin-top:6px; text-align:left">
-          <div style="display:flex; justify-content:space-between; gap:8px">
+          <div style="display:flex; justify-content:space-between; align-items:center; gap:8px">
             <span class="l">${m.created_at ? new Date(m.created_at).toLocaleDateString('es-AR') : ''} · ${m.tipo==='cargo'?'Cargo':'Pago'} · ${esc(stLocalNombre(m.local))}</span>
+            ${m.tipo==='cargo' && m.referencia_venta_id ? `<button class="fbtn" type="button" data-detalle-venta="${esc(m.referencia_venta_id)}" style="flex:none">Detalle</button>` : ''}
             <span class="v" style="font-size:15px; color:${m.tipo==='cargo'?'var(--warn)':'inherit'}">${m.tipo==='cargo'?'+':'−'}${money(m.monto)}</span>
           </div>
           ${m.tipo==='pago' && (m.pago_contado||m.pago_transferencia||m.pago_tarjeta_debito||m.pago_tarjeta_credito) ? `<div class="note" style="margin-top:2px">${[
@@ -2741,6 +2788,8 @@ async function mostrarDetalleCliente(clienteParcial){
         </div>`).join('') : '<div class="note">Todavía no hay movimientos.</div>'}`;
 
     document.getElementById('ccEditar').onclick = ()=> armarFormCliente(box, cliente);
+    [...box.querySelectorAll('[data-detalle-venta]')].forEach(b=>
+      b.onclick = ()=> mostrarDetalleCompraDeCargo(b.dataset.detalleVenta));
     const recordarBtn = document.getElementById('ccRecordarBtn');
     if(recordarBtn) recordarBtn.onclick = ()=>{
       const msg = `Hola ${cliente.nombre||''}! Te escribimos de ${stLocalNombre(stLocal())} para recordarte que tenés un saldo pendiente de ${money(saldo)}. Cualquier consulta, ¡estamos para ayudarte! 😊`;
