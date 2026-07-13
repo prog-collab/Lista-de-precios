@@ -3726,13 +3726,41 @@ function armarDetalleVenta(detBox, v, rol, localSel){
   const puedeEditar = rol==='gerente' && !v.facturada;
   detBox.innerHTML = `
     ${!v.facturada ? `<button class="fbtn" type="button" data-accion="facturar" style="width:100%">🧾 Facturar esta venta</button>` : ''}
+    ${v.facturada ? `<button class="fbtn" type="button" data-accion="ticket" style="width:100%">📤 Compartir / imprimir factura</button>` : ''}
     ${puedeEditar ? `<button class="fbtn" type="button" data-accion="editar" style="width:100%; margin-top:6px">✏️ Editar venta</button>` : ''}
     <div class="ventaAccionBox" style="margin-top:8px"></div>`;
   const accionBox = detBox.querySelector('.ventaAccionBox');
   const bFacturar = detBox.querySelector('[data-accion="facturar"]');
+  const bTicket = detBox.querySelector('[data-accion="ticket"]');
   const bEditar = detBox.querySelector('[data-accion="editar"]');
   if(bFacturar) bFacturar.onclick = ()=> armarFacturarVentaExistente(accionBox, v, localSel);
+  if(bTicket) bTicket.onclick = ()=> armarTicketVentaExistente(accionBox, v);
   if(bEditar) bEditar.onclick = ()=> armarEditarVentaExistente(accionBox, v, localSel);
+}
+
+// Reconstruye el ticket (mismas opciones de compartir/imprimir que al
+// facturar) de una venta que ya está facturada, leyendo el comprobante
+// guardado en "facturas" (la venta sola no tiene CAE de vencimiento, CUIT
+// emisor ni ambiente — eso vive en el comprobante).
+async function armarTicketVentaExistente(box, v){
+  box.innerHTML = '<div class="note">Cargando factura…</div>';
+  try{
+    const r = await sbAuthed(`/rest/v1/facturas?local=eq.${v.local}&tipo=eq.${v.factura_tipo}&pto_vta=eq.${v.factura_pto_vta}&numero=eq.${v.factura_numero}&select=*&limit=1`);
+    const rows = r.ok ? await r.json() : [];
+    const f = rows[0];
+    if(!f){ box.innerHTML = '<div class="note">No se encontró el comprobante guardado.</div>'; return; }
+    const d = {
+      ambiente: f.ambiente, cuit: f.cuit_emisor, tipo: f.tipo, puntoVenta: f.pto_vta, numero: f.numero,
+      fecha: (f.fecha||'').replace(/-/g,''), clienteCuit: f.cliente_cuit,
+      items: (f.items && f.items.length) ? f.items : v.items,
+      monto: f.monto!=null ? f.monto : v.total,
+      cae: f.cae, caeVencimiento: (f.cae_vencimiento||'').replace(/-/g,''),
+    };
+    box.innerHTML = renderTicket(d, v.local);
+    wireTicketButtons(box, d, v.local, null);
+  }catch(e){
+    box.innerHTML = `<div class="note">No se pudo cargar la factura: ${esc(e.message||e)}</div>`;
+  }
 }
 
 // Facturar una venta ya guardada (no facturada todavía) — mismo flujo de
