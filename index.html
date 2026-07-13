@@ -1253,6 +1253,7 @@ document.getElementById('scanBtn').onclick = async ()=>{
    el PIN del modo editor NO alcanza. */
 let sbSession = getLS('sb_session', null);
 let stOpen=false, stStream=null, stStopped=true, stBusy=false, stCount=0, stLast=null, stVentaTotal=0, stVentaItems=[], stZXingReader=null;
+let stVentaDevolucionId=null;   // si esta venta viene de cobrar la diferencia de un cambio, id de la devolución que la originó
 let stSeccion='carga';   // 'carga' (cargar stock, descuenta al toque) o 'venta' (carrito, descuenta al Guardar venta)
 let stCoolCode='', stCoolUntil=0;
 let MAPS = {color:{}, talle:{}};   // código de barras → nombre (compartido, tabla barcode_maps)
@@ -1754,7 +1755,7 @@ function wireVentaCard(){
   };
   card.querySelector('#stFcCuit').addEventListener('blur', consultarCuit);
   card.querySelector('#stFcCancel').onclick = ()=>{
-    stVentaTotal = 0; stVentaItems = [];
+    stVentaTotal = 0; stVentaItems = []; stVentaDevolucionId = null;
     drawVender();
   };
   card.querySelector('#stFcOk').onclick = async ()=>{
@@ -1807,6 +1808,7 @@ function wireVentaCard(){
           cliente_id: clienteCreditoId,
           caja_sesion_id: sesionAbierta.id,
           facturada: false,
+          devolucion_id: stVentaDevolucionId || null,
         }) });
       const ventaRows = await rVenta.json().catch(()=>null);
       if(!rVenta.ok || !ventaRows || !ventaRows[0]) throw new Error('No se pudo guardar la venta.');
@@ -1814,8 +1816,10 @@ function wireVentaCard(){
 
       // 2) Recién ahora se descuenta el stock de todo el carrito, en una sola
       //    transacción (todo o nada), referenciando la venta recién creada.
+      //    Los items "manual" (ej. la diferencia de un cambio) no son un
+      //    producto real con stock — se excluyen de este paso.
       ok.textContent = 'Descontando stock…';
-      await rpcAplicarVentaStock(stVentaItems, localSel, ventaId);
+      await rpcAplicarVentaStock(stVentaItems.filter(it=>!it.manual), localSel, ventaId);
       stockAplicado = true;
 
       // 2.b) Si parte de la venta quedó como crédito personal, se carga a la
@@ -1853,7 +1857,7 @@ function wireVentaCard(){
         resultadoEl.style.flex = '2 1 200px';   // comparte fila con el botón "Nueva venta"
         resultadoEl.innerHTML = `<div class="lista" style="display:flex; align-items:center; justify-content:space-between; text-align:left; padding:10px 14px; height:100%; box-sizing:border-box"><div class="l" style="margin:0">✓ Venta guardada</div><div class="v" style="font-size:20px; margin:0">${money(total)}</div></div>`;
       }
-      stVentaTotal = 0; stVentaItems = [];
+      stVentaTotal = 0; stVentaItems = []; stVentaDevolucionId = null;
       renderCarrito();
       renderResumenDia();
       ok.style.display='none';
@@ -3216,10 +3220,16 @@ async function renderHistorialTraspasos(){
 }
 
 // ===== ↩️ Devoluciones de mercadería: buscar la venta original, elegir qué
-// productos vuelven, reponer stock y registrar el reintegro. Bloqueada si la
-// venta ya está facturada (ahí corresponde una Nota de Crédito, no esto). Si
-// el reintegro es en efectivo, exige que haya una caja abierta en ese local
-// (y se descuenta del efectivo esperado al cerrarla). =====
+// productos vuelven y reponer stock. Se permite aunque la venta ya esté
+// facturada — no se emite Nota de Crédito, se registra igual (decisión
+// explícita para simplificar el caso "cambio de regalo": el que recibió el
+// regalo devuelve una prenda de una venta facturada y se lleva otra). Si
+// además el cliente se lleva otra prenda a cambio, se compara el precio de
+// lo nuevo contra lo devuelto: si es más caro, la diferencia se cobra aparte
+// como una venta nueva (con la leyenda "Diferencia por cambio"); si es más
+// barato, se reintegra como una devolución normal. Si el reintegro es en
+// efectivo, exige que haya una caja abierta en ese local (y se descuenta del
+// efectivo esperado al cerrarla). =====
 function drawDevoluciones(){
   const sheet = document.getElementById('sheet');
   sheet.classList.add('sheet-wide');
@@ -3312,9 +3322,9 @@ function drawDevoluciones(){
   document.getElementById('dvHasta').addEventListener('change', dispararBusquedaProducto);
 }
 
-// Busca en las ventas no facturadas (del local elegido, en el período
-// elegido) algún item cuyo código o nombre coincida — para encontrar la
-// venta original sin tener que saber la fecha exacta.
+// Busca en las ventas (del local elegido, en el período elegido) algún item
+// cuyo código o nombre coincida — para encontrar la venta original sin tener
+// que saber la fecha exacta. Incluye facturadas: se pueden devolver igual.
 async function buscarDevolucionPorProducto(){
   const box = document.getElementById('dvBuscarResultados');
   const inputEl = document.getElementById('dvBuscarProducto');
@@ -3326,11 +3336,6 @@ async function buscarDevolucionPorProducto(){
   const hasta = document.getElementById('dvHasta').value;
   box.innerHTML = '<div class="note">Buscando…</div>';
   try{
-    // Ojo: trae también las facturadas (a diferencia del listado por fecha),
-    // para no dar la falsa impresión de "no se encontró" cuando la venta
-    // existe pero ya tiene factura — en ese caso se muestra igual, marcada,
-    // señalando que hace falta una Nota de Crédito en vez de dejarla afuera
-    // en silencio.
     const r = await sbAuthed(`/rest/v1/ventas?local=eq.${localSel}&fecha=gte.${desde}&fecha=lte.${hasta}&order=created_at.desc&select=*&limit=500`);
     const rows = r.ok ? await r.json() : [];
     const encontradas = rows.filter(v=> (v.items||[]).some(it=> norm((it.codigo||'')+' '+(it.nombre||'')).includes(q)));
@@ -3338,18 +3343,18 @@ async function buscarDevolucionPorProducto(){
       const fechaTxt = v.created_at ? new Date(v.created_at).toLocaleDateString('es-AR') : v.fecha;
       const hora = v.created_at ? new Date(v.created_at).toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'}) : '';
       const items = (v.items||[]).map(it=> `${esc(it.codigo)} ${esc(it.nombre)}`).join(', ');
-      return `<div class="lista" data-i="${i}" style="margin-top:6px; ${v.facturada?'':'cursor:pointer'}; text-align:left">
+      return `<div class="lista" data-i="${i}" style="margin-top:6px; cursor:pointer; text-align:left">
         <div style="display:flex; justify-content:space-between; gap:8px">
           <span class="l">${esc(fechaTxt)} ${hora}</span>
           <span class="v" style="font-size:15px">${money(v.total)}</span>
         </div>
         <div class="note" style="margin-top:2px">${items || '(sin detalle)'}</div>
-        ${v.facturada ? '<div class="note" style="margin-top:2px; color:var(--warn)">🧾 Facturada — para devolver esto hace falta una Nota de Crédito, no se puede desde acá.</div>' : ''}
+        ${v.facturada ? '<div class="note" style="margin-top:2px">🧾 Facturada — la devolución se registra igual, sin Nota de Crédito.</div>' : ''}
       </div>`;
     }).join('') : '<div class="note">No se encontraron ventas con ese producto en el período elegido.</div>';
     [...box.querySelectorAll('[data-i]')].forEach(el=>{
       const v = encontradas[Number(el.dataset.i)];
-      if(!v.facturada) el.onclick = ()=> armarDetalleDevolucion(v);
+      el.onclick = ()=> armarDetalleDevolucion(v);
     });
   }catch(e){ box.innerHTML = '<div class="note">No se pudo buscar.</div>'; }
 }
@@ -3361,19 +3366,19 @@ async function renderVentasDevolucion(){
   const localSel = stLocal();
   box.innerHTML = `<div class="note">Cargando…</div>`;
   try{
-    const r = await sbAuthed(`/rest/v1/ventas?local=eq.${localSel}&fecha=eq.${fecha}&facturada=eq.false&order=created_at.desc&select=*`);
+    const r = await sbAuthed(`/rest/v1/ventas?local=eq.${localSel}&fecha=eq.${fecha}&order=created_at.desc&select=*`);
     const rows = r.ok ? await r.json() : [];
     box.innerHTML = rows.length ? rows.map((v,i)=>{
       const hora = v.created_at ? new Date(v.created_at).toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'}) : '';
       const items = (v.items||[]).map(it=> `${esc(it.codigo)} ${esc(it.nombre)}`).join(', ');
       return `<div class="lista" data-i="${i}" style="margin-top:6px; cursor:pointer; text-align:left">
         <div style="display:flex; justify-content:space-between; gap:8px">
-          <span class="l">${hora}</span>
+          <span class="l">${hora}${v.facturada?' · 🧾':''}</span>
           <span class="v" style="font-size:15px">${money(v.total)}</span>
         </div>
         <div class="note" style="margin-top:2px">${items || '(sin detalle)'}</div>
       </div>`;
-    }).join('') : '<div class="note">No hay ventas no facturadas ese día en este local.</div>';
+    }).join('') : '<div class="note">No hay ventas ese día en este local.</div>';
     [...box.querySelectorAll('[data-i]')].forEach(el=> el.onclick=()=> armarDetalleDevolucion(rows[Number(el.dataset.i)]));
   }catch(e){ box.innerHTML = `<div class="note">No se pudo cargar.</div>`; }
 }
@@ -3381,9 +3386,11 @@ async function renderVentasDevolucion(){
 function armarDetalleDevolucion(venta){
   const box = document.getElementById('dvDetalle');
   const items = venta.items || [];
+  const itemsNuevos = [];   // prendas que el cliente se lleva a cambio (opcional)
   box.innerHTML = `
     <div class="label">Venta de ${money(venta.total)}</div>
     <div class="note">${venta.created_at ? new Date(venta.created_at).toLocaleString('es-AR') : ''}</div>
+    ${venta.facturada ? '<div class="note">🧾 Venta facturada — esta devolución no emite Nota de Crédito, se registra igual.</div>' : ''}
     <div class="label" style="margin-top:8px">Elegí qué productos vuelven</div>
     ${items.length ? items.map((it,i)=>`
       <label class="lista" style="margin-top:6px; text-align:left; display:flex; align-items:center; gap:8px; cursor:pointer">
@@ -3393,10 +3400,19 @@ function armarDetalleDevolucion(venta){
         </span>
         <span class="v" style="font-size:14px">${money(it.precio)}</span>
       </label>`).join('') : '<div class="note">Esta venta no tiene detalle de items.</div>'}
-    <div class="label" style="margin-top:10px">Medio de reintegro</div>
-    <div class="talles">
-      <button class="talle sel" data-medio="efectivo">Efectivo</button>
-      <button class="talle" data-medio="transferencia">Transferencia</button>
+
+    <div class="label" style="margin-top:14px">¿Se lleva otra prenda a cambio? (opcional)</div>
+    <input id="dvBuscarNueva" class="search" placeholder="Código o nombre de la prenda nueva…" autocomplete="off">
+    <div id="dvBuscarNuevaResultados"></div>
+    <div id="dvNuevaCard"></div>
+    <div id="dvItemsNuevos" style="margin-top:6px"></div>
+
+    <div id="dvMedioBox" style="margin-top:10px">
+      <div class="label">Medio de reintegro</div>
+      <div class="talles">
+        <button class="talle sel" data-medio="efectivo">Efectivo</button>
+        <button class="talle" data-medio="transferencia">Transferencia</button>
+      </div>
     </div>
     <input id="dvMotivo" class="search" placeholder="Motivo (opcional)" style="margin-top:6px">
     <div class="note" id="dvMontoInfo" style="margin-top:6px">Monto a devolver: $0</div>
@@ -3404,9 +3420,22 @@ function armarDetalleDevolucion(venta){
     <div class="note" id="dvErr"></div>`;
   let medio = 'efectivo';
   const montoInfo = box.querySelector('#dvMontoInfo');
+  const medioBox = box.querySelector('#dvMedioBox');
   const actualizarMonto = ()=>{
-    const monto = [...box.querySelectorAll('.dvItem:checked')].reduce((acc,el)=> acc + (Number(items[Number(el.dataset.i)].precio)||0), 0);
-    montoInfo.textContent = `Monto a devolver: ${money(monto)}`;
+    const montoDevuelto = [...box.querySelectorAll('.dvItem:checked')].reduce((acc,el)=> acc + (Number(items[Number(el.dataset.i)].precio)||0), 0);
+    const montoNuevo = itemsNuevos.reduce((acc,it)=> acc + (Number(it.precio)||0), 0);
+    const diferencia = montoNuevo - montoDevuelto;
+    if(diferencia < 0){
+      medioBox.style.display = '';
+      montoInfo.textContent = `Se reintegran ${money(-diferencia)} al cliente.`;
+    } else if(diferencia > 0){
+      medioBox.style.display = 'none';
+      montoInfo.textContent = `El cliente paga ${money(diferencia)} de diferencia — al confirmar se abre la venta para cobrarla.`;
+    } else {
+      medioBox.style.display = 'none';
+      montoInfo.textContent = montoNuevo>0 ? 'Cambio sin diferencia de precio.' : 'Monto a devolver: $0';
+    }
+    return diferencia;
   };
   box.querySelectorAll('.dvItem').forEach(cb=> cb.addEventListener('change', actualizarMonto));
   [...box.querySelectorAll('[data-medio]')].forEach(b=> b.onclick=()=>{
@@ -3414,24 +3443,114 @@ function armarDetalleDevolucion(venta){
     [...box.querySelectorAll('[data-medio]')].forEach(x=>x.classList.remove('sel'));
     b.classList.add('sel');
   });
+
+  // Buscador de la prenda nueva (mismo patrón que el buscador manual de Vender).
+  const buscarNuevaInput = box.querySelector('#dvBuscarNueva');
+  const resultadosNuevaBox = box.querySelector('#dvBuscarNuevaResultados');
+  const nuevaCardBox = box.querySelector('#dvNuevaCard');
+  makeClearable(buscarNuevaInput);
+  buscarNuevaInput.addEventListener('input', ()=>{
+    const q = norm(buscarNuevaInput.value.trim());
+    if(q.length<2){ resultadosNuevaBox.innerHTML=''; return; }
+    const terms = q.split(/\s+/).filter(Boolean);
+    const encontrados = PRODS.filter(p=>{
+      const hay = norm(p.codigo+' '+p.nombre+' '+(p.categoria||''));
+      return terms.every(t=>hay.includes(t));
+    }).slice(0,8);
+    resultadosNuevaBox.innerHTML = encontrados.length ? encontrados.map((p,i)=>`
+      <div class="lista" data-i="${i}" style="margin-top:4px; cursor:pointer; text-align:left">
+        <div class="l">${esc(p.codigo)} · ${esc(p.categoria||'')}</div>
+        <div class="v" style="font-size:15px">${esc(p.nombre)}</div>
+      </div>`).join('') : '<div class="note">Sin resultados.</div>';
+    [...resultadosNuevaBox.querySelectorAll('[data-i]')].forEach(el=> el.onclick=()=>{
+      const p = encontrados[Number(el.dataset.i)];
+      buscarNuevaInput.value=''; resultadosNuevaBox.innerHTML='';
+      armarSelectorTalleNueva(p);
+    });
+  });
+  function armarSelectorTalleNueva(p){
+    const colores = [...new Set([].concat(...p.talles.map(t=>(t.stock||[]).map(s=>s.color))))].filter(c=>c && c!=='Único').sort();
+    let sel = p.talles.length===1 ? 0 : -1;
+    nuevaCardBox.innerHTML = `
+      <div class="lista" style="margin-top:8px; text-align:left">
+        <div class="l">${esc(p.nombre)||'(sin nombre)'} · Código ${esc(p.codigo)}</div>
+        <div class="label" style="margin-top:6px">Color</div>
+        <input id="dvNuevaColor" class="search" list="dvNuevaColores" placeholder="ej. Negro" value="${colores.length===1?esc(colores[0]):'Único'}" autocomplete="off">
+        <datalist id="dvNuevaColores">${colores.map(c=>`<option value="${esc(c)}">`).join('')}</datalist>
+        <div class="label" style="margin-top:6px">Talle</div>
+        <div class="talles" id="dvNuevaTalles">${p.talles.map((t,i)=>`<button class="talle ${i===sel?'sel':''}" data-i="${i}">${esc(t.talle)}</button>`).join('')}</div>
+        <button class="addcart" id="dvNuevaOk" style="margin-top:8px">➕ Agregar prenda</button>
+        <button class="fbtn" id="dvNuevaCancel" style="width:100%; margin-top:6px">Cancelar</button>
+        <div class="note" id="dvNuevaErr"></div>
+      </div>`;
+    [...nuevaCardBox.querySelectorAll('#dvNuevaTalles .talle')].forEach(b=> b.onclick=()=>{
+      sel = +b.dataset.i;
+      [...nuevaCardBox.querySelectorAll('#dvNuevaTalles .talle')].forEach(x=>x.classList.remove('sel'));
+      b.classList.add('sel');
+    });
+    nuevaCardBox.querySelector('#dvNuevaCancel').onclick = ()=>{ nuevaCardBox.innerHTML=''; };
+    nuevaCardBox.querySelector('#dvNuevaOk').onclick = ()=>{
+      if(sel<0){ nuevaCardBox.querySelector('#dvNuevaErr').textContent='Elegí el talle.'; return; }
+      const talle = p.talles[sel].talle;
+      const color = (nuevaCardBox.querySelector('#dvNuevaColor').value||'').trim() || 'Único';
+      const precio = Number(p.talles[sel].precio)||0;
+      itemsNuevos.push({codigo:p.codigo, nombre:p.nombre, talle, color, precio});
+      nuevaCardBox.innerHTML = '';
+      renderItemsNuevos();
+      actualizarMonto();
+    };
+  }
+  function renderItemsNuevos(){
+    const elBox = box.querySelector('#dvItemsNuevos');
+    elBox.innerHTML = itemsNuevos.map((it,i)=>`
+      <div class="lista" style="margin-top:4px; display:flex; justify-content:space-between; align-items:center; gap:8px; text-align:left">
+        <div>
+          <div class="l">${esc(it.codigo)} ${esc(it.nombre)}</div>
+          <div class="v" style="font-size:13px">${esc(it.talle)}${it.color?' · '+esc(it.color):''} · ${money(it.precio)}</div>
+        </div>
+        <button class="fbtn" data-rm-nueva="${i}" style="flex:none; padding:6px 10px">✕</button>
+      </div>`).join('');
+    [...elBox.querySelectorAll('[data-rm-nueva]')].forEach(b=> b.onclick=()=>{
+      itemsNuevos.splice(Number(b.dataset.rmNueva),1);
+      renderItemsNuevos();
+      actualizarMonto();
+    });
+  }
+
   box.querySelector('#dvOk').onclick = async ()=>{
     const err = box.querySelector('#dvErr');
     const ok = box.querySelector('#dvOk');
     const elegidos = [...box.querySelectorAll('.dvItem:checked')].map(el=> items[Number(el.dataset.i)]);
     if(!elegidos.length){ err.textContent='Elegí al menos un producto.'; return; }
+    const diferencia = actualizarMonto();
+    if(diferencia < 0 && !medio){ err.textContent='Elegí el medio de reintegro.'; return; }
     err.textContent=''; ok.disabled=true; ok.textContent='Procesando…';
     try{
       const r = await sbAuthed('/rest/v1/rpc/registrar_devolucion', { method:'POST', body: JSON.stringify({
         p_venta_id: venta.id,
-        p_items: elegidos.map(it=>({codigo:it.codigo, talle:it.talle, color:it.color, precio:it.precio})),
-        p_medio_devolucion: medio,
+        p_items: elegidos.map(it=>({codigo:it.codigo, nombre:it.nombre, talle:it.talle, color:it.color, precio:it.precio})),
+        p_items_nuevos: itemsNuevos.map(it=>({codigo:it.codigo, nombre:it.nombre, talle:it.talle, color:it.color, precio:it.precio})),
+        p_medio_devolucion: diferencia < 0 ? medio : null,
         p_motivo: box.querySelector('#dvMotivo').value||null,
       }) });
       if(!r.ok){ const d = await r.json().catch(()=>({})); throw new Error(d.message || 'No se pudo registrar la devolución.'); }
+      const resultado = await r.json().catch(()=>null);
+      const devolucionId = resultado && resultado.id;
       await cargarCatalogo();
-      box.innerHTML = `<div class="note">✓ Devolución registrada.</div>`;
       renderVentasDevolucion();
       renderHistorialDevoluciones();
+      if(diferencia > 0 && devolucionId){
+        const detalle = `Devolvió: ${elegidos.map(it=>`${it.codigo} ${it.nombre}`).join(', ')} · Se llevó: ${itemsNuevos.map(it=>`${it.codigo} ${it.nombre}`).join(', ')}`;
+        box.innerHTML = `<div class="note">✓ Cambio registrado. Abriendo la venta para cobrar la diferencia de ${money(diferencia)}…</div>`;
+        stVentaItems = [{codigo:null, nombre:'Diferencia por cambio', detalle, talle:'', color:'', precio: diferencia, manual:true}];
+        stVentaTotal = diferencia;
+        stVentaDevolucionId = devolucionId;
+        drawVender();
+        const btnUsarTotal = document.querySelector('[data-usar-total="stCvContado"]');
+        if(btnUsarTotal) btnUsarTotal.click();
+      } else {
+        box.innerHTML = `<div class="note">✓ ${diferencia<0 ? `Cambio registrado. Se reintegraron ${money(-diferencia)}.` : 'Devolución registrada.'}</div>`;
+      }
     }catch(e){
       ok.disabled=false; ok.textContent='↩️ Confirmar devolución';
       err.textContent = e.message||e;
@@ -3451,13 +3570,18 @@ async function renderHistorialDevoluciones(){
       ${rows.length ? rows.map(d=>{
         const hora = d.created_at ? new Date(d.created_at).toLocaleString('es-AR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '';
         const items = (d.items||[]).map(it=> `${esc(it.codigo)} ${esc(it.nombre||'')}`).join(', ');
+        const itemsNuevos = (d.items_nuevos||[]).map(it=> `${esc(it.codigo)} ${esc(it.nombre||'')}`).join(', ');
+        const diferencia = Number(d.diferencia||0);
+        const importeTxt = diferencia < 0 ? `${money(-diferencia)} · ${esc(d.medio_devolucion||'')}`
+          : diferencia > 0 ? `${money(diferencia)} a cobrar` : 'sin diferencia';
         return `
         <div class="lista" style="margin-top:6px; text-align:left">
           <div style="display:flex; justify-content:space-between; gap:8px">
             <span class="l">${hora}</span>
-            <span class="v" style="font-size:14px">${money(d.monto)} · ${esc(d.medio_devolucion)}</span>
+            <span class="v" style="font-size:14px">${importeTxt}</span>
           </div>
           <div class="note" style="margin-top:2px">${items || '(sin detalle)'}</div>
+          ${itemsNuevos ? `<div class="note" style="margin-top:1px">↔️ Se llevó: ${itemsNuevos}</div>` : ''}
           ${d.usuario ? `<div class="note" style="margin-top:1px">${esc(mostrarUsuario(d.usuario))}</div>` : ''}
         </div>`;
       }).join('') : '<div class="note">Todavía no se registraron devoluciones.</div>'}`;
@@ -3718,8 +3842,9 @@ function renderCarrito(){
   box.innerHTML = stVentaItems.length ? stVentaItems.map((it,i)=>`
     <div class="lista" style="margin-top:6px; display:flex; justify-content:space-between; align-items:center; gap:8px; text-align:left">
       <div>
-        <div class="l">${esc(it.codigo)} ${esc(it.nombre)}</div>
-        <div class="v" style="font-size:14px">${esc(it.talle)}${it.color?' · '+esc(it.color):''} · ${money(it.precio)}</div>
+        <div class="l">${it.codigo?esc(it.codigo)+' ':''}${esc(it.nombre)}</div>
+        <div class="v" style="font-size:14px">${it.manual ? money(it.precio) : `${esc(it.talle)}${it.color?' · '+esc(it.color):''} · ${money(it.precio)}`}</div>
+        ${it.detalle ? `<div class="note" style="margin-top:2px">${esc(it.detalle)}</div>` : ''}
       </div>
       <button class="fbtn" data-rm="${i}" style="flex:none; padding:6px 10px">✕</button>
     </div>`).join('') : '<div class="note">Todavía no agregaste ningún producto.</div>';
