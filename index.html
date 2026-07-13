@@ -1806,6 +1806,7 @@ function wireVentaCard(){
         headers:{ Prefer:'return=representation' },
         body: JSON.stringify({
           local: localSel, vendedor: sbSession.email||null, items: stVentaItems, total,
+          fecha: isoLocal(new Date()),
           pago_contado: pagoContado, contado_descuento_pct: contadoDescPct,
           pago_transferencia: pagoTransf, transferencia_alias: transfAlias,
           transferencia_descuento_pct: transfDescuentoPct,
