@@ -1299,19 +1299,36 @@ async function sbLogin(email, pass){
 }
 // Token vigente; renueva con el refresh_token si está por vencer. Si no se
 // puede renovar, tira 'login' para que la vista vuelva a pedir la sesión.
+// Si hay varios llamados a sbAuthed() en simultáneo (ej. Promise.all) justo
+// cuando el token está por vencer, cada uno pedía su propio refresh — pero
+// Supabase invalida el refresh_token apenas se usa una vez, así que el
+// segundo pedido en paralelo fallaba (por eso el error era intermitente:
+// "No se pudo cargar el resumen del día" y similares). Ahora todos los
+// llamados concurrentes esperan el mismo refresh en curso en vez de pedir
+// cada uno el suyo.
+let sbRefreshPromise = null;
 async function sbToken(){
   if(!sbSession) throw new Error('login');
   if(sbSession.expires_at - 60 > Math.floor(Date.now()/1000)) return sbSession.access_token;
-  const r = await fetch(`${SB_URL}/auth/v1/token?grant_type=refresh_token`, {
-    method:'POST', headers:{ apikey:SB_KEY, 'Content-Type':'application/json' },
-    body: JSON.stringify({refresh_token: sbSession.refresh_token}),
-  });
-  const d = await r.json().catch(()=>({}));
-  if(!r.ok || !d.access_token){ sbSession=null; setLS('sb_session', null); throw new Error('login'); }
-  sbSession = { access_token: d.access_token, refresh_token: d.refresh_token,
-    expires_at: Math.floor(Date.now()/1000) + (d.expires_in||3600), email: sbSession.email };
-  setLS('sb_session', sbSession);
-  return sbSession.access_token;
+  if(!sbRefreshPromise){
+    sbRefreshPromise = (async ()=>{
+      try{
+        const r = await fetch(`${SB_URL}/auth/v1/token?grant_type=refresh_token`, {
+          method:'POST', headers:{ apikey:SB_KEY, 'Content-Type':'application/json' },
+          body: JSON.stringify({refresh_token: sbSession.refresh_token}),
+        });
+        const d = await r.json().catch(()=>({}));
+        if(!r.ok || !d.access_token){ sbSession=null; setLS('sb_session', null); throw new Error('login'); }
+        sbSession = { access_token: d.access_token, refresh_token: d.refresh_token,
+          expires_at: Math.floor(Date.now()/1000) + (d.expires_in||3600), email: sbSession.email };
+        setLS('sb_session', sbSession);
+        return sbSession.access_token;
+      } finally {
+        sbRefreshPromise = null;
+      }
+    })();
+  }
+  return sbRefreshPromise;
 }
 async function sbAuthed(path, opts={}){
   const token = await sbToken();
@@ -3720,7 +3737,10 @@ async function renderResumenDia(){
         }
       });
     });
-  }catch(e){ box.innerHTML = `<div class="note">No se pudo cargar el resumen del día.</div>`; }
+  }catch(e){
+    console.error('renderResumenDia:', e);
+    box.innerHTML = `<div class="note">No se pudo cargar el resumen del día.</div>`;
+  }
 }
 
 // Contenido del desplegable de una venta: botón Facturar (si no está
