@@ -1589,6 +1589,11 @@ function wireVentaCard(){
   CAMPOS_PAGO.forEach(id=> card.querySelector('#'+id).addEventListener('input', recalcSaldoVenta));
   card.querySelector('#stCvTCredCuotas').addEventListener('change', recalcSaldoVenta);
   card.querySelector('#stCvTransfDescuento').addEventListener('change', recalcSaldoVenta);
+  [...card.querySelectorAll('#stCvContadoDescuento [data-desc]')].forEach(b=> b.onclick=()=>{
+    [...card.querySelectorAll('#stCvContadoDescuento [data-desc]')].forEach(x=>x.classList.remove('sel'));
+    b.classList.add('sel');
+    recalcSaldoVenta();
+  });
   recalcSaldoVenta();
   [...card.querySelectorAll('[data-usar-total]')].forEach(b=> b.onclick=()=>{
     const campo = b.dataset.usarTotal;
@@ -1769,7 +1774,8 @@ function wireVentaCard(){
     const transfDescuentoPct = transfDescuentoActivo ? DESCUENTO_TRANSFERENCIA : 0;
     const pagoTransf = montoFinalTransferencia();
     const total = totalConRecargo();
-    const pagoContado = Number(card.querySelector('#stCvContado').value)||0;
+    const contadoDescPct = contadoDescuentoPct();
+    const pagoContado = montoFinalContado();
     const transfAlias = card.querySelector('#stCvTransfAlias').value||null;
     const pagoTDeb = Number(card.querySelector('#stCvTDeb').value)||0;
     const pagoCPer = Number(card.querySelector('#stCvCPer').value)||0;
@@ -1800,7 +1806,8 @@ function wireVentaCard(){
         headers:{ Prefer:'return=representation' },
         body: JSON.stringify({
           local: localSel, vendedor: sbSession.email||null, items: stVentaItems, total,
-          pago_contado: pagoContado, pago_transferencia: pagoTransf, transferencia_alias: transfAlias,
+          pago_contado: pagoContado, contado_descuento_pct: contadoDescPct,
+          pago_transferencia: pagoTransf, transferencia_alias: transfAlias,
           transferencia_descuento_pct: transfDescuentoPct,
           pago_tarjeta_credito: pagoTCred, pago_tarjeta_debito: pagoTDeb,
           pago_credito_personal: pagoCPer, pago_credito_financiero: pagoCFin, saldo_pendiente: saldoPendiente,
@@ -2203,7 +2210,14 @@ function drawVender(){
             <div style="display:flex; gap:4px">
               <input id="stCvContado" class="search" type="number" inputmode="decimal" value="0" style="flex:1">
               <button class="fbtn" type="button" data-usar-total="stCvContado" style="flex:none; padding:0 10px" title="Usar el total del carrito">＝</button>
-            </div></div>
+            </div>
+            <div class="talles" id="stCvContadoDescuento" style="margin-top:4px">
+              <button class="talle sel" type="button" data-desc="0">Sin descuento</button>
+              <button class="talle" type="button" data-desc="5">−5%</button>
+              <button class="talle" type="button" data-desc="10">−10%</button>
+            </div>
+            <div class="note" id="stCvContadoDescuentoInfo" style="margin-top:2px"></div>
+          </div>
           <div><div class="note" style="margin:0 0 4px">Transferencia</div>
             <div style="display:flex; gap:4px">
               <input id="stCvTransf" class="search" type="number" inputmode="decimal" value="0" style="flex:1">
@@ -3590,7 +3604,7 @@ async function renderHistorialDevoluciones(){
 
 function mediosDePagoVenta(v){
   return [
-    v.pago_contado>0 && `Efectivo ${money(v.pago_contado)}`,
+    v.pago_contado>0 && `Efectivo ${money(v.pago_contado)}${v.contado_descuento_pct>0?` (−${v.contado_descuento_pct}%)`:''}`,
     v.pago_transferencia>0 && `Transf.${v.transferencia_alias?` (${esc(v.transferencia_alias)})`:''} ${money(v.pago_transferencia)}${v.transferencia_descuento_pct>0?` (−${v.transferencia_descuento_pct}%)`:''}`,
     v.pago_tarjeta_credito>0 && `T.Créd ${money(v.pago_tarjeta_credito)}${v.tarjeta_credito_cuotas>1?` (${v.tarjeta_credito_cuotas} cuotas, +${v.tarjeta_credito_recargo_pct}%)`:''}`,
     v.pago_tarjeta_debito>0 && `T.Déb ${money(v.pago_tarjeta_debito)}`,
@@ -3733,6 +3747,7 @@ function armarEditarVentaExistente(box, v, localSel){
     <div class="grid">
       <div><div class="note" style="margin:0 0 4px">Total</div><input id="veTotal" class="search" type="number" value="${v.total}"></div>
       <div><div class="note" style="margin:0 0 4px">Efectivo</div><input id="veContado" class="search" type="number" value="${v.pago_contado}"></div>
+      <div><div class="note" style="margin:0 0 4px">Descuento efectivo (%)</div><input id="veContadoDesc" class="search" type="number" step="0.1" value="${v.contado_descuento_pct||0}"></div>
       <div><div class="note" style="margin:0 0 4px">Transferencia</div><input id="veTransf" class="search" type="number" value="${v.pago_transferencia}"></div>
       <div><div class="note" style="margin:0 0 4px">Alias transferencia</div>
         <select id="veTransfAlias" class="search">
@@ -3765,6 +3780,7 @@ function armarEditarVentaExistente(box, v, localSel){
         p_venta_id: v.id,
         p_total: Number(box.querySelector('#veTotal').value)||0,
         p_pago_contado: Number(box.querySelector('#veContado').value)||0,
+        p_contado_descuento_pct: Number(box.querySelector('#veContadoDesc').value)||0,
         p_pago_transferencia: Number(box.querySelector('#veTransf').value)||0,
         p_transferencia_alias: box.querySelector('#veTransfAlias').value||null,
         p_pago_tarjeta_credito: Number(box.querySelector('#veTCred').value)||0,
@@ -3798,11 +3814,21 @@ function descuentoTransferenciaActivo(){ const el=document.getElementById('stCvT
 function montoBaseTransferencia(){ const el=document.getElementById('stCvTransf'); return el ? Number(el.value)||0 : 0; }
 function montoFinalTransferencia(){ return montoBaseTransferencia() * (descuentoTransferenciaActivo() ? (1-DESCUENTO_TRANSFERENCIA/100) : 1); }
 
+// Descuento en efectivo (0/5/10%, botones tipo talle — a diferencia de la
+// transferencia, acá hay más de una opción de porcentaje).
+function contadoDescuentoPct(){
+  const el = document.querySelector('#stCvContadoDescuento .talle.sel');
+  return el ? Number(el.dataset.desc)||0 : 0;
+}
+function montoBaseContado(){ const el=document.getElementById('stCvContado'); return el ? Number(el.value)||0 : 0; }
+function montoFinalContado(){ return montoBaseContado() * (1 - contadoDescuentoPct()/100); }
+
 // El total de la venta sube por el recargo de financiar en cuotas y baja por
-// el descuento de transferencia — los demás medios de pago siguen
-// calculándose sobre el precio de contado del carrito.
+// el descuento de transferencia y el de efectivo — los demás medios de pago
+// siguen calculándose sobre el precio de contado del carrito.
 function totalConRecargo(){
-  return stVentaTotal + (montoFinalTarjeta() - montoBaseTarjeta()) + (montoFinalTransferencia() - montoBaseTransferencia());
+  return stVentaTotal + (montoFinalTarjeta() - montoBaseTarjeta()) + (montoFinalTransferencia() - montoBaseTransferencia())
+    + (montoFinalContado() - montoBaseContado());
 }
 
 function actualizarTotalVenta(){
@@ -3826,9 +3852,14 @@ function recalcSaldoVenta(){
     const baseT = montoBaseTransferencia(), finalT = montoFinalTransferencia();
     descEl.textContent = (descuentoTransferenciaActivo() && baseT>0) ? `Con descuento: ${money(finalT)} (−${money(baseT-finalT)})` : '';
   }
-  const pagado = ['stCvContado','stCvTDeb','stCvCPer','stCvCFin']
+  const descContEl = document.getElementById('stCvContadoDescuentoInfo');
+  if(descContEl){
+    const baseC = montoBaseContado(), finalC = montoFinalContado();
+    descContEl.textContent = (contadoDescuentoPct()>0 && baseC>0) ? `Con descuento: ${money(finalC)} (−${money(baseC-finalC)})` : '';
+  }
+  const pagado = ['stCvTDeb','stCvCPer','stCvCFin']
     .reduce((acc,id)=>{ const el=document.getElementById(id); return acc + (el ? Number(el.value)||0 : 0); }, 0)
-    + montoFinalTarjeta() + montoFinalTransferencia();
+    + montoFinalTarjeta() + montoFinalTransferencia() + montoFinalContado();
   const saldo = Math.max(0, total-pagado);
   saldoEl.textContent = money(saldo);
   saldoEl.style.color = saldo>0 ? 'var(--warn)' : '';
