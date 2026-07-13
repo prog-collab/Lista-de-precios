@@ -3739,7 +3739,7 @@ async function renderResumenDia(){
     });
   }catch(e){
     console.error('renderResumenDia:', e);
-    box.innerHTML = `<div class="note">No se pudo cargar el resumen del día.</div>`;
+    box.innerHTML = `<div class="note">No se pudo cargar el resumen del día: ${esc(String((e&&e.message)||e))}</div>`;
   }
 }
 
