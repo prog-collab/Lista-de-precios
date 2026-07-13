@@ -105,18 +105,25 @@
   .label{font-size:12px; color:var(--muted); text-transform:uppercase;
     letter-spacing:.5px; margin:16px 0 7px}
   .talles{display:flex; flex-wrap:wrap; gap:8px}
-  .talle{padding:9px 14px; border-radius:10px; border:1px solid var(--line);
+  .talle{display:flex; flex-direction:column; align-items:center; gap:2px;
+    padding:7px 14px; border-radius:10px; border:1px solid var(--line);
     background:var(--card); color:var(--text); font-size:14px; cursor:pointer}
+  .talle .tn{font-size:10px; color:var(--muted); font-weight:400}
   .talle.tiene-stock{border-color:var(--accent2); background:rgba(34,197,94,.14)}
+  .talle.tiene-stock .tn{color:var(--accent2); font-weight:700}
   .talle.sel{background:var(--accent); color:#03283a; border-color:var(--accent); font-weight:700}
+  .talle.sel .tn{color:#03283a}
   .colores{display:flex; flex-wrap:wrap; gap:8px}
   .colorbtn{display:flex; flex-direction:column; align-items:center; gap:4px;
     padding:6px 8px; min-width:56px; border-radius:10px; border:2px solid var(--line);
     background:var(--card); cursor:pointer}
+  .colorbtn.tiene-stock{border-color:var(--accent2)}
   .colorbtn.sel{border-color:var(--accent)}
   .colorbtn .swatch{width:22px; height:22px; border-radius:50%; border:1px solid rgba(127,127,127,.5)}
   .colorbtn .lbl{font-size:10px; color:var(--text); max-width:64px; overflow:hidden;
     text-overflow:ellipsis; white-space:nowrap}
+  .colorbtn .cn{font-size:10px; color:var(--muted)}
+  .colorbtn.tiene-stock .cn{color:var(--accent2); font-weight:700}
   .lista{background:var(--card2); border-radius:14px; padding:16px; text-align:center; margin:6px 0 4px}
   .lista .l{font-size:13px; color:var(--muted)}
   .lista .v{font-size:34px; font-weight:800; color:var(--text); margin-top:2px}
@@ -3959,37 +3966,55 @@ function ventaCardConfirm(p, digits){
         ? `Barra ${esc(digits.slice(0,5))}-${esc(col3)}-${esc(tal3)}` : 'Barra '+esc(digits)}</div>
     </div>
     <div class="label">Color${col3?` (código ${esc(col3)})`:''}</div>
-    <div class="colores" id="stColores">${colores.map(c=>`
-      <button type="button" class="colorbtn ${c===colorSel?'sel':''}" data-color="${esc(c)}">
-        <span class="swatch" style="background:${colorSwatchCss(c)}"></span>
-        <span class="lbl">${esc(c)}</span>
-      </button>`).join('')}</div>
+    <div class="colores" id="stColores"></div>
     <div class="label">Talle${tal3?` (código ${esc(tal3)})`:''}</div>
-    <div class="talles" id="stTalles">${p.talles.map((x,i)=>
-      `<button class="talle ${talleTieneStock(x)?'tiene-stock':''} ${i===sel?'sel':''}" data-i="${i}">${esc(x.talle)}</button>`).join('')}</div>
+    <div class="talles" id="stTalles"></div>
     <div class="note" id="stStockActual"></div>
     <button class="addcart" id="stOk">🛒 Agregar al carrito</button>
     <button class="fbtn" id="stCancel" style="width:100%; margin-top:6px">Cancelar</button>
     <div class="note" id="stErr"></div>`;
   const stockInfo = card.querySelector('#stStockActual');
+  // Al elegir un talle, los botones de color muestran la cantidad de ESE
+  // talle en cada color (y se resaltan los que tienen). Sin talle elegido
+  // todavía, muestran el total de ese color sumando todos los talles.
+  const renderColores = ()=>{
+    card.querySelector('#stColores').innerHTML = colores.map(c=>{
+      const cant = sel>=0 ? stStockDe(p, c, p.talles[sel].talle)
+        : p.talles.reduce((acc,t)=> acc + stStockDe(p, c, t.talle), 0);
+      return `<button type="button" class="colorbtn ${cant>0?'tiene-stock':''} ${c===colorSel?'sel':''}" data-color="${esc(c)}">
+        <span class="swatch" style="background:${colorSwatchCss(c)}"></span>
+        <span class="lbl">${esc(c)}</span>
+        <span class="cn">${cant>0?cant:''}</span>
+      </button>`;
+    }).join('');
+  };
+  // Al elegir un color, los botones de talle muestran la cantidad de ESE
+  // color en cada talle (colorSel siempre tiene un valor, aunque no se haya
+  // tocado nada todavía).
+  const renderTalles = ()=>{
+    card.querySelector('#stTalles').innerHTML = p.talles.map((x,i)=>{
+      const cant = stStockDe(p, colorSel, x.talle);
+      return `<button class="talle ${cant>0?'tiene-stock':''} ${i===sel?'sel':''}" data-i="${i}">
+        <span class="tv">${esc(x.talle)}</span><span class="tn">${cant>0?cant:''}</span>
+      </button>`;
+    }).join('');
+  };
   const refStockInfo = ()=>{
     if(sel<0){ stockInfo.textContent=''; return; }
     const actual = stStockDe(p, colorSel, p.talles[sel].talle);
     stockInfo.innerHTML = `Stock actual en ${stLocalNombre(localSel)}: <b>${actual}</b>`;
   };
-  [...card.querySelectorAll('#stTalles .talle')].forEach(b=> b.onclick=()=>{
+  card.querySelector('#stTalles').addEventListener('click', e=>{
+    const b = e.target.closest('.talle'); if(!b) return;
     sel = +b.dataset.i;
-    [...card.querySelectorAll('#stTalles .talle')].forEach(x=>x.classList.remove('sel'));
-    b.classList.add('sel');
-    refStockInfo();
+    renderTalles(); renderColores(); refStockInfo();
   });
-  [...card.querySelectorAll('#stColores .colorbtn')].forEach(b=> b.onclick=()=>{
+  card.querySelector('#stColores').addEventListener('click', e=>{
+    const b = e.target.closest('.colorbtn'); if(!b) return;
     colorSel = b.dataset.color;
-    [...card.querySelectorAll('#stColores .colorbtn')].forEach(x=>x.classList.remove('sel'));
-    b.classList.add('sel');
-    refStockInfo();
+    renderColores(); renderTalles(); refStockInfo();
   });
-  refStockInfo();
+  renderColores(); renderTalles(); refStockInfo();
   card.querySelector('#stCancel').onclick = ()=>{ card.innerHTML=''; stBusy=false; };
   card.querySelector('#stOk').onclick = ()=>{
     const err = card.querySelector('#stErr');
@@ -4156,37 +4181,49 @@ function stCardConfirm(p, digits){
         ? `Barra ${esc(digits.slice(0,5))}-${esc(col3)}-${esc(tal3)}` : 'Barra '+esc(digits)}</div>
     </div>
     <div class="label">Color${col3?` (código ${esc(col3)})`:''}</div>
-    <div class="colores" id="stColores">${colores.map(c=>`
-      <button type="button" class="colorbtn ${c===colorSel?'sel':''}" data-color="${esc(c)}">
-        <span class="swatch" style="background:${colorSwatchCss(c)}"></span>
-        <span class="lbl">${esc(c)}</span>
-      </button>`).join('')}</div>
+    <div class="colores" id="stColores"></div>
     <div class="label">Talle${tal3?` (código ${esc(tal3)})`:''}</div>
-    <div class="talles" id="stTalles">${p.talles.map((x,i)=>
-      `<button class="talle ${talleTieneStock(x)?'tiene-stock':''} ${i===sel?'sel':''}" data-i="${i}">${esc(x.talle)}</button>`).join('')}</div>
+    <div class="talles" id="stTalles"></div>
     <div class="note" id="stStockActual"></div>
     <button class="addcart" id="stOk">${btnTxt}</button>
     <button class="fbtn" id="stCancel" style="width:100%; margin-top:6px">Cancelar</button>
     <div class="note" id="stErr"></div>`;
   const stockInfo = card.querySelector('#stStockActual');
+  const renderColores = ()=>{
+    card.querySelector('#stColores').innerHTML = colores.map(c=>{
+      const cant = sel>=0 ? stStockDe(p, c, p.talles[sel].talle)
+        : p.talles.reduce((acc,t)=> acc + stStockDe(p, c, t.talle), 0);
+      return `<button type="button" class="colorbtn ${cant>0?'tiene-stock':''} ${c===colorSel?'sel':''}" data-color="${esc(c)}">
+        <span class="swatch" style="background:${colorSwatchCss(c)}"></span>
+        <span class="lbl">${esc(c)}</span>
+        <span class="cn">${cant>0?cant:''}</span>
+      </button>`;
+    }).join('');
+  };
+  const renderTalles = ()=>{
+    card.querySelector('#stTalles').innerHTML = p.talles.map((x,i)=>{
+      const cant = stStockDe(p, colorSel, x.talle);
+      return `<button class="talle ${cant>0?'tiene-stock':''} ${i===sel?'sel':''}" data-i="${i}">
+        <span class="tv">${esc(x.talle)}</span><span class="tn">${cant>0?cant:''}</span>
+      </button>`;
+    }).join('');
+  };
   const refStockInfo = ()=>{
     if(sel<0){ stockInfo.textContent=''; return; }
     const actual = stStockDe(p, colorSel, p.talles[sel].talle);
     stockInfo.innerHTML = `Stock actual en ${stLocalNombre(localSel)}: <b>${actual}</b>`;
   };
-  [...card.querySelectorAll('#stTalles .talle')].forEach(b=> b.onclick=()=>{
+  card.querySelector('#stTalles').addEventListener('click', e=>{
+    const b = e.target.closest('.talle'); if(!b) return;
     sel = +b.dataset.i;
-    [...card.querySelectorAll('#stTalles .talle')].forEach(x=>x.classList.remove('sel'));
-    b.classList.add('sel');
-    refStockInfo();
+    renderTalles(); renderColores(); refStockInfo();
   });
-  [...card.querySelectorAll('#stColores .colorbtn')].forEach(b=> b.onclick=()=>{
+  card.querySelector('#stColores').addEventListener('click', e=>{
+    const b = e.target.closest('.colorbtn'); if(!b) return;
     colorSel = b.dataset.color;
-    [...card.querySelectorAll('#stColores .colorbtn')].forEach(x=>x.classList.remove('sel'));
-    b.classList.add('sel');
-    refStockInfo();
+    renderColores(); renderTalles(); refStockInfo();
   });
-  refStockInfo();
+  renderColores(); renderTalles(); refStockInfo();
   card.querySelector('#stCancel').onclick = ()=>{ card.innerHTML=''; stBusy=false; };
   card.querySelector('#stOk').onclick = async ()=>{
     const err = card.querySelector('#stErr');
