@@ -1343,6 +1343,19 @@ const stStockDe = (p, color, talle) => {
   const c = t && (t.stock||[]).find(s=>s.color===color);
   return c ? (Number(c.camerino)||0) + (Number(c.giustozzi)||0) : 0;
 };
+// Taverniti: los últimos 3 dígitos del código de barra son el talle en
+// numeración americana; en Argentina se le suman 10 (ej. "036" -> USA 36 ->
+// ARG 46). Solo aplica si el producto es Taverniti y sus talles ya son
+// números (no letras) — si no hay match, no sugiere nada y sigue el flujo
+// normal (MAPS / elegir a mano). Nunca confirma solo: el índice devuelto
+// queda pre-seleccionado, pero hace falta el toque humano en el botón.
+function talleSugeridoPorBarra(p, tal3){
+  if(!tal3 || !/^\d+$/.test(tal3)) return -1;
+  if(!/taverniti/i.test(p.nombre||'')) return -1;
+  if(!(p.talles||[]).length || !p.talles.every(t=> /^\d+$/.test(String(t.talle).trim()))) return -1;
+  const argSize = String(parseInt(tal3,10) + 10);
+  return p.talles.findIndex(t=> String(t.talle).trim() === argSize);
+}
 const money = n => '$'+Number(n||0).toLocaleString('es-AR');
 const API_FACTURAR = 'https://www.camerino.com.ar/api/facturar';
 const API_CONSULTAR_CUIT = 'https://www.camerino.com.ar/api/consultar-cuit';
@@ -3895,6 +3908,7 @@ function ventaCardConfirm(p, digits){
   const tal3 = digits.length>=11 ? digits.slice(8,11) : '';
   const colorSug = col3 ? (MAPS.color[col3]||'') : 'Único';
   let sel = p.talles.length===1 ? 0 : -1;
+  if(sel<0 && tal3) sel = talleSugeridoPorBarra(p, tal3);
   if(sel<0 && tal3 && MAPS.talle[tal3]){
     const m = norm(MAPS.talle[tal3]);
     const hits = p.talles.map((t,i)=>({i, ok: norm(t.talle)===m || norm(t.talle).includes(m)})).filter(x=>x.ok);
@@ -4064,6 +4078,7 @@ function stCardConfirm(p, digits){
   const tal3 = digits.length>=11 ? digits.slice(8,11) : '';
   const colorSug = col3 ? (MAPS.color[col3]||'') : 'Único';
   let sel = p.talles.length===1 ? 0 : -1;
+  if(sel<0 && tal3) sel = talleSugeridoPorBarra(p, tal3);
   if(sel<0 && tal3 && MAPS.talle[tal3]){
     const m = norm(MAPS.talle[tal3]);
     const hits = p.talles.map((t,i)=>({i, ok: norm(t.talle)===m || norm(t.talle).includes(m)})).filter(x=>x.ok);
