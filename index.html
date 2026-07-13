@@ -2241,6 +2241,8 @@ function drawVender(){
           <button id="stAbrirCamara" class="fbtn" style="font-size:16px" title="Abrir cámara">📷</button>
         </div>
         <div id="stManualResultados"></div>
+        <div style="margin-top:6px"><a href="#" id="stProductoManualLink" style="color:var(--accent); font-size:13px">➕ Vender algo que no está en el catálogo</a></div>
+        <div id="stProductoManualBox"></div>
         <div id="stCard"></div>
         <div class="label">Carrito de esta venta</div>
         <div id="stCarrito"></div>
@@ -2393,6 +2395,7 @@ function drawVender(){
     });
   });
   document.getElementById('stAbrirCamara').onclick = ()=>{ stDetenerCamara(); stCamara(); };
+  document.getElementById('stProductoManualLink').onclick = (e)=>{ e.preventDefault(); armarProductoManual(); };
   renderCarrito();
   wireVentaCard();
   renderResumenDia();
@@ -3969,6 +3972,37 @@ function recalcSaldoVenta(){
   saldoEl.style.color = saldo>0 ? 'var(--warn)' : '';
   const saldoBox = saldoEl.closest('.lista');
   if(saldoBox) saldoBox.style.border = saldo>0 ? '1px solid var(--warn)' : '';
+}
+
+// Vender algo que no está cargado en el catálogo: nombre y precio a mano,
+// va al carrito como un ítem "manual" (igual que la diferencia de un
+// cambio) — no descuenta stock de ningún artículo al guardar la venta.
+function armarProductoManual(){
+  const box = document.getElementById('stProductoManualBox');
+  if(box.innerHTML){ box.innerHTML=''; return; }
+  box.innerHTML = `
+    <div class="lista" style="margin-top:6px; text-align:left">
+      <div class="label" style="margin:0">Producto sin stock</div>
+      <input id="mpNombre" class="search" placeholder="Nombre del producto" style="margin-top:6px" autocomplete="off">
+      <input id="mpPrecio" class="search" type="number" inputmode="decimal" placeholder="Precio" style="margin-top:6px">
+      <button class="addcart" id="mpOk" style="margin-top:8px">🛒 Agregar al carrito</button>
+      <div class="note" id="mpErr"></div>
+    </div>`;
+  const nombreInput = box.querySelector('#mpNombre');
+  nombreInput.focus();
+  box.querySelector('#mpOk').onclick = ()=>{
+    const err = box.querySelector('#mpErr');
+    const nombre = nombreInput.value.trim();
+    const precio = Number(box.querySelector('#mpPrecio').value)||0;
+    if(!nombre){ err.textContent='Escribí el nombre del producto.'; return; }
+    if(!(precio>0)){ err.textContent='Escribí un precio válido.'; return; }
+    stVentaItems.push({codigo:null, nombre, talle:'', color:'', precio, manual:true});
+    stVentaTotal += precio;
+    toast(`🛒 + ${nombre} (sin stock)`);
+    box.innerHTML='';
+    renderCarrito();
+    actualizarTotalVenta();
+  };
 }
 
 function renderCarrito(){
