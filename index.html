@@ -3739,25 +3739,47 @@ function armarDetalleVenta(detBox, v, rol, localSel){
 }
 
 // Reconstruye el ticket (mismas opciones de compartir/imprimir que al
-// facturar) de una venta que ya está facturada, leyendo el comprobante
-// guardado en "facturas" (la venta sola no tiene CAE de vencimiento, CUIT
-// emisor ni ambiente — eso vive en el comprobante).
+// facturar) de una venta que ya está facturada. Primero intenta leer el
+// comprobante guardado en "facturas" (tiene CAE de vencimiento, CUIT emisor
+// y ambiente, que la venta sola no tiene). Si no lo encuentra (factura
+// vieja u otro desfasaje), arma igual el ticket con lo que sabe la venta —
+// falta el vencimiento del CAE, pero el resto (ítems, total, CAE, número)
+// alcanza para compartirlo o imprimirlo.
 async function armarTicketVentaExistente(box, v){
   box.innerHTML = '<div class="note">Cargando factura…</div>';
   try{
     const r = await sbAuthed(`/rest/v1/facturas?local=eq.${v.local}&tipo=eq.${v.factura_tipo}&pto_vta=eq.${v.factura_pto_vta}&numero=eq.${v.factura_numero}&select=*&limit=1`);
     const rows = r.ok ? await r.json() : [];
     const f = rows[0];
-    if(!f){ box.innerHTML = '<div class="note">No se encontró el comprobante guardado.</div>'; return; }
-    const d = {
-      ambiente: f.ambiente, cuit: f.cuit_emisor, tipo: f.tipo, puntoVenta: f.pto_vta, numero: f.numero,
-      fecha: (f.fecha||'').replace(/-/g,''), clienteCuit: f.cliente_cuit,
-      items: (f.items && f.items.length) ? f.items : v.items,
-      monto: f.monto!=null ? f.monto : v.total,
-      cae: f.cae, caeVencimiento: (f.cae_vencimiento||'').replace(/-/g,''),
-    };
+    let d, incompleto = false;
+    if(f){
+      d = {
+        ambiente: f.ambiente, cuit: f.cuit_emisor, tipo: f.tipo, puntoVenta: f.pto_vta, numero: f.numero,
+        fecha: (f.fecha||'').replace(/-/g,''), clienteCuit: f.cliente_cuit,
+        items: (f.items && f.items.length) ? f.items : v.items,
+        monto: f.monto!=null ? f.monto : v.total,
+        cae: f.cae, caeVencimiento: (f.cae_vencimiento||'').replace(/-/g,''),
+      };
+    } else {
+      incompleto = true;
+      // El CUIT emisor es fijo por local — se busca en cualquier otra
+      // factura de ese local ya que la venta no lo guarda.
+      let cuitEmisor = '';
+      try{
+        const r2 = await sbAuthed(`/rest/v1/facturas?local=eq.${v.local}&select=cuit_emisor&limit=1`);
+        const rows2 = r2.ok ? await r2.json() : [];
+        cuitEmisor = (rows2[0] && rows2[0].cuit_emisor) || '';
+      }catch(e){}
+      d = {
+        ambiente: undefined, cuit: cuitEmisor, tipo: v.factura_tipo, puntoVenta: v.factura_pto_vta, numero: v.factura_numero,
+        fecha: (v.fecha||'').replace(/-/g,''), clienteCuit: null,
+        items: v.items, monto: v.total, cae: v.factura_cae, caeVencimiento: '',
+      };
+    }
     box.innerHTML = renderTicket(d, v.local);
     wireTicketButtons(box, d, v.local, null);
+    if(incompleto) box.insertAdjacentHTML('beforeend',
+      '<div class="note">⚠ No se encontró el comprobante completo guardado — este ticket se armó con los datos de la venta (puede faltar el vencimiento del CAE).</div>');
   }catch(e){
     box.innerHTML = `<div class="note">No se pudo cargar la factura: ${esc(e.message||e)}</div>`;
   }
