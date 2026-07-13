@@ -2044,12 +2044,16 @@ window.addEventListener('popstate', ()=>{ if(stOpen) stCerrar(true); });
 
 // Si se refrescó la página estando en una de estas pantallas (Cargar/Vender/
 // Clientes/Traspasos/Devoluciones), la reabre en vez de volver siempre al
-// catálogo — mismo botón que si el usuario lo tocara de nuevo.
-(function restaurarPantalla(){
+// catálogo — mismo botón que si el usuario lo tocara de nuevo. Con setTimeout
+// para que corra recién cuando termine de ejecutarse todo el script: si se
+// dispara acá mismo (síncrono), algunas variables `let` que se declaran más
+// abajo (ej. miRolCache) todavía están en zona muerta y explota con
+// "Cannot access '...' before initialization" apenas se refresca la página.
+setTimeout(function restaurarPantalla(){
   const p = getLS('pantalla_actual', null);
   const btn = p && document.getElementById(p+'Btn');
   if(btn) btn.click();
-})();
+}, 0);
 
 // Barra de navegación duplicada: el header real queda tapado por cualquier
 // pantalla de pantalla completa (Cargar/Vender/Clientes/Traspasos/Agregar
