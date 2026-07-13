@@ -2073,6 +2073,7 @@ function drawStock(){
         <div class="filters" style="margin-top:8px">
           <input id="stManual" class="search" placeholder="O escribí el código o nombre…" inputmode="text" autocomplete="off" style="flex:1">
           <button id="stManualGo" class="fbtn" style="font-size:16px">OK</button>
+          <button id="stAbrirCamara" class="fbtn" style="font-size:16px" title="Abrir cámara">📷</button>
         </div>
         <div id="stManualResultados"></div>
         <div class="note">Cargadas en esta sesión: <b id="stN">${stCount}</b></div>
@@ -2116,9 +2117,11 @@ function drawStock(){
       const p = encontrados[Number(el.dataset.i)];
       man.value=''; resultadosBox.innerHTML='';
       stBusy = true;
+      stDetenerCamara();
       stCardConfirm(p, p.codigo);
     });
   });
+  document.getElementById('stAbrirCamara').onclick = ()=>{ stDetenerCamara(); stCamara(); };
   document.getElementById('stUndo').onclick = stDeshacer;
   renderHistorialCarga();
   stCamara();
@@ -3967,7 +3970,10 @@ function ventaCardConfirm(p, digits){
   };
 }
 
-// Cámara continua: no se cierra tras cada lectura — se escanea prenda tras prenda.
+// En Vender queda continua (no se cierra tras cada lectura, para escanear
+// prenda tras prenda); en Cargar Stock, stProcesar la corta apenas detecta
+// un código (ver stDetenerCamara) para que se vea bien la tarjeta de
+// talle/color, y hay un botón 📷 aparte para volver a abrirla.
 async function stCamara(){
   stStopped=false;
   let stream;
@@ -4066,10 +4072,24 @@ function stProcesar(raw){
   const digits = (raw||'').replace(/\D/g,'');
   if(!digits) return;
   stBusy = true;   // pausa la detección mientras la tarjeta está abierta
+  // En Cargar Stock (no en Vender, que escanea prenda tras prenda) se corta
+  // la cámara al capturar, para que la tarjeta de talle/color quede bien
+  // visible sin competir con el video. Se reabre a mano con el botón 📷.
+  if(stSeccion!=='venta') stDetenerCamara();
   const p = buscarArticuloBarcode(digits);
   if(!p){ stCardNuevo(digits); return; }
   if(stSeccion==='venta') ventaCardConfirm(p, digits);
   else stCardConfirm(p, digits);
+}
+
+function stDetenerCamara(){
+  stStopped = true;
+  try{ if(stStream) stStream.getTracks().forEach(t=>t.stop()); }catch(e){}
+  stStream = null;
+  try{ if(stZXingReader) stZXingReader.reset(); }catch(e){}
+  stZXingReader = null;
+  const box = document.getElementById('stVideoBox');
+  if(box) box.innerHTML = '';
 }
 
 // Tarjeta de confirmación: color + talle preseleccionados si ya hay mapeo.
