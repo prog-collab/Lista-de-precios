@@ -2231,6 +2231,7 @@ function drawVender(){
         <div class="filters" style="margin-top:8px">
           <input id="stManual" class="search" placeholder="O escribí el código o nombre…" inputmode="text" autocomplete="off" style="flex:1">
           <button id="stManualGo" class="fbtn" style="font-size:16px">OK</button>
+          <button id="stAbrirCamara" class="fbtn" style="font-size:16px" title="Abrir cámara">📷</button>
         </div>
         <div id="stManualResultados"></div>
         <div id="stCard"></div>
@@ -2380,14 +2381,17 @@ function drawVender(){
       const p = encontrados[Number(el.dataset.i)];
       man.value=''; resultadosBox.innerHTML='';
       stBusy = true;
+      stDetenerCamara();
       ventaCardConfirm(p, p.codigo);
     });
   });
+  document.getElementById('stAbrirCamara').onclick = ()=>{ stDetenerCamara(); stCamara(); };
   renderCarrito();
   wireVentaCard();
   renderResumenDia();
   renderCajaStatus();
-  stCamara();
+  // La cámara arranca cerrada (se abre a mano con el botón 📷) para que se
+  // vea bien la pantalla de productos; stProcesar la corta apenas escanea.
 }
 
 // ===== Sesión de caja real: hay que abrirla (con un fondo inicial) antes de
@@ -4003,10 +4007,10 @@ function ventaCardConfirm(p, digits){
   };
 }
 
-// En Vender queda continua (no se cierra tras cada lectura, para escanear
-// prenda tras prenda); en Cargar Stock, stProcesar la corta apenas detecta
-// un código (ver stDetenerCamara) para que se vea bien la tarjeta de
-// talle/color, y hay un botón 📷 aparte para volver a abrirla.
+// Se abre a demanda (botón 📷 junto al buscador, en Vender y en Cargar
+// Stock) y stProcesar la corta apenas detecta un código (ver
+// stDetenerCamara), para que la tarjeta de producto/talle/color quede bien
+// visible sin el video encima.
 async function stCamara(){
   stStopped=false;
   let stream;
@@ -4105,10 +4109,11 @@ function stProcesar(raw){
   const digits = (raw||'').replace(/\D/g,'');
   if(!digits) return;
   stBusy = true;   // pausa la detección mientras la tarjeta está abierta
-  // En Cargar Stock (no en Vender, que escanea prenda tras prenda) se corta
-  // la cámara al capturar, para que la tarjeta de talle/color quede bien
-  // visible sin competir con el video. Se reabre a mano con el botón 📷.
-  if(stSeccion!=='venta') stDetenerCamara();
+  // La cámara arranca cerrada (tanto en Vender como en Cargar Stock) y se
+  // corta apenas detecta un código, para que la tarjeta de producto/talle/
+  // color quede bien visible sin competir con el video. Se reabre a mano
+  // con el botón 📷 junto al buscador.
+  stDetenerCamara();
   const p = buscarArticuloBarcode(digits);
   if(!p){ stCardNuevo(digits); return; }
   if(stSeccion==='venta') ventaCardConfirm(p, digits);
