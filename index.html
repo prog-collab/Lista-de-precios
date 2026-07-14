@@ -124,6 +124,10 @@
     text-overflow:ellipsis; white-space:nowrap}
   .colorbtn .cn{font-size:10px; color:var(--muted)}
   .colorbtn.tiene-stock .cn{color:var(--accent2); font-weight:700}
+  .colorbtn .codcolor{font-size:9px; color:var(--muted); letter-spacing:.3px}
+  .colorbtn.nuevo{border-style:dashed}
+  .colorbtn.nuevo .swatch{display:flex; align-items:center; justify-content:center;
+    background:transparent!important; font-size:14px; color:var(--muted)}
   .lista{background:var(--card2); border-radius:14px; padding:16px; text-align:center; margin:6px 0 4px}
   .lista .l{font-size:13px; color:var(--muted)}
   .lista .v{font-size:34px; font-weight:800; color:var(--text); margin-top:2px}
@@ -1402,6 +1406,11 @@ const COLOR_SWATCH = {
   'unico':'#d4d4d4','único':'#d4d4d4',
 };
 function colorSwatchCss(nombre){ return COLOR_SWATCH[norm(nombre)] || '#d4d4d4'; }
+// Códigos de barra (3 dígitos) ya mapeados a un nombre de color — puede haber
+// más de uno si distintos artículos usan códigos distintos para el mismo color.
+function codigosDeColor(nombre){
+  return Object.keys(MAPS.color).filter(cod => MAPS.color[cod]===nombre).sort();
+}
 // Un talle "tiene stock" si algún color, en cualquier local, suma más de 0.
 function talleTieneStock(t){
   return (t.stock||[]).some(s=> (Number(s.camerino)||0)+(Number(s.giustozzi)||0) > 0);
@@ -4279,7 +4288,7 @@ function stCardConfirm(p, digits){
   const delta = 1;
   const btnTxt = `➕ Sumar 1 a ${stLocalNombre(localSel)}`;
   let colorSel = colorSug || 'Único';
-  const colores = [...new Set(['Único'].concat(Object.values(MAPS.color),
+  let colores = [...new Set(['Único'].concat(Object.values(MAPS.color),
     ...p.talles.map(t=>(t.stock||[]).map(s=>s.color))))].filter(Boolean).sort((a,b)=> a==='Único'?-1 : b==='Único'?1 : a.localeCompare(b));
   const card = document.getElementById('stCard');
   card.innerHTML = `
@@ -4301,12 +4310,29 @@ function stCardConfirm(p, digits){
     card.querySelector('#stColores').innerHTML = colores.map(c=>{
       const cant = sel>=0 ? stStockDe(p, c, p.talles[sel].talle)
         : p.talles.reduce((acc,t)=> acc + stStockDe(p, c, t.talle), 0);
+      const cods = codigosDeColor(c);
       return `<button type="button" class="colorbtn ${cant>0?'tiene-stock':''} ${c===colorSel?'sel':''}" data-color="${esc(c)}">
+        <span class="codcolor">${cods.length ? esc(cods.join(', ')) : ' '}</span>
         <span class="swatch" style="background:${colorSwatchCss(c)}"></span>
         <span class="lbl">${esc(c)}</span>
         <span class="cn">${cant>0?cant:''}</span>
       </button>`;
-    }).join('');
+    }).join('') + `
+      <button type="button" class="colorbtn nuevo" id="stColorNuevo">
+        <span class="codcolor"> </span>
+        <span class="swatch">+</span>
+        <span class="lbl">Nuevo color</span>
+        <span class="cn"></span>
+      </button>`;
+    const nuevoBtn = card.querySelector('#stColorNuevo');
+    if(nuevoBtn) nuevoBtn.onclick = ()=>{
+      const nombre = (prompt('Nombre del color nuevo:')||'').trim();
+      if(!nombre) return;
+      const existente = colores.find(c=> norm(c)===norm(nombre));
+      colorSel = existente || nombre;
+      if(!existente) colores.push(nombre);
+      renderColores(); renderTalles(); refStockInfo();
+    };
   };
   const renderTalles = ()=>{
     card.querySelector('#stTalles').innerHTML = p.talles.map((x,i)=>{
@@ -4327,7 +4353,7 @@ function stCardConfirm(p, digits){
     renderTalles(); renderColores(); refStockInfo();
   });
   card.querySelector('#stColores').addEventListener('click', e=>{
-    const b = e.target.closest('.colorbtn'); if(!b) return;
+    const b = e.target.closest('.colorbtn'); if(!b || !b.dataset.color) return;
     colorSel = b.dataset.color;
     renderColores(); renderTalles(); refStockInfo();
   });
