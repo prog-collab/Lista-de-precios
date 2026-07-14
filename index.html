@@ -1682,7 +1682,7 @@ function renderTicket(d, localSel){
     </div>
     <button class="addcart" id="stTicketWADirecto" style="margin-top:8px">📱 Enviar directo (texto)</button>
     <button class="fbtn" id="stTicketWA" style="width:100%; margin-top:6px">🖼️ Compartir imagen (elegir contacto)</button>
-    <button class="fbtn" id="stTicketPrint" style="width:100%; margin-top:6px">🖨️ Imprimir / Guardar PDF</button>
+    <button class="fbtn" id="stTicketPrint" style="width:100%; margin-top:6px">🖨️ Imprimir</button>
     <div class="note" id="stTicketWAErr"></div>`;
 }
 
@@ -1817,8 +1817,17 @@ function wireTicketButtons(card, d, localSel, telefono){
   card.querySelector('#stTicketPrint').onclick = ()=>{
     const ticket = card.querySelector('#stTicket');
     const w = window.open('', '_blank');
+    // @page con ancho fijo (80mm, el rollo de la impresora POS) y alto
+    // "auto" (el largo real del ticket, no una hoja A4/Carta completa) —
+    // sin esto, el navegador imprime con el tamaño de página por defecto
+    // de la impresora, que suele ser mucho más largo que el ticket: por
+    // eso quedaba expulsando papel en blanco de más y no llegaba a
+    // cortar (el corte automático de la impresora espera al final de esa
+    // página larga, no al final del contenido real).
     w.document.write(`<html><head><title>Ticket</title><style>
-      body{font-family:sans-serif; padding:16px; max-width:340px}
+      @page{ size: 80mm auto; margin: 3mm 2mm; }
+      html, body{ margin:0; padding:0 }
+      body{font-family:'Courier New',monospace; width:100%; box-sizing:border-box}
       *{color:#000!important; background:#fff!important; border-color:#000!important}
     </style></head><body>${ticket.outerHTML}</body></html>`);
     w.document.close();
