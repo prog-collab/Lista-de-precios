@@ -1431,6 +1431,16 @@ function colorSwatchCss(nombre){ return COLOR_SWATCH[norm(nombre)] || '#d4d4d4';
 function codigosDeColor(nombre){
   return Object.keys(MAPS.color).filter(cod => MAPS.color[cod]===nombre).sort();
 }
+// Colores ya cargados (en el stock real) de OTROS artículos de la misma
+// categoría — ej. no ofrecer "Verde" (de un buzo) al cargar un jean. Cada
+// categoría solo ve los colores que de verdad se usaron en esa categoría.
+function coloresDeCategoria(categoria){
+  if(!categoria) return [];
+  return [...new Set(
+    CATALOG.filter(a => a.categoria === categoria)
+      .flatMap(a => (a.talles||[]).flatMap(t => (t.stock||[]).map(s => s.color)))
+  )].filter(Boolean);
+}
 // Un talle "tiene stock" si algún color, en cualquier local, suma más de 0.
 function talleTieneStock(t){
   return (t.stock||[]).some(s=> (Number(s.camerino)||0)+(Number(s.giustozzi)||0) > 0);
@@ -4093,7 +4103,7 @@ function ventaCardConfirm(p, digits){
   }
   const localSel = stLocal();
   let colorSel = colorSug || 'Único';
-  const colores = [...new Set(['Único'].concat(Object.values(MAPS.color),
+  const colores = [...new Set(['Único'].concat(coloresDeCategoria(p.categoria),
     ...p.talles.map(t=>(t.stock||[]).map(s=>s.color))))].filter(Boolean).sort((a,b)=> a==='Único'?-1 : b==='Único'?1 : a.localeCompare(b));
   const card = document.getElementById('stCard');
   card.innerHTML = `
@@ -4308,7 +4318,7 @@ function stCardConfirm(p, digits){
   const delta = 1;
   const btnTxt = `➕ Sumar 1 a ${stLocalNombre(localSel)}`;
   let colorSel = colorSug || 'Único';
-  let colores = [...new Set(['Único'].concat(Object.values(MAPS.color),
+  let colores = [...new Set(['Único'].concat(coloresDeCategoria(p.categoria),
     ...p.talles.map(t=>(t.stock||[]).map(s=>s.color))))].filter(Boolean).sort((a,b)=> a==='Único'?-1 : b==='Único'?1 : a.localeCompare(b));
   const card = document.getElementById('stCard');
   card.innerHTML = `
