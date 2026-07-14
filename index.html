@@ -717,11 +717,11 @@ function addToCartQuick(cod){
   saveCart();
   toast('✓ Agregado al carrito');
 }
-function toast(msg){
+function toast(msg, ms){
   let t = document.getElementById('toast');
   if(!t){ t = document.createElement('div'); t.id='toast'; document.body.appendChild(t); }
   t.textContent = msg; t.classList.add('show');
-  clearTimeout(t._h); t._h = setTimeout(()=>t.classList.remove('show'), 1400);
+  clearTimeout(t._h); t._h = setTimeout(()=>t.classList.remove('show'), ms||1400);
 }
 
 // Deslizar un producto a la izquierda para revelar el botón "Agregar"
@@ -823,14 +823,9 @@ function closeCart(){
 }
 document.getElementById('cartBtn').onclick = openCart;
 
-/* ===== Ayuda ===== */
+/* ===== Ayuda (específica según la pantalla desde la que se abre) ===== */
 let helpOpen=false;
-function openHelp(){
-  helpOpen=true;
-  document.getElementById('sheet').classList.remove('sheet-wide');
-  document.getElementById('sheet').innerHTML = `
-    <div class="topbtns"><button class="backbtn" onclick="closeDetail()">← Atrás</button></div>
-    <h2>❓ Ayuda</h2>
+const AYUDA_CATALOGO = `
     <div class="label">Inicio</div>
     <div class="note" style="text-align:left">
       Sin buscar nada, ves tus <b>★ Favoritos</b> y los <b>últimos productos consultados</b>.
@@ -867,7 +862,9 @@ function openHelp(){
     <div class="label">Panel web (artículos, fotos y publicación) 🖼️</div>
     <div class="note" style="text-align:left">
       Para <b>cargar artículos nuevos, fotos</b> y elegir qué se publica en la web, usá el
-      panel de administración (funciona en el celular, con tu usuario y contraseña).
+      panel de administración (funciona en el celular, con tu usuario y contraseña). El
+      <b>stock ya no se edita desde ahí</b> — el panel web solo muestra el stock cargado
+      acá, de solo lectura.
     </div>
     <div style="text-align:center; margin-top:6px">
       <a class="fbtn" href="https://camerino-giustozzi-web.vercel.app/admin" target="_blank" rel="noopener" style="display:inline-block; text-decoration:none">🖼️ Abrir panel de administración</a>
@@ -884,8 +881,161 @@ function openHelp(){
       Si subieron precios en alguna categoría, aparece un aviso arriba durante unos días.
       Podés cerrarlo con ✕ o activar notificaciones con 🔔.
     </div>`;
+
+const AYUDA_PANTALLAS = {
+  stock: { titulo:'Cargar stock', html: `
+    <div class="label">Qué es</div>
+    <div class="note" style="text-align:left">
+      Acá se carga y corrige el <b>stock real</b> (unidades por color, talle y local
+      — Camerino/Giustozzi). Es la única fuente de verdad: la web pública y el panel
+      de administración (de <b>solo lectura</b> para el stock) muestran lo que se
+      cargue acá.
+    </div>
+    <div class="label">Cómo se carga</div>
+    <div class="note" style="text-align:left">
+      Escaneá el código de barras (o escribilo a mano abajo). Si el código de color o
+      talle ya se usó antes, quedan preseleccionados; si no, elegís el color (o tocás
+      <b>"+ Nuevo color"</b> para crear uno) y el talle, y confirmás con
+      <b>"➕ Sumar 1"</b> — queda guardado al toque, con quién y cuándo lo cargó.
+    </div>
+    <div class="label">Artículo nuevo</div>
+    <div class="note" style="text-align:left">
+      Si el código no existe todavía, se puede dar de alta con nombre, categoría y
+      precio, eligiendo un <b>sistema de talles</b> (S a XL, S a 4XL, numérico,
+      personalizado…) para que quede con todos los talles correctos desde la primera
+      prenda escaneada.
+    </div>
+    <div class="label">Deshacer</div>
+    <div class="note" style="text-align:left">
+      Si sumaste de más, <b>"↩ Deshacer último"</b> resta la última carga.
+    </div>` },
+  vender: { titulo:'Vender (POS)', html: `
+    <div class="label">Cómo se arma la venta</div>
+    <div class="note" style="text-align:left">
+      Buscá o escaneá el producto (📷 o el cuadro de texto, que ya muestra el precio
+      de cada resultado). Si el color/talle del código de barras ya está mapeado,
+      quedan preseleccionados; si no, los elegís a mano. Cada producto agregado queda
+      en el <b>carrito de esta venta</b>. También podés
+      <b>"➕ Vender algo que no está en el catálogo"</b>, con cantidad y precio a mano
+      (no descuenta stock de ningún artículo real).
+    </div>
+    <div class="label">Medios de pago (se pueden combinar)</div>
+    <div class="note" style="text-align:left">
+      Efectivo, transferencia, tarjeta de crédito/débito, crédito personal y crédito
+      financiero (ASOEM). El <b>saldo pendiente</b> tiene que quedar en $0 para poder
+      guardar. Tarjeta de crédito y ASOEM en 6/9/12 cuotas suman un recargo automático
+      (misma tasa mensual configurable) al total.
+    </div>
+    <div class="label">Crédito financiero (ASOEM) 🏷️</div>
+    <div class="note" style="text-align:left">
+      Para clientes del sindicato ASOEM: elegí las cuotas (1 pago / 3 sin interés /
+      6, 9, 12 con interés) y cargá el <b>número de autorización</b> que envía el
+      sindicato. Es obligatorio <b>elegir un cliente</b> arriba, junto al total. Esa
+      información queda asociada a la venta y se puede rastrear después en el
+      <b>📊 Dashboard ASOEM</b> (solo gerente).
+    </div>
+    <div class="label">Al guardar</div>
+    <div class="note" style="text-align:left">
+      Se crea la venta, se descuenta el stock real de todos los productos del carrito
+      en un solo paso (todo o nada), y si elegiste "¿Facturar? Sí" se emite la
+      factura en AFIP. Si no facturás, podés compartir igual un <b>Recibo X</b> (sin
+      valor fiscal) por texto o imagen. El formulario queda listo para la próxima
+      venta al toque, aunque sigas compartiendo o imprimiendo el comprobante anterior.
+    </div>
+    <div class="label">Caja</div>
+    <div class="note" style="text-align:left">
+      Necesitás la <b>caja abierta</b> en tu local para poder guardar ventas — se
+      abre arriba con un fondo inicial, y se cierra al final del día con el arqueo.
+    </div>` },
+  clientes: { titulo:'Clientes', html: `
+    <div class="label">Qué es</div>
+    <div class="note" style="text-align:left">
+      La <b>cuenta corriente</b> de los clientes que compran a crédito personal:
+      saldo que deben, historial de compras y cobros.
+    </div>
+    <div class="label">De dónde sale el saldo</div>
+    <div class="note" style="text-align:left">
+      Cuando en <b>Vender</b> se carga un monto en "Crédito personal" con un cliente
+      elegido, ese importe se suma automáticamente a su cuenta corriente acá — no hay
+      carga manual de deuda, sale directo de la venta.
+    </div>
+    <div class="label">Cobrar</div>
+    <div class="note" style="text-align:left">
+      Buscá al cliente y registrá el pago — baja el saldo pendiente y queda en su
+      historial.
+    </div>` },
+  traspasos: { titulo:'Traspasos', html: `
+    <div class="label">Qué es</div>
+    <div class="note" style="text-align:left">
+      Mover stock de un color/talle puntual de un local al otro (ej. de Camerino a
+      Giustozzi), sin pasar por una venta.
+    </div>
+    <div class="label">Cómo funciona</div>
+    <div class="note" style="text-align:left">
+      Quien envía <b>inicia el traspaso</b> (se descuenta de su local al toque);
+      quien recibe lo <b>confirma</b> cuando le llega la mercadería (recién ahí se
+      suma a su local). El gerente puede hacer un <b>"⚡ Traspaso directo"</b>, sin
+      esperar esa confirmación.
+    </div>
+    <div class="label">Trazabilidad</div>
+    <div class="note" style="text-align:left">
+      Cada traspaso queda registrado en el historial de stock igual que una carga o
+      una venta, con el motivo "traspaso".
+    </div>` },
+  devoluciones: { titulo:'Devoluciones', html: `
+    <div class="label">Qué es</div>
+    <div class="note" style="text-align:left">
+      Devolver o cambiar productos de una venta ya hecha.
+    </div>
+    <div class="label">Cómo funciona</div>
+    <div class="note" style="text-align:left">
+      Buscá la venta original por producto, elegí qué se devuelve, y si el cliente se
+      lleva algo distinto de cambio, agregalo también. El stock de lo devuelto
+      <b>vuelve a sumar</b>; lo que se lleva de cambio se descuenta, igual que en una
+      venta normal.
+    </div>
+    <div class="label">Diferencia de dinero</div>
+    <div class="note" style="text-align:left">
+      Si el cambio cuesta más o menos que lo devuelto, se cobra o se reintegra la
+      diferencia con el medio de pago que corresponda.
+    </div>` },
+  dashboard: { titulo:'Dashboard ASOEM', html: `
+    <div class="label">Qué es</div>
+    <div class="note" style="text-align:left">
+      Seguimiento de todas las ventas financiadas por el sindicato <b>ASOEM</b> —
+      solo lo puede ver un usuario con rol "gerente".
+    </div>
+    <div class="label">De dónde sale la información</div>
+    <div class="note" style="text-align:left">
+      No se carga nada acá: cada vez que en <b>Vender</b> se guarda una venta con
+      "Crédito financiero (ASOEM)" (cuotas, recargo, cliente y número de
+      autorización), queda asociada a esa venta y aparece acá solo para
+      consultar/rastrear, no para editar.
+    </div>
+    <div class="label">Qué muestra</div>
+    <div class="note" style="text-align:left">
+      El total financiado, cuántos clientes distintos, y cuántas ventas todavía
+      <b>no tienen número de autorización</b> cargado (para reclamarlo al sindicato).
+      Se puede filtrar el listado por cliente, autorización o local.
+    </div>` },
+};
+
+function openHelp(){
+  helpOpen=true;
+  const pantalla = getLS('pantalla_actual', null);
+  const enPantallaCompleta = stOpen;
+  const info = AYUDA_PANTALLAS[pantalla];
+  const sheet = document.getElementById('sheet');
+  sheet.classList.remove('sheet-wide');
+  sheet.innerHTML = `
+    ${enPantallaCompleta ? navIconsHtml() : ''}
+    <div class="topbtns"><button class="backbtn" id="helpCerrar">${enPantallaCompleta?'✕ Cerrar':'← Atrás'}</button></div>
+    <h2>❓ Ayuda${info?' — '+esc(info.titulo):''}</h2>
+    ${info ? info.html : AYUDA_CATALOGO}`;
   document.getElementById('ov').classList.add('open');
   history.pushState({detalle:1}, '');
+  if(enPantallaCompleta) wireNavIcons(sheet);
+  document.getElementById('helpCerrar').onclick = ()=>{ if(enPantallaCompleta) stCerrar(false); else closeDetail(); };
   const at = document.getElementById('admToggle');
   if(at) at.onclick = ()=>{
     if(isAdmin){ salirAdmin(); }
@@ -1785,6 +1935,44 @@ function wireVentaCard(){
     CAMPOS_PAGO.forEach(id=> card.querySelector('#'+id).value = id===campo ? stVentaTotal : 0);
     recalcSaldoVenta();
   });
+  // Deja la venta lista para arrancar otra de cero (medios de pago, cliente,
+  // facturar, cuotas ASOEM, etc.) sin tocar el resultado (#stFcResultado)
+  // que sigue mostrando el ticket/Recibo X de la venta que se acaba de
+  // guardar — así el vendedor puede seguir compartiéndolo/imprimiéndolo
+  // mientras ya arranca a cargar la próxima venta.
+  function resetFormularioVenta(){
+    ['stCvContado','stCvTransf','stCvTCred','stCvTDeb','stCvCPer','stCvCFin'].forEach(id=>{
+      const el = card.querySelector('#'+id); if(el) el.value = '0';
+    });
+    card.querySelector('#stCvTCredCuotas').value = '1';
+    card.querySelector('#stCvCFinCuotas').value = '1';
+    card.querySelector('#stCvCFinAutorizacion').value = '';
+    [...card.querySelectorAll('#stCvContadoDescuento [data-desc]')].forEach(x=>x.classList.remove('sel'));
+    card.querySelector('#stCvContadoDescuento [data-desc="0"]').classList.add('sel');
+    card.querySelector('#stCvTransfDescuento').checked = false;
+    card.querySelector('#stCvTransfAlias').value = '';
+    clienteCreditoId = null; clienteCreditoNombre = null; clienteTelefono = null;
+    card.querySelector('#stCvClienteInfo').innerHTML = '';
+    card.querySelector('#stCvClientePicker').innerHTML = '';
+    tipo = 'B'; facturar = false;
+    [...card.querySelectorAll('[data-fac]')].forEach(x=>x.classList.remove('sel'));
+    card.querySelector('[data-fac="no"]').classList.add('sel');
+    card.querySelector('#stCvFacturarBox').style.display = 'none';
+    [...card.querySelectorAll('[data-t]')].forEach(x=>x.classList.remove('sel'));
+    card.querySelector('[data-t="B"]').classList.add('sel');
+    card.querySelector('#stFcCuitLabel').style.display = 'none';
+    card.querySelector('#stFcCuitRow').style.display = 'none';
+    card.querySelector('#stFcCuit').value = '';
+    card.querySelector('#stFcCuitNombre').style.display = 'none';
+    card.querySelector('#stFcClientePicker').innerHTML = '';
+    card.querySelector('#stFcGuardarClienteBox').innerHTML = '';
+    const fechaEl = card.querySelector('#stFcFecha'); if(fechaEl) fechaEl.value = isoLocal(new Date());
+    const ok = card.querySelector('#stFcOk');
+    ok.style.display = ''; ok.disabled = false; ok.textContent = 'Guardar venta';
+    const err = card.querySelector('#stFcErr');
+    if(err){ err.textContent=''; err.style.color=''; err.style.fontWeight=''; }
+    recalcSaldoVenta();
+  }
   const clienteInfoEl = card.querySelector('#stCvClienteInfo');
   function renderClienteInfo(sufijo){
     clienteInfoEl.innerHTML = `Cliente: ${esc(clienteCreditoNombre)}${sufijo}` +
@@ -1971,15 +2159,25 @@ function wireVentaCard(){
     const saldoPendiente = Math.max(0, total - (pagoContado+pagoTransf+pagoTCred+pagoTDeb+pagoCPer+pagoCFin));
     const cuit = (card.querySelector('#stFcCuit').value||'').replace(/\D/g,'');
     const fecha = card.querySelector('#stFcFecha').value;
-    if(!(total>0)){ err.textContent='Agregá al menos un producto al carrito.'; return; }
-    if(saldoPendiente>0){ err.textContent='⚠ Falta cargar medios de pago — el saldo pendiente tiene que quedar en $0 para guardar la venta.'; return; }
-    if(pagoTransf>0 && !transfAlias){ err.textContent='Elegí a qué alias se transfirió.'; return; }
-    if(pagoCPer>0 && !clienteCreditoId){ err.textContent='Elegí un cliente (arriba, junto al total) para el crédito personal.'; return; }
-    if(pagoCFin>0 && !clienteCreditoId){ err.textContent='Elegí un cliente (arriba, junto al total) para el crédito financiero (ASOEM).'; return; }
-    if(pagoCFin>0 && !autorizacionAsoem){ err.textContent='Cargá el número de autorización de ASOEM.'; return; }
-    if(facturar && tipo==='A' && cuit.length!==11){ err.textContent='Para Factura A escribí el CUIT del cliente (11 dígitos).'; return; }
-    if(facturar && !fecha){ err.textContent='Elegí la fecha del comprobante.'; return; }
-    err.textContent=''; ok.disabled=true; ok.textContent = 'Verificando caja…';
+    // Aviso bien visible (no solo el texto chico al pie): toast + resaltado
+    // + scroll hasta el mensaje, para que el vendedor no se quede sin saber
+    // qué le faltó corregir.
+    const avisoError = msg=>{
+      err.textContent = msg;
+      err.style.color = 'var(--warn)';
+      err.style.fontWeight = '700';
+      toast('⚠ '+msg, 3500);
+      err.scrollIntoView({behavior:'smooth', block:'center'});
+    };
+    if(!(total>0)){ avisoError('Agregá al menos un producto al carrito.'); return; }
+    if(saldoPendiente>0){ avisoError('Falta cargar medios de pago — el saldo pendiente tiene que quedar en $0 para guardar la venta.'); return; }
+    if(pagoTransf>0 && !transfAlias){ avisoError('Elegí a qué alias se transfirió.'); return; }
+    if(pagoCPer>0 && !clienteCreditoId){ avisoError('Elegí un cliente (arriba, junto al total) para el crédito personal.'); return; }
+    if(pagoCFin>0 && !clienteCreditoId){ avisoError('Elegí un cliente (arriba, junto al total) para el crédito financiero (ASOEM).'); return; }
+    if(pagoCFin>0 && !autorizacionAsoem){ avisoError('Cargá el número de autorización de ASOEM.'); return; }
+    if(facturar && tipo==='A' && cuit.length!==11){ avisoError('Para Factura A escribí el CUIT del cliente (11 dígitos).'); return; }
+    if(facturar && !fecha){ avisoError('Elegí la fecha del comprobante.'); return; }
+    err.textContent=''; err.style.color=''; err.style.fontWeight=''; ok.disabled=true; ok.textContent = 'Verificando caja…';
     const sesionAbierta = await obtenerCajaAbierta(localSel);
     if(!sesionAbierta){
       ok.disabled=false; ok.textContent = facturar?'Guardar y facturar':'Guardar venta';
@@ -2076,22 +2274,32 @@ function wireVentaCard(){
       stVentaTotal = 0; stVentaItems = []; stVentaDevolucionId = null;
       renderCarrito();
       renderResumenDia();
-      ok.style.display='none';
-      card.querySelector('#stFcCancel').textContent='Nueva venta';
-      card.querySelector('#stFcCancel').onclick = ()=> drawVender();
+      // El formulario queda listo para la próxima venta de una — no hace
+      // falta tocar nada para seguir vendiendo aunque el ticket/Recibo X
+      // de arriba siga a la vista (compartiéndose o imprimiéndose).
+      resetFormularioVenta();
+      card.querySelector('#stFcCancel').textContent='✕ Cerrar recibo';
+      card.querySelector('#stFcCancel').onclick = ()=>{
+        resultadoEl.innerHTML=''; resultadoEl.style.flex='';
+        card.querySelector('#stFcCancel').textContent='Cancelar';
+        card.querySelector('#stFcCancel').onclick = ()=>{
+          stVentaTotal = 0; stVentaItems = []; stVentaDevolucionId = null;
+          drawVender();
+        };
+      };
     }catch(e){
       ok.disabled=false; ok.textContent = facturar?'Guardar y facturar':'Guardar venta';
       if(ventaId && !stockAplicado){
         // Todavía no se tocó el stock: la venta quedó a medio crear, se descarta.
         await sbAuthed(`/rest/v1/ventas?id=eq.${ventaId}`, { method:'DELETE' }).catch(()=>{});
-        err.textContent = e.message || 'No se pudo guardar la venta.';
+        avisoError(e.message || 'No se pudo guardar la venta.');
       } else if(stockAplicado){
         // El stock ya se descontó de verdad (la venta es real) — lo que falló
         // fue la factura. Se deja la venta guardada sin facturar.
-        err.textContent = 'La venta se guardó y el stock ya se descontó, pero no se pudo facturar: '+(e.message||e)+
-          ' — todavía no hay forma de reintentar la factura sola, avisale a Juan si esto pasa.';
+        avisoError('La venta se guardó y el stock ya se descontó, pero no se pudo facturar: '+(e.message||e)+
+          ' — todavía no hay forma de reintentar la factura sola, avisale a Juan si esto pasa.');
       } else {
-        err.textContent = e.message || 'No se pudo guardar la venta.';
+        avisoError(e.message || 'No se pudo guardar la venta.');
       }
     }
   };
