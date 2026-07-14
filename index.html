@@ -4047,7 +4047,10 @@ function armarProductoManual(){
     <div class="lista" style="margin-top:6px; text-align:left">
       <div class="label" style="margin:0">Producto sin stock</div>
       <input id="mpNombre" class="search" placeholder="Nombre del producto" style="margin-top:6px" autocomplete="off">
-      <input id="mpPrecio" class="search" type="number" inputmode="decimal" placeholder="Precio" style="margin-top:6px">
+      <div style="display:flex; gap:8px; margin-top:6px">
+        <input id="mpPrecio" class="search" type="number" inputmode="decimal" placeholder="Precio" style="flex:1 1 50%">
+        <input id="mpCantidad" class="search" type="number" inputmode="numeric" min="1" step="1" value="1" placeholder="Cantidad" style="flex:1 1 50%">
+      </div>
       <button class="addcart" id="mpOk" style="margin-top:8px">🛒 Agregar al carrito</button>
       <div class="note" id="mpErr"></div>
     </div>`;
@@ -4056,12 +4059,15 @@ function armarProductoManual(){
   box.querySelector('#mpOk').onclick = ()=>{
     const err = box.querySelector('#mpErr');
     const nombre = nombreInput.value.trim();
-    const precio = Number(box.querySelector('#mpPrecio').value)||0;
+    const precioUnitario = Number(box.querySelector('#mpPrecio').value)||0;
+    const cantidad = Math.floor(Number(box.querySelector('#mpCantidad').value))||0;
     if(!nombre){ err.textContent='Escribí el nombre del producto.'; return; }
-    if(!(precio>0)){ err.textContent='Escribí un precio válido.'; return; }
-    stVentaItems.push({codigo:null, nombre, talle:'', color:'', precio, manual:true});
+    if(!(precioUnitario>0)){ err.textContent='Escribí un precio válido.'; return; }
+    if(!(cantidad>0)){ err.textContent='Escribí una cantidad válida.'; return; }
+    const precio = precioUnitario*cantidad;
+    stVentaItems.push({codigo:null, nombre, talle:'', color:'', precio, cantidad, precioUnitario, manual:true});
     stVentaTotal += precio;
-    toast(`🛒 + ${nombre} (sin stock)`);
+    toast(`🛒 + ${cantidad>1?cantidad+'x ':''}${nombre} (sin stock)`);
     box.innerHTML='';
     renderCarrito();
     actualizarTotalVenta();
@@ -4075,7 +4081,9 @@ function renderCarrito(){
     <div class="lista" style="margin-top:6px; display:flex; justify-content:space-between; align-items:center; gap:8px; text-align:left">
       <div>
         <div class="l">${it.codigo?esc(it.codigo)+' ':''}${esc(it.nombre)}</div>
-        <div class="v" style="font-size:14px">${it.manual ? money(it.precio) : `${esc(it.talle)}${it.color?' · '+esc(it.color):''} · ${money(it.precio)}`}</div>
+        <div class="v" style="font-size:14px">${it.manual
+          ? (it.cantidad>1 ? `${it.cantidad} x ${money(it.precioUnitario)} = ${money(it.precio)}` : money(it.precio))
+          : `${esc(it.talle)}${it.color?' · '+esc(it.color):''} · ${money(it.precio)}`}</div>
         ${it.detalle ? `<div class="note" style="margin-top:2px">${esc(it.detalle)}</div>` : ''}
       </div>
       <button class="fbtn" data-rm="${i}" style="flex:none; padding:6px 10px">✕</button>
