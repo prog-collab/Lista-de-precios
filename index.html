@@ -1400,6 +1400,19 @@ function talleSugeridoPorBarra(p, tal3){
   const argSize = String(parseInt(tal3,10) + 10);
   return p.talles.findIndex(t=> String(t.talle).trim() === argSize);
 }
+// Sistemas de talles más usados en el catálogo real (relevados de los
+// artículos ya cargados), para poder armar TODOS los talles de un artículo
+// nuevo desde la primera prenda escaneada, en vez de crearlo con un solo
+// talle "Único" y tener que ir agregando de a uno.
+const SISTEMAS_TALLES = [
+  { id:'unico', label:'Talle único', talles:['Único'] },
+  { id:'sxl',   label:'Ropa S a XL (S,M,L,XL)', talles:['S','M','L','XL'] },
+  { id:'s3xl',  label:'Ropa S a 3XL (S,M,L,XL,2XL,3XL)', talles:['S','M','L','XL','2XL','3XL'] },
+  { id:'s4xl',  label:'Ropa S a 4XL (S,M,L,XL,2XL,3XL,4XL)', talles:['S','M','L','XL','2XL','3XL','4XL'] },
+  { id:'s8xl',  label:'Ropa S a 8XL (S...8XL)', talles:['S','M','L','XL','2XL','3XL','4XL','5XL','6XL','7XL','8XL'] },
+  { id:'num',   label:'Numérico 36 a 70 (pares)', talles:['36','38','40','42','44','46','48','50','52','54','56','58','60','62','64','66','68','70'] },
+  { id:'custom', label:'Personalizado…', talles:null },
+];
 // Nombre de color (en español, sin tildes/mayúsculas vía norm()) → color real
 // para pintar el botón. Si no está mapeado, se usa un gris neutro y se
 // confía en el texto del botón para identificarlo.
@@ -4432,9 +4445,18 @@ function stCardNuevo(digits){
     </div>
     <div class="label">Precio de lista</div>
     <input id="stNvPrecio" class="search" type="number" inputmode="numeric" placeholder="ej. 85000">
+    <div class="label">Sistema de talles</div>
+    <select id="stNvSistema" class="search">
+      ${SISTEMAS_TALLES.map(s=>`<option value="${esc(s.id)}">${esc(s.label)}</option>`).join('')}
+    </select>
+    <input id="stNvSistemaCustom" class="search" style="margin-top:8px; display:none"
+      placeholder="Talles separados por coma, ej: 38,40,42,44">
     <button class="addcart" id="stNvOk">Crear artículo y seguir</button>
     <button class="fbtn" id="stNvCancel" style="width:100%; margin-top:6px">Cancelar</button>
     <div class="note" id="stNvErr"></div>`;
+  const sistemaSel = card.querySelector('#stNvSistema');
+  const sistemaCustom = card.querySelector('#stNvSistemaCustom');
+  sistemaSel.onchange = ()=>{ sistemaCustom.style.display = sistemaSel.value==='custom' ? '' : 'none'; };
   const catInput = card.querySelector('#stNvCat');
   const catSug = card.querySelector('#stNvCatSug');
   const cerrarSugerencias = ()=>{ catSug.style.display='none'; catSug.innerHTML=''; };
@@ -4461,6 +4483,12 @@ function stCardNuevo(digits){
     const categoria = (card.querySelector('#stNvCat').value||'').trim();
     const precio = Number(card.querySelector('#stNvPrecio').value);
     if(!nombre || !(precio>0)){ err.textContent='Completá el nombre y el precio.'; return; }
+    const sistema = SISTEMAS_TALLES.find(s=>s.id===sistemaSel.value) || SISTEMAS_TALLES[0];
+    let listaTalles = sistema.id==='custom'
+      ? sistemaCustom.value.split(',').map(t=>t.trim()).filter(Boolean)
+      : sistema.talles;
+    if(!listaTalles.length){ err.textContent='Escribí al menos un talle, separado por coma.'; return; }
+    const talles = listaTalles.map(t=>({talle:t, precio, stock:[]}));
     const codigo = digits.length>=8 ? art5+'XXX' : digits;   // convención de la lista
     const ok = card.querySelector('#stNvOk');
     ok.disabled = true; ok.textContent = 'Creando…';
@@ -4468,11 +4496,11 @@ function stCardNuevo(digits){
       const r = await sbAuthed('/rest/v1/articulos', { method:'POST',
         headers:{ Prefer:'return=representation' },
         body: JSON.stringify({ codigo, nombre, categoria: categoria||null,
-          precio_lista: precio, talles: [{talle:'Único', precio, stock: []}] }) });
+          precio_lista: precio, talles }) });
       const d = await r.json().catch(()=>null);
       if(!r.ok) throw new Error((d && d.message) || 'No se pudo crear el artículo.');
       const nuevo = normArt(Array.isArray(d) && d[0] ? d[0] :
-        {codigo, nombre, categoria, precio_lista: precio, talles:[{talle:'Único', precio, stock:[]}]});
+        {codigo, nombre, categoria, precio_lista: precio, talles});
       CATALOG.push(nuevo); rebuild();
       toast('✓ Artículo creado');
       if(stSeccion==='venta') ventaCardConfirm(nuevo, digits);
