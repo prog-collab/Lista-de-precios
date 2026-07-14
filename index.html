@@ -1995,6 +1995,15 @@ function wireVentaCard(){
     pushHistCliente(cliente);
     card.querySelector('#stCvClientePicker').innerHTML = '';
     renderClienteInfo(' — consultando saldo…');
+    // Si el cliente ya tiene CUIT cargado, se asume que la venta se
+    // factura a su nombre (Factura A): activa "¿Facturar? Sí", elige tipo
+    // A y completa el CUIT solo, sin tener que volver a tipearlo.
+    if(cliente.cuit){
+      const btnSi = card.querySelector('[data-fac="si"]'); if(btnSi) btnSi.click();
+      const btnA = card.querySelector('[data-t="A"]'); if(btnA) btnA.click();
+      card.querySelector('#stFcCuit').value = cliente.cuit;
+      consultarCuit();
+    }
     try{
       const r = await sbAuthed(`/rest/v1/v_cuenta_corriente_saldo?cliente_id=eq.${cliente.id}&select=saldo`);
       const rows = r.ok ? await r.json() : [];
@@ -2021,7 +2030,7 @@ function wireVentaCard(){
         if(q.length<2){ mostrarHistClientesEnBox(resultadosEl, elegirClienteCredito); return; }
         resultadosEl.innerHTML = 'Buscando…';
         try{
-          const r = await sbAuthed(`/rest/v1/clientes?select=id,nombre,telefono,dni&or=(nombre.ilike.*${encodeURIComponent(q)}*,telefono.ilike.*${encodeURIComponent(q)}*,dni.ilike.*${encodeURIComponent(q)}*)&limit=8`);
+          const r = await sbAuthed(`/rest/v1/clientes?select=id,nombre,telefono,dni,cuit&or=(nombre.ilike.*${encodeURIComponent(q)}*,telefono.ilike.*${encodeURIComponent(q)}*,dni.ilike.*${encodeURIComponent(q)}*)&limit=8`);
           const rows = r.ok ? await r.json() : [];
           resultadosEl.innerHTML = (rows.length ? rows.map((c,i)=>
             `<div class="lista" data-i="${i}" style="margin-top:4px; cursor:pointer">
