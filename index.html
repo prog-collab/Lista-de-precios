@@ -212,6 +212,7 @@
       <button id="clientesBtn" class="fbtn" title="Cuenta corriente de clientes">👤</button>
       <button id="traspasosBtn" class="fbtn" title="Traspaso de stock entre locales">🔁</button>
       <button id="devolucionesBtn" class="fbtn" title="Devoluciones de mercadería">↩️</button>
+      <button id="dashboardBtn" class="fbtn" title="Dashboard ASOEM (gerente)">📊</button>
       <button id="helpBtn" class="fbtn" title="Ayuda">❓</button>
       <button id="cartBtn" class="fbtn" title="Carrito">🛒<span id="cartN" class="cbadge" style="display:none"></span></button>
     </div>
@@ -1676,6 +1677,87 @@ function wireTicketButtons(card, d, localSel, telefono){
   };
 }
 
+// Recibo sin valor fiscal para una venta del POS que no se facturó — mismo
+// diseño que "Compartir resumen" del carrito de clientes (drawResumen),
+// pero con los datos reales de la venta (items + medios de pago mixtos).
+function renderReciboX(items, total, formaPagoTexto, localSel){
+  const fecha = new Date().toLocaleDateString('es-AR');
+  const filas = items.map(it=>{
+    const cant = it.manual ? (it.cantidad||1) : 1;
+    const detalle = it.manual ? '' : [it.talle, it.color].filter(Boolean).join(' · ');
+    return `<tr>
+      <td style="padding:3px 0;vertical-align:top">${cant}</td>
+      <td style="padding:3px 6px">${esc(it.nombre)||'(sin nombre)'}${detalle?`<br><span style="color:#777;font-size:11px">${esc(detalle)}</span>`:''}</td>
+      <td style="padding:3px 0;text-align:right;vertical-align:top;white-space:nowrap">${fmt(it.precio)}</td></tr>`;
+  }).join('');
+  return `
+    <div id="stRecibo" style="background:#fff;color:#111;padding:18px;border-radius:10px;margin-top:10px;font-family:'Segoe UI',system-ui,sans-serif">
+      <div style="text-align:center;margin-bottom:8px">
+        <div style="font-size:24px;font-weight:800;letter-spacing:3px">${esc(stLocalNombre(localSel).toUpperCase())}</div>
+        <div style="font-size:12px;color:#555">Recibo X · ${fecha}</div>
+      </div>
+      <div style="border-top:1px dashed #bbb;margin:8px 0"></div>
+      <table style="width:100%;border-collapse:collapse;font-size:13px">
+        <thead><tr style="border-bottom:1px solid #ddd;color:#666;font-size:11px;text-transform:uppercase">
+          <th style="text-align:left;padding-bottom:4px">Cant</th><th style="text-align:left;padding-bottom:4px">Producto</th><th style="text-align:right;padding-bottom:4px">Importe</th></tr></thead>
+        <tbody>${filas}</tbody>
+      </table>
+      <div style="border-top:1px dashed #bbb;margin:8px 0"></div>
+      <div style="display:flex;justify-content:space-between;font-size:13px"><span style="color:#555">Forma de pago</span><span style="text-align:right">${esc(formaPagoTexto)}</span></div>
+      <div style="display:flex;justify-content:space-between;align-items:baseline;font-weight:800;font-size:20px;margin-top:8px"><span>TOTAL</span><span>${fmt(total)}</span></div>
+      <div style="text-align:center;font-size:11px;color:#999;margin-top:12px">¡Gracias por su compra!</div>
+    </div>
+    <button class="addcart" id="stReciboTxt" style="margin-top:8px">📋 Compartir texto</button>
+    <button class="addcart" id="stReciboImg" style="background:var(--accent); color:#03283a; margin-top:6px">🖼 Compartir imagen</button>
+    <div class="note" id="stReciboErr"></div>`;
+}
+
+function textoReciboX(items, total, formaPagoTexto, localSel){
+  const fecha = new Date().toLocaleDateString('es-AR');
+  const lineas = items.map(it=>{
+    const cant = it.manual ? (it.cantidad||1) : 1;
+    const detalle = it.manual ? '' : [it.talle, it.color].filter(Boolean).join(' · ');
+    return `${cant}x ${it.nombre||'(sin nombre)'}${detalle?` (${detalle})`:''} — ${fmt(it.precio)}`;
+  }).join('\n');
+  return `${stLocalNombre(localSel).toUpperCase()}\nRecibo X · ${fecha}\n\n${lineas}\n\n`+
+    `Forma de pago: ${formaPagoTexto}\nTOTAL: ${fmt(total)}\n\n¡Gracias por su compra!`;
+}
+
+function wireReciboXButtons(card, items, total, formaPagoTexto, localSel){
+  card.querySelector('#stReciboTxt').onclick = ()=>{
+    const texto = textoReciboX(items, total, formaPagoTexto, localSel);
+    if(navigator.share){ navigator.share({title:'Recibo', text:texto}).catch(()=>{}); }
+    else if(navigator.clipboard){ navigator.clipboard.writeText(texto).then(()=>alert('Recibo copiado al portapapeles.')); }
+    else { alert(texto); }
+  };
+  card.querySelector('#stReciboImg').onclick = async ()=>{
+    const btn = card.querySelector('#stReciboImg');
+    const err = card.querySelector('#stReciboErr');
+    err.textContent = '';
+    btn.disabled = true; btn.textContent = 'Generando imagen…';
+    try{
+      await loadHtml2Canvas();
+      const node = card.querySelector('#stRecibo');
+      const canvas = await html2canvas(node, {scale:2, backgroundColor:'#ffffff'});
+      canvas.toBlob(async blob=>{
+        if(!blob){ err.textContent = 'No se pudo generar la imagen.'; btn.disabled=false; btn.textContent='🖼 Compartir imagen'; return; }
+        const file = new File([blob], 'recibo.png', {type:'image/png'});
+        if(navigator.canShare && navigator.canShare({files:[file]})){
+          try{ await navigator.share({files:[file], title:'Recibo'}); }catch(e){}
+        } else {
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a'); a.href=url; a.download='recibo.png'; a.click();
+          setTimeout(()=>URL.revokeObjectURL(url), 2000);
+        }
+        btn.disabled=false; btn.textContent='🖼 Compartir imagen';
+      }, 'image/png');
+    }catch(e){
+      err.textContent = 'No se pudo generar la imagen (¿sin internet?).';
+      btn.disabled=false; btn.textContent='🖼 Compartir imagen';
+    }
+  };
+}
+
 function wireVentaCard(){
   const card = document.getElementById('stVentaCard');
   // OJO: no cachear stLocal() en una const acá — este bloque se arma antes de
@@ -1690,6 +1772,7 @@ function wireVentaCard(){
   const CAMPOS_PAGO = ['stCvContado','stCvTransf','stCvTCred','stCvTDeb','stCvCPer','stCvCFin'];
   CAMPOS_PAGO.forEach(id=> card.querySelector('#'+id).addEventListener('input', recalcSaldoVenta));
   card.querySelector('#stCvTCredCuotas').addEventListener('change', recalcSaldoVenta);
+  card.querySelector('#stCvCFinCuotas').addEventListener('change', recalcSaldoVenta);
   card.querySelector('#stCvTransfDescuento').addEventListener('change', recalcSaldoVenta);
   [...card.querySelectorAll('#stCvContadoDescuento [data-desc]')].forEach(b=> b.onclick=()=>{
     [...card.querySelectorAll('#stCvContadoDescuento [data-desc]')].forEach(x=>x.classList.remove('sel'));
@@ -1881,7 +1964,10 @@ function wireVentaCard(){
     const transfAlias = card.querySelector('#stCvTransfAlias').value||null;
     const pagoTDeb = Number(card.querySelector('#stCvTDeb').value)||0;
     const pagoCPer = Number(card.querySelector('#stCvCPer').value)||0;
-    const pagoCFin = Number(card.querySelector('#stCvCFin').value)||0;
+    const cuotasCFin = cuotasSeleccionadasCFin();
+    const recargoPctCFin = CUOTAS_INT.includes(cuotasCFin) ? Number((tasaMensual*cuotasCFin).toFixed(2)) : 0;
+    const pagoCFin = montoFinalCFin();
+    const autorizacionAsoem = (card.querySelector('#stCvCFinAutorizacion').value||'').trim();
     const saldoPendiente = Math.max(0, total - (pagoContado+pagoTransf+pagoTCred+pagoTDeb+pagoCPer+pagoCFin));
     const cuit = (card.querySelector('#stFcCuit').value||'').replace(/\D/g,'');
     const fecha = card.querySelector('#stFcFecha').value;
@@ -1889,6 +1975,8 @@ function wireVentaCard(){
     if(saldoPendiente>0){ err.textContent='⚠ Falta cargar medios de pago — el saldo pendiente tiene que quedar en $0 para guardar la venta.'; return; }
     if(pagoTransf>0 && !transfAlias){ err.textContent='Elegí a qué alias se transfirió.'; return; }
     if(pagoCPer>0 && !clienteCreditoId){ err.textContent='Elegí un cliente (arriba, junto al total) para el crédito personal.'; return; }
+    if(pagoCFin>0 && !clienteCreditoId){ err.textContent='Elegí un cliente (arriba, junto al total) para el crédito financiero (ASOEM).'; return; }
+    if(pagoCFin>0 && !autorizacionAsoem){ err.textContent='Cargá el número de autorización de ASOEM.'; return; }
     if(facturar && tipo==='A' && cuit.length!==11){ err.textContent='Para Factura A escribí el CUIT del cliente (11 dígitos).'; return; }
     if(facturar && !fecha){ err.textContent='Elegí la fecha del comprobante.'; return; }
     err.textContent=''; ok.disabled=true; ok.textContent = 'Verificando caja…';
@@ -1915,6 +2003,8 @@ function wireVentaCard(){
           pago_tarjeta_credito: pagoTCred, pago_tarjeta_debito: pagoTDeb,
           pago_credito_personal: pagoCPer, pago_credito_financiero: pagoCFin, saldo_pendiente: saldoPendiente,
           tarjeta_credito_cuotas: cuotasTCred, tarjeta_credito_recargo_pct: recargoPct,
+          asoem_cuotas: pagoCFin>0 ? cuotasCFin : null, asoem_recargo_pct: pagoCFin>0 ? recargoPctCFin : null,
+          asoem_autorizacion: pagoCFin>0 ? autorizacionAsoem : null,
           cliente_id: clienteCreditoId,
           caja_sesion_id: sesionAbierta.id,
           facturada: false,
@@ -1964,8 +2054,24 @@ function wireVentaCard(){
         resultadoEl.innerHTML = renderTicket(d, localSel);
         wireTicketButtons(card, d, localSel, clienteTelefono);
       } else {
-        resultadoEl.style.flex = '2 1 200px';   // comparte fila con el botón "Nueva venta"
-        resultadoEl.innerHTML = `<div class="lista" style="display:flex; align-items:center; justify-content:space-between; text-align:left; padding:10px 14px; height:100%; box-sizing:border-box"><div class="l" style="margin:0">✓ Venta guardada</div><div class="v" style="font-size:20px; margin:0">${money(total)}</div></div>`;
+        // Sin factura AFIP: igual se puede compartir un recibo sin valor
+        // fiscal ("Recibo X"), mismo diseño que "Compartir resumen" del
+        // carrito de clientes, con los items y medios de pago reales de
+        // esta venta (hay que armarlo ANTES de vaciar stVentaItems).
+        resultadoEl.style.flex = '1 1 100%';
+        const formaPagoTexto = mediosDePagoVenta({
+          pago_contado: pagoContado, contado_descuento_pct: contadoDescPct,
+          pago_transferencia: pagoTransf, transferencia_alias: transfAlias, transferencia_descuento_pct: transfDescuentoPct,
+          pago_tarjeta_credito: pagoTCred, tarjeta_credito_cuotas: cuotasTCred, tarjeta_credito_recargo_pct: recargoPct,
+          pago_tarjeta_debito: pagoTDeb,
+          pago_credito_personal: pagoCPer, clientes: clienteCreditoNombre ? {nombre: clienteCreditoNombre} : null,
+          pago_credito_financiero: pagoCFin, asoem_cuotas: pagoCFin>0 ? cuotasCFin : null,
+          asoem_recargo_pct: pagoCFin>0 ? recargoPctCFin : null,
+        });
+        const itemsVendidos = stVentaItems.slice();
+        resultadoEl.innerHTML = `<div class="lista" style="text-align:left; padding:10px 14px"><div class="l" style="margin:0">✓ Venta guardada</div><div class="v" style="font-size:20px; margin:0">${money(total)}</div></div>` +
+          renderReciboX(itemsVendidos, total, formaPagoTexto, localSel);
+        wireReciboXButtons(card, itemsVendidos, total, formaPagoTexto, localSel);
       }
       stVentaTotal = 0; stVentaItems = []; stVentaDevolucionId = null;
       renderCarrito();
@@ -2068,6 +2174,13 @@ document.getElementById('devolucionesBtn').onclick = ()=>{
   setLS('pantalla_actual', 'devoluciones');
   drawDevoluciones();
 };
+document.getElementById('dashboardBtn').onclick = ()=>{
+  stOpen = true;
+  document.getElementById('ov').classList.add('open','ov-full');
+  history.pushState({detalle:1}, '');
+  setLS('pantalla_actual', 'dashboard');
+  drawDashboardAsoem();
+};
 function stCerrar(viaHistory){
   if(!stOpen) return;
   stOpen=false; stStopped=true; stBusy=false;
@@ -2111,6 +2224,7 @@ function navIconsHtml(){
     <button type="button" class="fbtn" data-nav="clientesBtn" title="Cuenta corriente de clientes">👤</button>
     <button type="button" class="fbtn" data-nav="traspasosBtn" title="Traspaso de stock entre locales">🔁</button>
     <button type="button" class="fbtn" data-nav="devolucionesBtn" title="Devoluciones de mercadería">↩️</button>
+    <button type="button" class="fbtn" data-nav="dashboardBtn" title="Dashboard ASOEM (gerente)">📊</button>
     <button type="button" class="fbtn" data-nav="helpBtn" title="Ayuda">❓</button>
     <button type="button" class="fbtn" data-nav="cartBtn" title="Carrito">🛒</button>
   </div>`;
@@ -2372,11 +2486,22 @@ function drawVender(){
             </div>
             <div class="note">Elegí el cliente arriba, junto al total.</div>
           </div>
-          <div><div class="note" style="margin:0 0 4px">Crédito financiero</div>
+          <div><div class="note" style="margin:0 0 4px">Crédito financiero (ASOEM)</div>
             <div style="display:flex; gap:4px">
               <input id="stCvCFin" class="search" type="number" inputmode="decimal" value="0" style="flex:1">
               <button class="fbtn" type="button" data-usar-total="stCvCFin" style="flex:none; padding:0 10px" title="Usar el total del carrito">＝</button>
-            </div></div>
+            </div>
+            <select id="stCvCFinCuotas" class="search" style="margin-top:4px">
+              <option value="1">1 pago</option>
+              <option value="3">3 cuotas sin interés</option>
+              ${CUOTAS_INT.map(n=>`<option value="${n}">${n} cuotas (+${(tasaMensual*n).toFixed(1)}%)</option>`).join('')}
+            </select>
+            <div class="note" id="stCvCFinRecargoInfo" style="margin-top:2px"></div>
+            <div id="stCvCFinAutorizacionBox" style="display:none; margin-top:4px">
+              <input id="stCvCFinAutorizacion" class="search" placeholder="N° de autorización ASOEM" autocomplete="off">
+            </div>
+            <div class="note">Elegí el cliente arriba, junto al total.</div>
+          </div>
         </div>
         <div class="note">Tocá "＝" al lado de un medio de pago para cargarle el total del carrito de una — pone el resto en $0.</div>
         <div class="lista" style="margin-top:8px; display:flex; align-items:center; justify-content:space-between; text-align:left; padding:10px 14px">
@@ -2442,9 +2567,12 @@ function drawVender(){
       return terms.every(t=>hay.includes(t));
     }).slice(0,8);
     resultadosBox.innerHTML = encontrados.length ? encontrados.map((p,i)=>`
-      <div class="lista" data-i="${i}" style="margin-top:4px; cursor:pointer; text-align:left">
-        <div class="l">${esc(p.codigo)} · ${esc(p.categoria||'')}</div>
-        <div class="v" style="font-size:15px">${esc(p.nombre)}</div>
+      <div class="lista" data-i="${i}" style="margin-top:4px; cursor:pointer; text-align:left; display:flex; justify-content:space-between; align-items:center; gap:8px">
+        <div>
+          <div class="l">${esc(p.codigo)} · ${esc(p.categoria||'')}</div>
+          <div class="v" style="font-size:15px">${esc(p.nombre)}</div>
+        </div>
+        <div class="precio" style="flex:none">${fmt(p.precio_lista)}</div>
       </div>`).join('') : '<div class="note">Sin resultados.</div>';
     [...resultadosBox.querySelectorAll('[data-i]')].forEach(el=> el.onclick=()=>{
       const p = encontrados[Number(el.dataset.i)];
@@ -3719,6 +3847,109 @@ async function renderHistorialDevoluciones(){
   }catch(e){ box.innerHTML = `<div class="note">No se pudo cargar el historial.</div>`; }
 }
 
+// ===== 📊 Dashboard ASOEM (solo gerente): seguimiento de las ventas
+// financiadas por el sindicato ASOEM (cuotas + N° de autorización).
+// Vive en esta app (no en la web, que quedó solo para fotos/contenido
+// publicado) — la RLS de "ventas" ya restringe el historial completo a
+// gerente, así que esto es doble candado (UI + base de datos).
+function drawDashboardAsoem(){
+  const sheet = document.getElementById('sheet');
+  sheet.classList.add('sheet-wide');
+  if(!sbSession){
+    sheet.innerHTML = `
+      ${navIconsHtml()}
+      <div class="topbtns"><button class="backbtn" id="stClose">✕ Cerrar</button></div>
+      <h2>📊 Dashboard ASOEM</h2>
+      <div class="scat">Iniciá sesión con tu usuario del panel para poder consultarlo.</div>
+      <div class="label">Usuario</div>
+      <input id="stEmail" class="search" type="text" autocomplete="username">
+      <div class="label">Contraseña</div>
+      <input id="stPass" class="search" type="password" autocomplete="current-password">
+      <button class="addcart" id="stLoginBtn">Ingresar</button>
+      <div class="note" id="stLoginErr"></div>`;
+    wireNavIcons(sheet);
+    document.getElementById('stClose').onclick = ()=> stCerrar(false);
+    document.getElementById('stLoginBtn').onclick = async ()=>{
+      const err = document.getElementById('stLoginErr');
+      const b = document.getElementById('stLoginBtn');
+      b.disabled = true; b.textContent = 'Ingresando…';
+      try{
+        await sbLogin(usuarioAEmail(document.getElementById('stEmail').value),
+                      document.getElementById('stPass').value);
+        drawDashboardAsoem();
+      }catch(e){ b.disabled=false; b.textContent='Ingresar'; err.textContent = e.message; }
+    };
+    return;
+  }
+  sheet.innerHTML = `
+    ${navIconsHtml()}
+    <div class="topbtns"><button class="backbtn" id="stClose">✕ Cerrar</button></div>
+    <h2>📊 Dashboard ASOEM</h2>
+    <div class="scat">Sesión: ${esc(mostrarUsuario(sbSession.email))} · <a href="#" id="stLogout" style="color:var(--accent)">salir</a></div>
+    <div id="daBox"><div class="note">Verificando permisos…</div></div>`;
+  wireNavIcons(sheet);
+  document.getElementById('stClose').onclick = ()=> stCerrar(false);
+  document.getElementById('stLogout').onclick = (e)=>{ e.preventDefault();
+    sbSession=null; setLS('sb_session', null); miRolCache=null; miLocalAsignadoCache=undefined; drawDashboardAsoem(); };
+  cargarMiRol().then(rol=>{
+    if(rol!=='gerente'){
+      document.getElementById('daBox').innerHTML = `<div class="lista" style="margin-top:10px">
+        <div class="l">Acceso restringido</div>
+        <div class="v" style="font-size:16px">Esta sección es solo para gerentes.</div></div>`;
+      return;
+    }
+    renderDashboardAsoem();
+  });
+}
+
+async function renderDashboardAsoem(){
+  const box = document.getElementById('daBox');
+  box.innerHTML = `<div class="note">Cargando ventas ASOEM…</div>`;
+  try{
+    const r = await sbAuthed(`/rest/v1/ventas?pago_credito_financiero=gt.0&order=fecha.desc,created_at.desc&select=*,clientes(nombre,cuit,telefono)&limit=500`);
+    if(!r.ok) throw new Error('No se pudo consultar las ventas.');
+    const ventas = await r.json();
+    const totalFinanciado = ventas.reduce((s,v)=> s+(Number(v.pago_credito_financiero)||0), 0);
+    const clientesDistintos = new Set(ventas.map(v=>v.cliente_id).filter(Boolean)).size;
+    const sinAutorizacion = ventas.filter(v=> !v.asoem_autorizacion).length;
+    box.innerHTML = `
+      <div class="grid" style="margin-top:10px; grid-template-columns:repeat(auto-fit,minmax(150px,1fr))">
+        <div class="box blue"><div class="t">Total financiado</div><div class="p">${money(totalFinanciado)}</div><div class="s">${ventas.length} venta${ventas.length!==1?'s':''}</div></div>
+        <div class="box green"><div class="t">Clientes ASOEM</div><div class="p">${clientesDistintos}</div><div class="s">distintos</div></div>
+        <div class="box" style="${sinAutorizacion>0?'border-color:var(--warn)':''}"><div class="t">Sin N° de autorización</div><div class="p" style="${sinAutorizacion>0?'color:var(--warn)':''}">${sinAutorizacion}</div><div class="s">a revisar</div></div>
+      </div>
+      <div class="label" style="margin-top:16px">Ventas financiadas por ASOEM</div>
+      <input id="daFiltro" class="search" placeholder="Buscar por cliente, autorización o local…" autocomplete="off" style="margin-bottom:8px">
+      <div id="daLista"></div>`;
+    const listaEl = document.getElementById('daLista');
+    const renderLista = (q)=>{
+      const qn = norm(q||'');
+      const filtradas = qn ? ventas.filter(v=>{
+        const hay = norm((v.clientes&&v.clientes.nombre||'')+' '+(v.asoem_autorizacion||'')+' '+(v.local||''));
+        return hay.includes(qn);
+      }) : ventas;
+      listaEl.innerHTML = filtradas.length ? filtradas.map(v=>{
+        const fechaFmt = v.fecha ? v.fecha.split('-').reverse().join('/') : '—';
+        const cuotasTxt = v.asoem_cuotas>1
+          ? `${v.asoem_cuotas} cuotas${v.asoem_recargo_pct>0?` (+${v.asoem_recargo_pct}%)`:' sin interés'}`
+          : '1 pago';
+        return `<div class="lista" style="margin-top:6px; text-align:left">
+          <div style="display:flex; justify-content:space-between; gap:8px">
+            <span class="l">${esc(fechaFmt)} · ${esc(stLocalNombre(v.local))}</span>
+            <span class="v" style="font-size:16px">${money(v.pago_credito_financiero)}</span>
+          </div>
+          <div class="note" style="margin-top:2px">${esc(v.clientes && v.clientes.nombre || 'Sin cliente asociado')}${v.clientes&&v.clientes.cuit?` · ${esc(v.clientes.cuit)}`:''}${v.clientes&&v.clientes.telefono?` · ${esc(v.clientes.telefono)}`:''}</div>
+          <div class="note" style="margin-top:1px">${esc(cuotasTxt)} · Autorización: ${v.asoem_autorizacion?esc(v.asoem_autorizacion):'⚠ sin cargar'} · ${v.facturada?'Facturada':'No facturada'}</div>
+        </div>`;
+      }).join('') : '<div class="note">Sin resultados.</div>';
+    };
+    renderLista('');
+    document.getElementById('daFiltro').addEventListener('input', e=> renderLista(e.target.value));
+  }catch(e){
+    box.innerHTML = `<div class="note">No se pudo cargar el dashboard: ${esc(e.message||e)}</div>`;
+  }
+}
+
 function mediosDePagoVenta(v){
   return [
     v.pago_contado>0 && `Efectivo ${money(v.pago_contado)}${v.contado_descuento_pct>0?` (−${v.contado_descuento_pct}%)`:''}`,
@@ -3726,7 +3957,7 @@ function mediosDePagoVenta(v){
     v.pago_tarjeta_credito>0 && `T.Créd ${money(v.pago_tarjeta_credito)}${v.tarjeta_credito_cuotas>1?` (${v.tarjeta_credito_cuotas} cuotas, +${v.tarjeta_credito_recargo_pct}%)`:''}`,
     v.pago_tarjeta_debito>0 && `T.Déb ${money(v.pago_tarjeta_debito)}`,
     v.pago_credito_personal>0 && `Créd.Pers ${money(v.pago_credito_personal)}${v.clientes&&v.clientes.nombre?` (${esc(v.clientes.nombre)})`:''}`,
-    v.pago_credito_financiero>0 && `Créd.Fin ${money(v.pago_credito_financiero)}`,
+    v.pago_credito_financiero>0 && `Créd.Fin ASOEM ${money(v.pago_credito_financiero)}${v.asoem_cuotas>1?` (${v.asoem_cuotas} cuotas${v.asoem_recargo_pct>0?`, +${v.asoem_recargo_pct}%`:' sin interés'})`:''}${v.asoem_autorizacion?` · autorización ${esc(v.asoem_autorizacion)}`:''}`,
   ].filter(Boolean).join(' · ') || 'Sin medio de pago cargado';
 }
 
@@ -3978,6 +4209,12 @@ function cuotasSeleccionadas(){ const el=document.getElementById('stCvTCredCuota
 function montoBaseTarjeta(){ const el=document.getElementById('stCvTCred'); return el ? Number(el.value)||0 : 0; }
 function montoFinalTarjeta(){ return montoBaseTarjeta() * factorCuotas(cuotasSeleccionadas()); }
 
+// Crédito financiero ASOEM: mismas cuotas/recargo que tarjeta de crédito
+// (1 pago, 3 sin interés, 6/9/12 con interés = tasaMensual × cuotas).
+function cuotasSeleccionadasCFin(){ const el=document.getElementById('stCvCFinCuotas'); return el ? Number(el.value)||1 : 1; }
+function montoBaseCFin(){ const el=document.getElementById('stCvCFin'); return el ? Number(el.value)||0 : 0; }
+function montoFinalCFin(){ return montoBaseCFin() * factorCuotas(cuotasSeleccionadasCFin()); }
+
 // Descuento −5% en transferencia (incentiva ese medio de pago frente a tarjeta).
 const DESCUENTO_TRANSFERENCIA = 5;
 function descuentoTransferenciaActivo(){ const el=document.getElementById('stCvTransfDescuento'); return !!(el && el.checked); }
@@ -3998,7 +4235,7 @@ function montoFinalContado(){ return montoBaseContado() * (1 - contadoDescuentoP
 // siguen calculándose sobre el precio de contado del carrito.
 function totalConRecargo(){
   return stVentaTotal + (montoFinalTarjeta() - montoBaseTarjeta()) + (montoFinalTransferencia() - montoBaseTransferencia())
-    + (montoFinalContado() - montoBaseContado());
+    + (montoFinalContado() - montoBaseContado()) + (montoFinalCFin() - montoBaseCFin());
 }
 
 function actualizarTotalVenta(){
@@ -4027,9 +4264,18 @@ function recalcSaldoVenta(){
     const baseC = montoBaseContado(), finalC = montoFinalContado();
     descContEl.textContent = (contadoDescuentoPct()>0 && baseC>0) ? `Con descuento: ${money(finalC)} (−${money(baseC-finalC)})` : '';
   }
-  const pagado = ['stCvTDeb','stCvCPer','stCvCFin']
+  const recargoCFinEl = document.getElementById('stCvCFinRecargoInfo');
+  if(recargoCFinEl){
+    const n = cuotasSeleccionadasCFin(), base = montoBaseCFin(), final = montoFinalCFin();
+    recargoCFinEl.textContent = base>0 && n>1
+      ? (final>base ? `Con ${n} cuotas: ${money(final)} (recargo +${money(final-base)})` : `${n} cuotas sin interés: ${money(final)}`)
+      : '';
+  }
+  const autorizacionBox = document.getElementById('stCvCFinAutorizacionBox');
+  if(autorizacionBox) autorizacionBox.style.display = montoBaseCFin()>0 ? '' : 'none';
+  const pagado = ['stCvTDeb','stCvCPer']
     .reduce((acc,id)=>{ const el=document.getElementById(id); return acc + (el ? Number(el.value)||0 : 0); }, 0)
-    + montoFinalTarjeta() + montoFinalTransferencia() + montoFinalContado();
+    + montoFinalTarjeta() + montoFinalTransferencia() + montoFinalContado() + montoFinalCFin();
   const saldo = Math.max(0, total-pagado);
   saldoEl.textContent = money(saldo);
   saldoEl.style.color = saldo>0 ? 'var(--warn)' : '';
