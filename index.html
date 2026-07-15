@@ -2546,11 +2546,14 @@ function drawStock(){
         <div class="l">${esc(p.codigo)} · ${esc(p.categoria||'')}</div>
         <div class="v" style="font-size:15px">${esc(p.nombre)}</div>
       </div>`).join('') : '<div class="note">Sin resultados.</div>';
-    [...resultadosBox.querySelectorAll('[data-i]')].forEach(el=> el.onclick=()=>{
+    [...resultadosBox.querySelectorAll('[data-i]')].forEach(el=> el.onclick=async ()=>{
       const p = encontrados[Number(el.dataset.i)];
       man.value=''; resultadosBox.innerHTML='';
       stBusy = true;
       stDetenerCamara();
+      const card = document.getElementById('stCard');
+      if(card) card.innerHTML = '<div class="note">Actualizando stock…</div>';
+      await refrescarArticulo(p);
       stCardConfirm(p, p.codigo);
     });
   });
@@ -2800,11 +2803,14 @@ function drawVender(){
         </div>
         <div class="precio" style="flex:none">${fmt(p.precio_lista)}</div>
       </div>`).join('') : '<div class="note">Sin resultados.</div>';
-    [...resultadosBox.querySelectorAll('[data-i]')].forEach(el=> el.onclick=()=>{
+    [...resultadosBox.querySelectorAll('[data-i]')].forEach(el=> el.onclick=async ()=>{
       const p = encontrados[Number(el.dataset.i)];
       man.value=''; resultadosBox.innerHTML='';
       stBusy = true;
       stDetenerCamara();
+      const card = document.getElementById('stCard');
+      if(card) card.innerHTML = '<div class="note">Actualizando stock…</div>';
+      await refrescarArticulo(p);
       ventaCardConfirm(p, p.codigo);
     });
   });
