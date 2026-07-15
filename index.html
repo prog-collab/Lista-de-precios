@@ -4757,7 +4757,7 @@ async function stCamara(){
   }
 }
 
-function stProcesar(raw){
+async function stProcesar(raw){
   const digits = (raw||'').replace(/\D/g,'');
   if(!digits) return;
   stBusy = true;   // pausa la detección mientras la tarjeta está abierta
@@ -4768,8 +4768,29 @@ function stProcesar(raw){
   stDetenerCamara();
   const p = buscarArticuloBarcode(digits);
   if(!p){ stCardNuevo(digits); return; }
+  const card = document.getElementById('stCard');
+  if(card) card.innerHTML = '<div class="note">Actualizando stock…</div>';
+  await refrescarArticulo(p);
   if(stSeccion==='venta') ventaCardConfirm(p, digits);
   else stCardConfirm(p, digits);
+}
+
+// Antes de mostrar la tarjeta de color/talle, trae de Supabase el stock
+// MÁS ACTUAL de este artículo puntual (no todo el catálogo, para que sea
+// rápido) — evita que la tarjeta se abra con el número viejo que quedó en
+// memoria desde que se cargó la app, si en el medio se sumó stock de otro
+// talle/color del mismo producto (desde este celular o desde otro).
+async function refrescarArticulo(p){
+  try{
+    const r = await fetch(`${SB_URL}/rest/v1/articulos?codigo=eq.${encodeURIComponent(p.codigo)}&select=talles`,
+      { headers:{ apikey:SB_KEY, Authorization:'Bearer '+SB_KEY }, cache:'no-store' });
+    if(!r.ok) return;
+    const rows = await r.json();
+    if(rows[0] && Array.isArray(rows[0].talles)){
+      p.talles = rows[0].talles.map(t=>({ talle:t.talle, precio:Number(t.precio),
+        stock: Array.isArray(t.stock) ? t.stock : [] }));
+    }
+  }catch(e){ /* sin conexión: seguimos con lo que ya había en memoria */ }
 }
 
 function stDetenerCamara(){
