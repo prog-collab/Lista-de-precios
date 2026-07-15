@@ -1655,18 +1655,35 @@ const LOCAL_INFO = {
 // térmico suele salir manchada/con banding.
 function logoTicket(localSel){
   if(localSel==='giustozzi'){
-    return `<div style="text-align:center; margin-bottom:6px">
-      <div style="font-family:Georgia,'Times New Roman',serif; font-weight:bold; font-size:22px; letter-spacing:3px">GIUSTOZZI</div>
-      <div style="font-family:Georgia,'Times New Roman',serif; font-style:italic; font-size:13px; margin-top:-2px">Classics</div>
+    return `<div style="text-align:center; margin-bottom:8px">
+      <div style="font-family:Georgia,'Times New Roman',serif; font-weight:bold; font-size:28px; letter-spacing:3px">GIUSTOZZI</div>
+      <div style="font-family:Georgia,'Times New Roman',serif; font-style:italic; font-size:16px; margin-top:-2px">Classics</div>
     </div>`;
   }
-  return `<div style="text-align:center; margin-bottom:6px">
-    <div style="font-size:11px; letter-spacing:3px">• • • • •</div>
-    <div style="font-weight:bold; font-size:22px; letter-spacing:5px; margin:2px 0">CAMERINO</div>
+  return `<div style="text-align:center; margin-bottom:8px">
+    <div style="font-size:13px; letter-spacing:3px">• • • • •</div>
+    <div style="font-weight:bold; font-size:28px; letter-spacing:5px; margin:2px 0">CAMERINO</div>
     <div style="border-top:1px solid var(--accent); width:70%; margin:2px auto"></div>
-    <div style="font-size:9px; letter-spacing:1.5px">INDUMENTARIA FEMENINA Y MASCULINA</div>
-    <div style="font-size:11px; letter-spacing:3px; margin-top:2px">• • • • •</div>
+    <div style="font-size:11px; letter-spacing:1.5px">INDUMENTARIA FEMENINA Y MASCULINA</div>
+    <div style="font-size:13px; letter-spacing:3px; margin-top:2px">• • • • •</div>
   </div>`;
+}
+// Ley 27.743 -- Régimen de Transparencia Fiscal al Consumidor (obligatorio
+// para minoristas desde el 1/4/2025): hay que discriminar en el comprobante
+// el IVA y otros impuestos nacionales indirectos contenidos en el precio.
+// La indumentaria tributa IVA a la tasa general (21%, no la reducida del
+// 10.5%) y no tiene impuestos internos, así que "otros impuestos" da $0.
+// Fórmula: IVA = precio_final × 21/121 (ej. oficial: $3.000 -> IVA $520,66).
+function transparenciaFiscalTicket(monto){
+  const total = Number(monto) || 0;
+  const iva = Math.round(total * 21/121 * 100) / 100;
+  const otros = 0;
+  const sinImpuestos = Math.round((total - iva - otros) * 100) / 100;
+  return `
+    <div class="l" style="text-align:center; font-size:10px">Régimen de Transparencia Fiscal al Consumidor (Ley 27.743)</div>
+    <div class="l" style="display:flex; justify-content:space-between"><span>IVA discriminado</span><span>${money(iva)}</span></div>
+    <div class="l" style="display:flex; justify-content:space-between"><span>Otros imp. nac. indirectos</span><span>${money(otros)}</span></div>
+    <div class="l" style="display:flex; justify-content:space-between"><span>Importe sin impuestos nacionales</span><span>${money(sinImpuestos)}</span></div>`;
 }
 function renderTicket(d, localSel){
   const homolog = d.ambiente==='homologacion';
@@ -1699,6 +1716,8 @@ function renderTicket(d, localSel){
         </div>`).join('')}
       ${(d.items||[]).length ? `<div style="border-top:1px dashed var(--accent); margin:8px 0"></div>` : ''}
       <div class="v" style="font-size:20px; display:flex; justify-content:space-between"><span>TOTAL</span><span>${money(d.monto)}</span></div>
+      <div style="border-top:1px dashed var(--accent); margin:8px 0"></div>
+      ${transparenciaFiscalTicket(d.monto)}
       <div style="border-top:1px dashed var(--accent); margin:8px 0"></div>
       <div class="l">CAE: ${esc(d.cae)}</div>
       <div class="l">Vto. CAE: ${esc(fechaFmtDe(d.caeVencimiento))}</div>
@@ -1841,9 +1860,17 @@ function wireTicketButtons(card, d, localSel, telefono){
   card.querySelector('#stTicketPrint').onclick = ()=>{
     const ticket = card.querySelector('#stTicket');
     const w = window.open('', '_blank');
+    // Esta ventana es un documento nuevo y en blanco -- NO hereda el CSS de
+    // la app (clases .lista/.l/.v), así que hay que redefinir acá su
+    // tipografía a mano; si no, el navegador imprime con su tamaño/peso por
+    // defecto (más grande y más fino de lo pensado, se ve borroso en la
+    // térmica). Negrita en todo + tamaño ajustado = texto nítido en 80mm.
     w.document.write(`<html><head><title>Ticket</title><style>
       html, body{ margin:0; padding:0 }
-      body{font-family:'Courier New',monospace; width:100%; box-sizing:border-box}
+      body{font-family:'Courier New',monospace; width:100%; box-sizing:border-box; font-size:13px; font-weight:600}
+      .lista{text-align:center}
+      .l{font-size:13px; font-weight:600}
+      .v{font-weight:800}
       *{color:#000!important; background:#fff!important; border-color:#000!important}
     </style></head><body>${ticket.outerHTML}</body></html>`);
     w.document.close();
