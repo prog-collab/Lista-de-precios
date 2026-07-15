@@ -4974,23 +4974,30 @@ function stCardConfirm(p, digits){
       ? editCustom.value.split(',').map(t=>t.trim()).filter(Boolean)
       : sistema.talles;
     if(!listaTalles.length){ editErr.textContent='Escribí al menos un talle, separado por coma.'; return; }
-    // Conserva stock y precio de los talles que coincidan por nombre (case-insensitive);
-    // los talles nuevos arrancan sin stock cargado, con el precio de lista como default.
-    const nuevosTalles = listaTalles.map(t=>{
-      const existente = p.talles.find(x=>norm(x.talle)===norm(t));
-      return existente
-        ? { talle:t, precio:Number(existente.precio), stock:existente.stock||[] }
-        : { talle:t, precio:Number(p.precio_lista)||0, stock:[] };
-    });
+    // El servidor (editar_sistema_talles) es quien arma el array final,
+    // conservando stock/precio de los talles que coincidan por nombre —
+    // nunca se manda stock desde acá. Los talles viejos con stock que no
+    // tengan equivalente en la lista nueva se pierden (quedan auditados
+    // en stock_movimientos), así que avisamos antes de mandar el cambio.
+    const norms = listaTalles.map(norm);
+    const perdidos = p.talles.filter(t=> !norms.includes(norm(t.talle))
+      && (t.stock||[]).some(s=> (Number(s.camerino)||0)+(Number(s.giustozzi)||0) > 0));
+    if(perdidos.length){
+      const detalle = perdidos.map(t=>{
+        const cant = (t.stock||[]).reduce((a,s)=> a+(Number(s.camerino)||0)+(Number(s.giustozzi)||0), 0);
+        return `${t.talle} (${cant} u.)`;
+      }).join(', ');
+      if(!confirm(`El talle ${detalle} no está en el nuevo sistema y tiene stock cargado — se va a perder. ¿Continuar?`)) return;
+    }
     const btn = card.querySelector('#stEditGuardar');
     btn.disabled = true; btn.textContent = 'Guardando…';
     try{
-      const r = await sbAuthed(`/rest/v1/articulos?codigo=eq.${encodeURIComponent(p.codigo)}`, { method:'PATCH',
-        headers:{ Prefer:'return=representation' },
-        body: JSON.stringify({ talles: nuevosTalles }) });
+      const r = await sbAuthed('/rest/v1/rpc/editar_sistema_talles', { method:'POST',
+        body: JSON.stringify({ p_codigo:p.codigo, p_talles:listaTalles, p_precio:Number(p.precio_lista)||null,
+          p_usuario: sbSession && sbSession.email || null }) });
       const d = await r.json().catch(()=>null);
-      if(!r.ok) throw new Error((d && d.message) || 'No se pudo actualizar el sistema de talles.');
-      p.talles = stMapTalles((Array.isArray(d) && d[0] && d[0].talles) || nuevosTalles);
+      if(!r.ok) throw new Error((d && (d.message||d.hint)) || 'No se pudo actualizar el sistema de talles.');
+      p.talles = stMapTalles(d);
       sel = p.talles.length===1 ? 0 : -1;
       editPanel.style.display = 'none';
       btn.disabled = false; btn.textContent = 'Guardar sistema de talles';
