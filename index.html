@@ -1599,6 +1599,11 @@ function talleTieneStock(t){
 const money = n => '$'+Number(n||0).toLocaleString('es-AR');
 const API_FACTURAR = 'https://www.camerino.com.ar/api/facturar';
 const API_CONSULTAR_CUIT = 'https://www.camerino.com.ar/api/consultar-cuit';
+const API_VERIFICAR_TRANSFERENCIA = 'https://www.camerino.com.ar/api/verificar-transferencia';
+// Alias de transferencia que son de verdad cuentas de Mercado Pago (tienen
+// Access Token configurado del lado del servidor) — "juan01" es una
+// transferencia bancaria común, no se puede verificar automáticamente.
+const ALIAS_MERCADOPAGO = ['giustozzi.mp', 'flor.barberis.86'];
 
 // Tarjeta para emitir la factura electrónica (AFIP/ARCA) por el total acumulado.
 const isoLocal = d => { const p=n=>String(n).padStart(2,'0'); return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`; };
@@ -1933,6 +1938,46 @@ function wireVentaCard(){
   card.querySelector('#stCvTCredCuotas').addEventListener('change', recalcSaldoVenta);
   card.querySelector('#stCvCFinCuotas').addEventListener('change', recalcSaldoVenta);
   card.querySelector('#stCvTransfDescuento').addEventListener('change', recalcSaldoVenta);
+  // Verificar transferencia contra la cuenta real de Mercado Pago (solo
+  // para los alias que son de verdad cuentas de MP con token configurado
+  // en el servidor) — busca, entre los pagos recibidos desde que se eligió
+  // ese alias, uno aprobado con el mismo monto, en vez de comparar el
+  // saldo total de la cuenta (poco confiable con varias ventas a la vez).
+  const transfAliasSel = card.querySelector('#stCvTransfAlias');
+  const transfVerificarBtn = card.querySelector('#stCvTransfVerificar');
+  const transfVerificarInfo = card.querySelector('#stCvTransfVerificarInfo');
+  let transfVentanaDesde = null;
+  transfAliasSel.addEventListener('change', ()=>{
+    const esMP = ALIAS_MERCADOPAGO.includes(transfAliasSel.value);
+    transfVerificarBtn.style.display = esMP ? '' : 'none';
+    transfVerificarInfo.textContent = '';
+    if(esMP && !transfVentanaDesde) transfVentanaDesde = new Date().toISOString();
+  });
+  transfVerificarBtn.onclick = async ()=>{
+    const monto = montoFinalTransferencia();
+    if(!(monto>0)){ transfVerificarInfo.textContent = 'Cargá el monto de la transferencia primero.'; transfVerificarInfo.style.color='var(--warn)'; return; }
+    transfVerificarBtn.disabled = true; transfVerificarBtn.textContent = 'Verificando…';
+    transfVerificarInfo.textContent = ''; transfVerificarInfo.style.color = '';
+    try{
+      const token = await sbToken();
+      const r = await fetch(API_VERIFICAR_TRANSFERENCIA, { method:'POST',
+        headers:{ 'Content-Type':'application/json', Authorization:'Bearer '+token },
+        body: JSON.stringify({ alias: transfAliasSel.value, monto, desde: transfVentanaDesde }) });
+      const d = await r.json().catch(()=>({}));
+      if(!r.ok) throw new Error(d.error || 'No se pudo verificar.');
+      if(d.encontrado){
+        transfVerificarInfo.innerHTML = `✓ Acreditada${d.pagador?' — '+esc(d.pagador):''} · ${new Date(d.fecha).toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'})}`;
+        transfVerificarInfo.style.color = 'var(--accent2)';
+      } else {
+        transfVerificarInfo.textContent = '⏳ Todavía no aparece acreditada — podés reintentar en un rato.';
+        transfVerificarInfo.style.color = 'var(--warn)';
+      }
+    }catch(e){
+      transfVerificarInfo.textContent = 'No se pudo verificar: '+(e.message||e);
+      transfVerificarInfo.style.color = 'var(--warn)';
+    }
+    transfVerificarBtn.disabled = false; transfVerificarBtn.textContent = '🔍 Verificar transferencia';
+  };
   [...card.querySelectorAll('#stCvContadoDescuento [data-desc]')].forEach(b=> b.onclick=()=>{
     [...card.querySelectorAll('#stCvContadoDescuento [data-desc]')].forEach(x=>x.classList.remove('sel'));
     b.classList.add('sel');
@@ -1960,6 +2005,9 @@ function wireVentaCard(){
     card.querySelector('#stCvContadoDescuento [data-desc="0"]').classList.add('sel');
     card.querySelector('#stCvTransfDescuento').checked = false;
     card.querySelector('#stCvTransfAlias').value = '';
+    card.querySelector('#stCvTransfVerificar').style.display = 'none';
+    card.querySelector('#stCvTransfVerificarInfo').textContent = '';
+    transfVentanaDesde = null;
     clienteCreditoId = null; clienteCreditoNombre = null; clienteTelefono = null;
     card.querySelector('#stCvClienteInfo').innerHTML = '';
     card.querySelector('#stCvClientePicker').innerHTML = '';
@@ -2690,6 +2738,8 @@ function drawVender(){
               Aplicar descuento −5%
             </label>
             <div class="note" id="stCvTransfDescuentoInfo" style="margin-top:2px"></div>
+            <button class="fbtn" type="button" id="stCvTransfVerificar" style="width:100%; margin-top:4px; display:none">🔍 Verificar transferencia</button>
+            <div class="note" id="stCvTransfVerificarInfo" style="margin-top:2px"></div>
           </div>
           <div><div class="note" style="margin:0 0 4px">Tarjeta de crédito</div>
             <div style="display:flex; gap:4px">
