@@ -1822,22 +1822,41 @@ function wireTicketButtons(card, d, localSel, telefono){
   card.querySelector('#stTicketPrint').onclick = ()=>{
     const ticket = card.querySelector('#stTicket');
     const w = window.open('', '_blank');
-    // @page con ancho fijo (80mm, el rollo de la impresora POS) y alto
-    // "auto" (el largo real del ticket, no una hoja A4/Carta completa) —
-    // sin esto, el navegador imprime con el tamaño de página por defecto
-    // de la impresora, que suele ser mucho más largo que el ticket: por
-    // eso quedaba expulsando papel en blanco de más y no llegaba a
-    // cortar (el corte automático de la impresora espera al final de esa
-    // página larga, no al final del contenido real).
     w.document.write(`<html><head><title>Ticket</title><style>
-      @page{ size: 80mm auto; margin: 3mm 2mm; }
       html, body{ margin:0; padding:0 }
       body{font-family:'Courier New',monospace; width:100%; box-sizing:border-box}
       *{color:#000!important; background:#fff!important; border-color:#000!important}
     </style></head><body>${ticket.outerHTML}</body></html>`);
     w.document.close();
-    w.focus();
-    setTimeout(()=> w.print(), 300);
+    // Algunas impresoras térmicas de rollo continuo le informan a Windows
+    // un "Printer paper" con un largo fijo enorme (ej. 80 x 3276mm, el
+    // máximo de rollo que soporta el driver) en vez de dejar que el
+    // navegador calcule el alto real: Chrome usa ese largo del driver
+    // como tamaño de página y la impresora expulsa metros de papel en
+    // blanco antes de cortar. El @page "size: 80mm auto" no alcanza para
+    // evitarlo con este driver — hace falta un número fijo. Por eso acá
+    // medimos el alto real del ticket ya renderizado (esperando a que
+    // cargue el QR) y se lo fijamos a @page en mm exactos, que Chrome sí
+    // respeta como tamaño "Custom" en el diálogo de impresión.
+    let impreso = false;
+    const imprimir = ()=>{
+      if(impreso) return; impreso = true;
+      const alturaMm = Math.ceil(w.document.body.scrollHeight / 96 * 25.4) + 6;
+      const style = w.document.createElement('style');
+      style.textContent = `@page{ size: 80mm ${alturaMm}mm; margin: 3mm 2mm; }`;
+      w.document.head.appendChild(style);
+      w.focus();
+      setTimeout(()=> w.print(), 50);
+    };
+    const pendientes = [...w.document.images].filter(img=> !img.complete);
+    let restantes = pendientes.length;
+    pendientes.forEach(img=>{
+      const chequear = ()=>{ if(--restantes<=0) imprimir(); };
+      img.addEventListener('load', chequear);
+      img.addEventListener('error', chequear);
+    });
+    if(!pendientes.length) imprimir();
+    setTimeout(imprimir, 2500);   // por si el QR no llega a cargar (sin internet), igual imprime
   };
 }
 
