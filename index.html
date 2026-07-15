@@ -4888,6 +4888,18 @@ function stCardConfirm(p, digits){
     <div class="colores" id="stColores"></div>
     <div class="label">Talle${tal3?` (código ${esc(tal3)})`:''}</div>
     <div class="talles" id="stTalles"></div>
+    <button class="fbtn" id="stEditarSistema" type="button" style="width:100%; margin-top:6px">✏️ Editar sistema de talles</button>
+    <div id="stEditPanel" style="display:none; margin-top:6px">
+      <div class="label">Sistema de talles</div>
+      <select id="stEditSistema" class="search">
+        ${SISTEMAS_TALLES.map(s=>`<option value="${esc(s.id)}">${esc(s.label)}</option>`).join('')}
+      </select>
+      <input id="stEditSistemaCustom" class="search" style="margin-top:8px"
+        placeholder="Talles separados por coma, ej: 38,40,42,44">
+      <button class="addcart" id="stEditGuardar" type="button" style="margin-top:6px">Guardar sistema de talles</button>
+      <button class="fbtn" id="stEditCancelar" type="button" style="width:100%; margin-top:6px">Cancelar</button>
+      <div class="note" id="stEditErr"></div>
+    </div>
     <div class="note" id="stStockActual"></div>
     <button class="addcart" id="stOk">${btnTxt}</button>
     <button class="fbtn" id="stCancel" style="width:100%; margin-top:6px">Cancelar</button>
@@ -4945,6 +4957,51 @@ function stCardConfirm(p, digits){
     renderColores(); renderTalles(); refStockInfo();
   });
   renderColores(); renderTalles(); refStockInfo();
+  const editPanel = card.querySelector('#stEditPanel');
+  const editSel = card.querySelector('#stEditSistema');
+  const editCustom = card.querySelector('#stEditSistemaCustom');
+  const editErr = card.querySelector('#stEditErr');
+  editSel.value = 'custom';
+  editCustom.value = p.talles.map(t=>t.talle).join(', ');
+  editSel.onchange = ()=>{ editCustom.style.display = editSel.value==='custom' ? '' : 'none'; };
+  card.querySelector('#stEditarSistema').onclick = ()=>{
+    editPanel.style.display = editPanel.style.display==='none' ? '' : 'none';
+  };
+  card.querySelector('#stEditCancelar').onclick = ()=>{ editPanel.style.display='none'; editErr.textContent=''; };
+  card.querySelector('#stEditGuardar').onclick = async ()=>{
+    const sistema = SISTEMAS_TALLES.find(s=>s.id===editSel.value) || SISTEMAS_TALLES[0];
+    const listaTalles = sistema.id==='custom'
+      ? editCustom.value.split(',').map(t=>t.trim()).filter(Boolean)
+      : sistema.talles;
+    if(!listaTalles.length){ editErr.textContent='Escribí al menos un talle, separado por coma.'; return; }
+    // Conserva stock y precio de los talles que coincidan por nombre (case-insensitive);
+    // los talles nuevos arrancan sin stock cargado, con el precio de lista como default.
+    const nuevosTalles = listaTalles.map(t=>{
+      const existente = p.talles.find(x=>norm(x.talle)===norm(t));
+      return existente
+        ? { talle:t, precio:Number(existente.precio), stock:existente.stock||[] }
+        : { talle:t, precio:Number(p.precio_lista)||0, stock:[] };
+    });
+    const btn = card.querySelector('#stEditGuardar');
+    btn.disabled = true; btn.textContent = 'Guardando…';
+    try{
+      const r = await sbAuthed(`/rest/v1/articulos?codigo=eq.${encodeURIComponent(p.codigo)}`, { method:'PATCH',
+        headers:{ Prefer:'return=representation' },
+        body: JSON.stringify({ talles: nuevosTalles }) });
+      const d = await r.json().catch(()=>null);
+      if(!r.ok) throw new Error((d && d.message) || 'No se pudo actualizar el sistema de talles.');
+      p.talles = stMapTalles((Array.isArray(d) && d[0] && d[0].talles) || nuevosTalles);
+      sel = p.talles.length===1 ? 0 : -1;
+      editPanel.style.display = 'none';
+      btn.disabled = false; btn.textContent = 'Guardar sistema de talles';
+      toast('✓ Sistema de talles actualizado');
+      renderColores(); renderTalles(); refStockInfo();
+    }catch(e){
+      if(String(e.message)==='login'){ card.innerHTML=''; drawStock(); return; }
+      btn.disabled=false; btn.textContent='Guardar sistema de talles';
+      editErr.textContent = e.message;
+    }
+  };
   card.querySelector('#stCancel').onclick = ()=>{ card.innerHTML=''; stBusy=false; };
   card.querySelector('#stOk').onclick = async ()=>{
     const err = card.querySelector('#stErr');
