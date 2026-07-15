@@ -2267,7 +2267,7 @@ function wireVentaCard(){
           pago_tarjeta_credito: pagoTCred, pago_tarjeta_debito: pagoTDeb,
           pago_credito_personal: pagoCPer, pago_credito_financiero: pagoCFin, saldo_pendiente: saldoPendiente,
           tarjeta_credito_cuotas: cuotasTCred, tarjeta_credito_recargo_pct: recargoPct,
-          asoem_cuotas: pagoCFin>0 ? cuotasCFin : null, asoem_recargo_pct: pagoCFin>0 ? recargoPctCFin : null,
+          asoem_cuotas: cuotasCFin, asoem_recargo_pct: recargoPctCFin,
           asoem_autorizacion: pagoCFin>0 ? autorizacionAsoem : null,
           cliente_id: clienteCreditoId,
           caja_sesion_id: sesionAbierta.id,
@@ -2329,8 +2329,8 @@ function wireVentaCard(){
           pago_tarjeta_credito: pagoTCred, tarjeta_credito_cuotas: cuotasTCred, tarjeta_credito_recargo_pct: recargoPct,
           pago_tarjeta_debito: pagoTDeb,
           pago_credito_personal: pagoCPer, clientes: clienteCreditoNombre ? {nombre: clienteCreditoNombre} : null,
-          pago_credito_financiero: pagoCFin, asoem_cuotas: pagoCFin>0 ? cuotasCFin : null,
-          asoem_recargo_pct: pagoCFin>0 ? recargoPctCFin : null,
+          pago_credito_financiero: pagoCFin, asoem_cuotas: cuotasCFin, asoem_recargo_pct: recargoPctCFin,
+          asoem_autorizacion: pagoCFin>0 ? autorizacionAsoem : null,
         });
         const itemsVendidos = stVentaItems.slice();
         resultadoEl.innerHTML = `<div class="lista" style="text-align:left; padding:10px 14px"><div class="l" style="margin:0">✓ Venta guardada</div><div class="v" style="font-size:20px; margin:0">${money(total)}</div></div>` +
