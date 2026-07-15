@@ -1635,6 +1635,7 @@ const fechaFmtDe = d => d ? `${d.slice(6,8)}/${d.slice(4,6)}/${d.slice(0,4)}` : 
 // la respuesta de /api/facturar, son del negocio).
 const LOCAL_INFO = {
   camerino: {
+    cuit: '20281577930',
     razonSocial: 'Giustozzi Juan Samuel',
     ingBrutos: '011-118288-2',
     domicilio: 'San Jerónimo 2362 - Santa Fe (Sta Fe)',
@@ -1642,6 +1643,7 @@ const LOCAL_INFO = {
     condicionIva: 'IVA RESPONSABLE INSCRIPTO',
   },
   giustozzi: {
+    cuit: '27320296264',
     razonSocial: 'Barberis Florencia Jimena',
     ingBrutos: '011-161353-7',
     domicilio: 'Salta 2856 - Santa Fe (Santa Fe)',
@@ -1680,7 +1682,7 @@ function transparenciaFiscalTicket(monto){
   const otros = 0;
   const sinImpuestos = Math.round((total - iva - otros) * 100) / 100;
   return `
-    <div class="l" style="text-align:center; font-size:10px">Régimen de Transparencia Fiscal al Consumidor (Ley 27.743)</div>
+    <div class="l" style="font-size:10px">Régimen de Transparencia Fiscal al Consumidor (Ley 27.743)</div>
     <div class="l" style="display:flex; justify-content:space-between"><span>IVA discriminado</span><span>${money(iva)}</span></div>
     <div class="l" style="display:flex; justify-content:space-between"><span>Otros imp. nac. indirectos</span><span>${money(otros)}</span></div>
     <div class="l" style="display:flex; justify-content:space-between"><span>Importe sin impuestos nacionales</span><span>${money(sinImpuestos)}</span></div>`;
@@ -1688,13 +1690,17 @@ function transparenciaFiscalTicket(monto){
 function renderTicket(d, localSel){
   const homolog = d.ambiente==='homologacion';
   const info = LOCAL_INFO[localSel] || LOCAL_INFO.camerino;
+  // Si viene de una factura vieja que no guardó cuit_emisor, se usa el CUIT
+  // fijo del local (es siempre el mismo, no depende de la venta puntual) --
+  // antes caía en cuitFmt('') = "00-00000000-0".
+  d.cuit = d.cuit || info.cuit;
   const qrUrl = afipQrUrl(d);
   const qrImg = 'https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=' + encodeURIComponent(qrUrl);
   return `
     <div id="stTicket" class="lista" style="margin-top:10px; font-family:'Courier New',monospace; ${homolog?'border:2px solid var(--warn)':''}">
       ${logoTicket(localSel)}
       ${homolog ? `<div class="l" style="color:var(--warn); text-align:center">⚠ HOMOLOGACIÓN — sin validez fiscal real</div>` : ''}
-      <div style="text-align:center">
+      <div style="text-align:left">
         <div class="v" style="font-size:15px">${esc(info.razonSocial)}</div>
         <div class="l">CUIT ${esc(cuitFmt(d.cuit))}</div>
         <div class="l">Ing. Brutos: ${esc(info.ingBrutos)}</div>
@@ -1702,25 +1708,25 @@ function renderTicket(d, localSel){
         <div class="l">Inicio de Actividades: ${esc(info.inicioActividades)}</div>
         <div class="l">${esc(info.condicionIva)}</div>
         <div class="l">${d.tipo==='A' ? 'A RESPONSABLE INSCRIPTO' : 'A CONSUMIDOR FINAL'}</div>
+        <div style="border-top:1px dashed var(--accent); margin:8px 0"></div>
+        <div class="l">FACTURA ${esc(d.tipo)} (Cód. ${d.tipo==='A'?'001':'006'}) · P.V. ${esc(String(d.puntoVenta).padStart(4,'0'))}</div>
+        <div class="l">Nro. ${esc(String(d.numero).padStart(8,'0'))}</div>
+        <div class="l">Fecha: ${esc(fechaFmtDe(d.fecha))}</div>
+        ${d.tipo==='A' ? `<div class="l">CUIT cliente: ${esc(cuitFmt(d.clienteCuit))}</div>` : ''}
+        <div style="border-top:1px dashed var(--accent); margin:8px 0"></div>
+        ${(d.items||[]).map(it=>`
+          <div class="l" style="display:flex; justify-content:space-between; gap:8px">
+            <span>${esc(it.codigo)} ${esc(it.nombre)}${it.talle?` (${esc(it.talle)}${it.color?' · '+esc(it.color):''})`:''}</span>
+            <span style="white-space:nowrap">${money(it.precio)}</span>
+          </div>`).join('')}
+        ${(d.items||[]).length ? `<div style="border-top:1px dashed var(--accent); margin:8px 0"></div>` : ''}
+        <div class="v" style="font-size:20px; display:flex; justify-content:space-between"><span>TOTAL</span><span>${money(d.monto)}</span></div>
+        <div style="border-top:1px dashed var(--accent); margin:8px 0"></div>
+        ${transparenciaFiscalTicket(d.monto)}
+        <div style="border-top:1px dashed var(--accent); margin:8px 0"></div>
+        <div class="l">CAE: ${esc(d.cae)}</div>
+        <div class="l">Vto. CAE: ${esc(fechaFmtDe(d.caeVencimiento))}</div>
       </div>
-      <div style="border-top:1px dashed var(--accent); margin:8px 0"></div>
-      <div class="l">FACTURA ${esc(d.tipo)} (Cód. ${d.tipo==='A'?'001':'006'}) · P.V. ${esc(String(d.puntoVenta).padStart(4,'0'))}</div>
-      <div class="l">Nro. ${esc(String(d.numero).padStart(8,'0'))}</div>
-      <div class="l">Fecha: ${esc(fechaFmtDe(d.fecha))}</div>
-      ${d.tipo==='A' ? `<div class="l">CUIT cliente: ${esc(cuitFmt(d.clienteCuit))}</div>` : ''}
-      <div style="border-top:1px dashed var(--accent); margin:8px 0"></div>
-      ${(d.items||[]).map(it=>`
-        <div class="l" style="display:flex; justify-content:space-between; gap:8px">
-          <span>${esc(it.codigo)} ${esc(it.nombre)}${it.talle?` (${esc(it.talle)}${it.color?' · '+esc(it.color):''})`:''}</span>
-          <span style="white-space:nowrap">${money(it.precio)}</span>
-        </div>`).join('')}
-      ${(d.items||[]).length ? `<div style="border-top:1px dashed var(--accent); margin:8px 0"></div>` : ''}
-      <div class="v" style="font-size:20px; display:flex; justify-content:space-between"><span>TOTAL</span><span>${money(d.monto)}</span></div>
-      <div style="border-top:1px dashed var(--accent); margin:8px 0"></div>
-      ${transparenciaFiscalTicket(d.monto)}
-      <div style="border-top:1px dashed var(--accent); margin:8px 0"></div>
-      <div class="l">CAE: ${esc(d.cae)}</div>
-      <div class="l">Vto. CAE: ${esc(fechaFmtDe(d.caeVencimiento))}</div>
       <div style="text-align:center; margin-top:10px"><img src="${qrImg}" width="180" height="180" alt="QR AFIP"></div>
     </div>
     <button class="addcart" id="stTicketWADirecto" style="margin-top:8px">📱 Enviar directo (texto)</button>
