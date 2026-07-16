@@ -5139,7 +5139,13 @@ function stCardNuevo(digits){
       <div class="v" style="font-size:16px">Código ${esc(art5)}</div>
     </div>
     <div class="label">Nombre</div>
-    <input id="stNvNombre" class="search" placeholder="ej. TAVERNITI BUZO" autocomplete="off">
+    <div class="autocomp-wrap">
+      <input id="stNvNombre" class="search" placeholder="ej. TAVERNITI BUZO" autocomplete="off">
+      <div class="autocomp-list" id="stNvNombreSug" style="display:none"></div>
+    </div>
+    <div class="note" id="stNvNombreAviso" style="display:none">
+      ¿Ya tenés cargado este artículo con otro código? Tocá uno de arriba para sumarle el stock nuevo, en vez de crear un código repetido.
+    </div>
     <div class="label">Categoría</div>
     <div class="autocomp-wrap">
       <input id="stNvCat" class="search" placeholder="ej. BUZOS HOMBRE" autocomplete="off">
@@ -5178,6 +5184,39 @@ function stCardNuevo(digits){
     cerrarSugerencias();
   });
   catInput.addEventListener('blur', ()=> setTimeout(cerrarSugerencias, 150));
+
+  // Antes de dar de alta un código nuevo, avisamos si ya hay artículos con
+  // un nombre parecido (mismo modelo, remesa/lote distinto del proveedor) —
+  // así el vendedor puede sumarle el stock al código ya publicado en vez de
+  // crear uno huérfano que la web nunca va a mostrar.
+  const nombreInput = card.querySelector('#stNvNombre');
+  const nombreSug = card.querySelector('#stNvNombreSug');
+  const nombreAviso = card.querySelector('#stNvNombreAviso');
+  const totalStock = p => (p.talles||[]).reduce((acc,t)=> acc + (t.stock||[])
+    .reduce((a,s)=> a + (Number(s.camerino)||0) + (Number(s.giustozzi)||0), 0), 0);
+  const cerrarNombreSug = ()=>{ nombreSug.style.display='none'; nombreSug.innerHTML=''; nombreAviso.style.display='none'; };
+  const mostrarNombreSug = ()=>{
+    const q = norm(nombreInput.value);
+    const coincidencias = q.length>=3 ? PRODS.filter(p=> p.codigo!==art5+'XXX' && p.codigo!==art5 && norm(p.nombre).includes(q)).slice(0,6) : [];
+    if(!coincidencias.length){ cerrarNombreSug(); return; }
+    nombreSug.innerHTML = coincidencias.map(p=> `<div class="autocomp-item" data-cod="${esc(p.codigo)}">
+      ${esc(p.nombre)} <small style="opacity:.7">— ${esc(p.codigo)} · ${esc(p.categoria||'')} · stock ${totalStock(p)}</small></div>`).join('');
+    nombreSug.style.display=''; nombreAviso.style.display='';
+  };
+  nombreInput.addEventListener('input', mostrarNombreSug);
+  nombreInput.addEventListener('focus', mostrarNombreSug);
+  nombreSug.addEventListener('mousedown', e=>{
+    const it = e.target.closest('.autocomp-item'); if(!it) return;
+    const existente = BYCOD[it.dataset.cod];
+    if(!existente) return;
+    cerrarNombreSug();
+    card.innerHTML = '<div class="note">Actualizando stock…</div>';
+    refrescarArticulo(existente).then(()=>{
+      if(stSeccion==='venta') ventaCardConfirm(existente, digits);
+      else stCardConfirm(existente, digits);
+    });
+  });
+  nombreInput.addEventListener('blur', ()=> setTimeout(cerrarNombreSug, 150));
   card.querySelector('#stNvCancel').onclick = ()=>{ card.innerHTML=''; stBusy=false; };
   card.querySelector('#stNvOk').onclick = async ()=>{
     const err = card.querySelector('#stNvErr');
