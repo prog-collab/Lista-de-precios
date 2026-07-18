@@ -226,6 +226,7 @@
       <button id="devolucionesBtn" class="fbtn" title="Devoluciones de mercadería">↩️</button>
       <button id="calendarioBtn" class="fbtn" title="Calendario de turnos">📅</button>
       <button id="dashboardBtn" class="fbtn" title="Dashboard ASOEM (gerente)">📊</button>
+      <button id="rendimientoBtn" class="fbtn" title="Rendimiento por vendedor (gerente)" style="display:none">📈</button>
       <button id="helpBtn" class="fbtn" title="Ayuda">❓</button>
       <button id="cartBtn" class="fbtn" title="Carrito">🛒<span id="cartN" class="cbadge" style="display:none"></span></button>
     </div>
@@ -1472,6 +1473,17 @@ async function sbLogin(email, pass){
   // misma pestaña (sin recargar la página), hay que olvidarlo al loguear.
   miRolCache = null;
   miLocalAsignadoCache = undefined;
+  actualizarVisibilidadRendimiento();
+}
+
+// El botón 📈 Rendimiento por vendedor queda oculto del menú salvo que el
+// usuario logueado sea gerente — no alcanza con bloquear la pantalla al
+// abrirla, el botón mismo no debe aparecer para un vendedor.
+async function actualizarVisibilidadRendimiento(){
+  const botones = document.querySelectorAll('#rendimientoBtn, [data-nav="rendimientoBtn"]');
+  if(!sbSession){ botones.forEach(b=> b.style.display='none'); return; }
+  const rol = await cargarMiRol();
+  botones.forEach(b=> b.style.display = rol==='gerente' ? '' : 'none');
 }
 // Token vigente; renueva con el refresh_token si está por vencer. Si no se
 // puede renovar, tira 'login' para que la vista vuelva a pedir la sesión.
@@ -2547,6 +2559,13 @@ document.getElementById('calendarioBtn').onclick = ()=>{
   setLS('pantalla_actual', 'calendario');
   drawCalendario();
 };
+document.getElementById('rendimientoBtn').onclick = ()=>{
+  stOpen = true;
+  document.getElementById('ov').classList.add('open','ov-full');
+  history.pushState({detalle:1}, '');
+  setLS('pantalla_actual', 'rendimiento');
+  drawRendimiento();
+};
 function stCerrar(viaHistory){
   if(!stOpen) return;
   stOpen=false; stStopped=true; stBusy=false;
@@ -2571,6 +2590,7 @@ setTimeout(function restaurarPantalla(){
   const p = getLS('pantalla_actual', null);
   const btn = p && document.getElementById(p+'Btn');
   if(btn) btn.click();
+  actualizarVisibilidadRendimiento();
 }, 0);
 
 // Barra de navegación duplicada: el header real queda tapado por cualquier
@@ -2592,6 +2612,7 @@ function navIconsHtml(){
     <button type="button" class="fbtn" data-nav="devolucionesBtn" title="Devoluciones de mercadería">↩️</button>
     <button type="button" class="fbtn" data-nav="calendarioBtn" title="Calendario de turnos">📅</button>
     <button type="button" class="fbtn" data-nav="dashboardBtn" title="Dashboard ASOEM (gerente)">📊</button>
+    <button type="button" class="fbtn" data-nav="rendimientoBtn" title="Rendimiento por vendedor (gerente)" style="display:none">📈</button>
     <button type="button" class="fbtn" data-nav="helpBtn" title="Ayuda">❓</button>
     <button type="button" class="fbtn" data-nav="cartBtn" title="Carrito">🛒</button>
   </div>`;
@@ -2661,7 +2682,7 @@ function drawStock(){
   wireNavIcons(sheet);
   document.getElementById('stClose').onclick = ()=> stCerrar(false);
   document.getElementById('stLogout').onclick = (e)=>{ e.preventDefault();
-    sbSession=null; setLS('sb_session', null); miRolCache=null; miLocalAsignadoCache=undefined; drawStock(); };
+    sbSession=null; setLS('sb_session', null); miRolCache=null; miLocalAsignadoCache=undefined; actualizarVisibilidadRendimiento(); drawStock(); };
   const bC=document.getElementById('stLocCam'), bG=document.getElementById('stLocGiu');
   const refLoc=()=>{ const l=stLocal();
     bC.classList.toggle('sel', l==='camerino'); bG.classList.toggle('sel', l==='giustozzi'); };
@@ -2919,7 +2940,7 @@ function drawVender(){
   wireNavIcons(sheet);
   document.getElementById('stClose').onclick = ()=> stCerrar(false);
   document.getElementById('stLogout').onclick = (e)=>{ e.preventDefault();
-    sbSession=null; setLS('sb_session', null); miRolCache=null; miLocalAsignadoCache=undefined; drawVender(); };
+    sbSession=null; setLS('sb_session', null); miRolCache=null; miLocalAsignadoCache=undefined; actualizarVisibilidadRendimiento(); drawVender(); };
   const bC=document.getElementById('stLocCam'), bG=document.getElementById('stLocGiu');
   const refLoc=()=>{ const l=stLocal();
     bC.classList.toggle('sel', l==='camerino'); bG.classList.toggle('sel', l==='giustozzi'); };
@@ -3239,7 +3260,7 @@ function drawClientes(){
   wireNavIcons(sheet);
   document.getElementById('stClose').onclick = ()=> stCerrar(false);
   document.getElementById('stLogout').onclick = (e)=>{ e.preventDefault();
-    sbSession=null; setLS('sb_session', null); miRolCache=null; miLocalAsignadoCache=undefined; drawClientes(); };
+    sbSession=null; setLS('sb_session', null); miRolCache=null; miLocalAsignadoCache=undefined; actualizarVisibilidadRendimiento(); drawClientes(); };
   document.getElementById('ccNuevoBtn').onclick = ()=> armarFormCliente(document.getElementById('ccDetalle'), null);
   const buscarInput = document.getElementById('ccBuscarInput');
   const resultadosEl = document.getElementById('ccResultados');
@@ -3689,7 +3710,7 @@ function drawTraspasos(){
   wireNavIcons(sheet);
   document.getElementById('stClose').onclick = ()=> stCerrar(false);
   document.getElementById('stLogout').onclick = (e)=>{ e.preventDefault();
-    sbSession=null; setLS('sb_session', null); miRolCache=null; miLocalAsignadoCache=undefined; drawTraspasos(); };
+    sbSession=null; setLS('sb_session', null); miRolCache=null; miLocalAsignadoCache=undefined; actualizarVisibilidadRendimiento(); drawTraspasos(); };
   Promise.all([cargarMiRol(), cargarMiLocalAsignado()]).then(([rol, localAsignado])=>{
     armarTraspasos(document.getElementById('tsBody'), rol, localAsignado);
   });
@@ -3981,7 +4002,7 @@ function drawDevoluciones(){
   wireNavIcons(sheet);
   document.getElementById('stClose').onclick = ()=> stCerrar(false);
   document.getElementById('stLogout').onclick = (e)=>{ e.preventDefault();
-    sbSession=null; setLS('sb_session', null); miRolCache=null; miLocalAsignadoCache=undefined; drawDevoluciones(); };
+    sbSession=null; setLS('sb_session', null); miRolCache=null; miLocalAsignadoCache=undefined; actualizarVisibilidadRendimiento(); drawDevoluciones(); };
   const bC=document.getElementById('dvLocCam'), bG=document.getElementById('dvLocGiu');
   const refLoc=()=>{ const l=stLocal();
     bC.classList.toggle('sel', l==='camerino'); bG.classList.toggle('sel', l==='giustozzi'); };
@@ -4322,7 +4343,7 @@ function drawDashboardAsoem(){
   wireNavIcons(sheet);
   document.getElementById('stClose').onclick = ()=> stCerrar(false);
   document.getElementById('stLogout').onclick = (e)=>{ e.preventDefault();
-    sbSession=null; setLS('sb_session', null); miRolCache=null; miLocalAsignadoCache=undefined; drawDashboardAsoem(); };
+    sbSession=null; setLS('sb_session', null); miRolCache=null; miLocalAsignadoCache=undefined; actualizarVisibilidadRendimiento(); drawDashboardAsoem(); };
   cargarMiRol().then(rol=>{
     if(rol!=='gerente'){
       document.getElementById('daBox').innerHTML = `<div class="lista" style="margin-top:10px">
@@ -4434,7 +4455,7 @@ function drawCalendario(){
   wireNavIcons(sheet);
   document.getElementById('stClose').onclick = ()=> stCerrar(false);
   document.getElementById('stLogout').onclick = (e)=>{ e.preventDefault();
-    sbSession=null; setLS('sb_session', null); miRolCache=null; miLocalAsignadoCache=undefined; drawCalendario(); };
+    sbSession=null; setLS('sb_session', null); miRolCache=null; miLocalAsignadoCache=undefined; actualizarVisibilidadRendimiento(); drawCalendario(); };
   Promise.all([cargarMiRol(), cargarMiLocalAsignado()]).then(([rol, asignado])=>{
     calPuedeEditar = rol==='gerente';
     calLocalForzado = asignado || null;
@@ -4682,6 +4703,131 @@ async function renderFeriados(){
     });
   }catch(e){
     box.innerHTML = `<div class="note">No se pudo cargar los feriados.</div>`;
+  }
+}
+
+// ===== 📈 Rendimiento por vendedor: ranking de ventas por persona en un
+// rango de fechas — cruza ventas.vendedor_id (cargado solo al vender,
+// según el turno del calendario) con vendedores. Menú oculto, solo gerente.
+function drawRendimiento(){
+  const sheet = document.getElementById('sheet');
+  sheet.classList.add('sheet-wide');
+  if(!sbSession){
+    sheet.innerHTML = `
+      ${navIconsHtml()}
+      <div class="topbtns"><button class="backbtn" id="stClose">✕ Cerrar</button></div>
+      <h2>📈 Rendimiento por vendedor</h2>
+      <div class="scat">Iniciá sesión con tu usuario del panel para poder verlo.</div>
+      <div class="label">Usuario</div>
+      <input id="stEmail" class="search" type="text" autocomplete="username">
+      <div class="label">Contraseña</div>
+      <input id="stPass" class="search" type="password" autocomplete="current-password">
+      <button class="addcart" id="stLoginBtn">Ingresar</button>
+      <div class="note" id="stLoginErr"></div>`;
+    wireNavIcons(sheet);
+    document.getElementById('stClose').onclick = ()=> stCerrar(false);
+    document.getElementById('stLoginBtn').onclick = async ()=>{
+      const err = document.getElementById('stLoginErr');
+      const b = document.getElementById('stLoginBtn');
+      b.disabled = true; b.textContent = 'Ingresando…';
+      try{
+        await sbLogin(usuarioAEmail(document.getElementById('stEmail').value),
+                      document.getElementById('stPass').value);
+        drawRendimiento();
+      }catch(e){ b.disabled=false; b.textContent='Ingresar'; err.textContent = e.message; }
+    };
+    return;
+  }
+  sheet.innerHTML = `
+    ${navIconsHtml()}
+    <div class="topbtns"><button class="backbtn" id="stClose">✕ Cerrar</button></div>
+    <h2>📈 Rendimiento por vendedor</h2>
+    <div class="scat">Sesión: ${esc(mostrarUsuario(sbSession.email))} · <a href="#" id="stLogout" style="color:var(--accent)">salir</a></div>
+    <div id="rendBox"><div class="note">Verificando permisos…</div></div>`;
+  wireNavIcons(sheet);
+  document.getElementById('stClose').onclick = ()=> stCerrar(false);
+  document.getElementById('stLogout').onclick = (e)=>{ e.preventDefault();
+    sbSession=null; setLS('sb_session', null); miRolCache=null; miLocalAsignadoCache=undefined; actualizarVisibilidadRendimiento(); drawRendimiento(); };
+  cargarMiRol().then(rol=>{
+    if(rol!=='gerente'){
+      document.getElementById('rendBox').innerHTML = `<div class="lista" style="margin-top:10px">
+        <div class="l">Acceso restringido</div>
+        <div class="v" style="font-size:16px">Esta sección es solo para gerentes.</div></div>`;
+      return;
+    }
+    renderRendimiento();
+  });
+}
+
+function renderRendimiento(){
+  const box = document.getElementById('rendBox');
+  const hoy = new Date();
+  const desdeDefault = isoLocal(new Date(hoy.getFullYear(), hoy.getMonth(), 1));
+  const hastaDefault = isoLocal(hoy);
+  box.innerHTML = `
+    <div class="label" style="margin-top:10px">Local</div>
+    <div class="talles">
+      <button class="talle sel" data-local="">Todos</button>
+      <button class="talle" data-local="camerino">Camerino</button>
+      <button class="talle" data-local="giustozzi">Giustozzi</button>
+    </div>
+    <div class="grid" style="grid-template-columns:1fr 1fr; margin-top:8px">
+      <div><div class="note" style="margin:0 0 4px">Desde</div><input id="rendDesde" class="search" type="date" value="${desdeDefault}"></div>
+      <div><div class="note" style="margin:0 0 4px">Hasta</div><input id="rendHasta" class="search" type="date" value="${hastaDefault}"></div>
+    </div>
+    <div id="rendLista" style="margin-top:12px"><div class="note">Cargando…</div></div>`;
+  let localSel = '';
+  const cargar = ()=> cargarRendimiento(localSel,
+    document.getElementById('rendDesde').value || desdeDefault,
+    document.getElementById('rendHasta').value || hastaDefault);
+  [...box.querySelectorAll('[data-local]')].forEach(b=> b.onclick = ()=>{
+    localSel = b.dataset.local;
+    [...box.querySelectorAll('[data-local]')].forEach(x=> x.classList.toggle('sel', x===b));
+    cargar();
+  });
+  document.getElementById('rendDesde').addEventListener('change', cargar);
+  document.getElementById('rendHasta').addEventListener('change', cargar);
+  cargar();
+}
+
+async function cargarRendimiento(local, desde, hasta){
+  const box = document.getElementById('rendLista');
+  box.innerHTML = '<div class="note">Cargando…</div>';
+  try{
+    const filtroLocal = local ? `&local=eq.${local}` : '';
+    const r = await sbAuthed(`/rest/v1/ventas?fecha=gte.${desde}&fecha=lte.${hasta}${filtroLocal}&select=total,vendedor_id,vendedores(nombre)`);
+    if(!r.ok) throw new Error('No se pudieron consultar las ventas.');
+    const ventas = await r.json();
+    const porVendedor = {};   // vendedor_id (o 'null') -> {nombre, cantidad, total}
+    ventas.forEach(v=>{
+      const key = v.vendedor_id || 'sin_asignar';
+      const nombre = v.vendedor_id ? ((v.vendedores&&v.vendedores.nombre)||'—') : 'Sin vendedor asignado';
+      if(!porVendedor[key]) porVendedor[key] = { nombre, cantidad:0, total:0 };
+      porVendedor[key].cantidad += 1;
+      porVendedor[key].total += Number(v.total)||0;
+    });
+    const filas = Object.values(porVendedor).sort((a,b)=> b.total-a.total);
+    const totalGeneral = ventas.reduce((s,v)=> s+(Number(v.total)||0), 0);
+    box.innerHTML = `
+      <div class="lista" style="margin-bottom:10px">
+        <div class="l">Total del período</div>
+        <div class="v" style="font-size:22px">${money(totalGeneral)}</div>
+        <div class="note" style="margin-top:2px">${ventas.length} venta${ventas.length!==1?'s':''}</div>
+      </div>
+      ${filas.length ? filas.map((f,i)=>{
+        const promedio = f.cantidad ? f.total/f.cantidad : 0;
+        const sinAsignar = f.nombre==='Sin vendedor asignado';
+        return `
+        <div class="lista" style="margin-top:6px; text-align:left; ${sinAsignar?'opacity:.7':''}">
+          <div style="display:flex; justify-content:space-between; align-items:center; gap:8px">
+            <span class="l" style="margin:0">${sinAsignar?'':`${i+1}º · `}${esc(f.nombre)}</span>
+            <span class="v" style="font-size:17px">${money(f.total)}</span>
+          </div>
+          <div class="note" style="margin-top:2px">${f.cantidad} venta${f.cantidad!==1?'s':''} · ticket promedio ${money(promedio)}</div>
+        </div>`;
+      }).join('') : '<div class="note">No hay ventas en este período.</div>'}`;
+  }catch(e){
+    box.innerHTML = `<div class="note">No se pudo cargar el rendimiento: ${esc(e.message||e)}</div>`;
   }
 }
 
