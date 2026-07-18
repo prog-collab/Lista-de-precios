@@ -95,6 +95,18 @@
     .sheet.sheet-wide .st-grid-3{display:grid; grid-template-columns:1fr 1fr 1fr; gap:28px; align-items:start}
     .sheet.sheet-wide .st-grid-3 > *{position:sticky; top:18px; max-height:calc(100vh - 36px); overflow-y:auto}
   }
+  /* Calendario de turnos */
+  .cal-grid{display:grid; grid-template-columns:repeat(7,1fr); gap:4px}
+  .cal-grid-head{margin-bottom:2px}
+  .cal-celda-head{text-align:center; font-size:11px; text-transform:uppercase; letter-spacing:.5px; color:var(--muted); padding:2px 0}
+  .cal-celda{border:1px solid var(--line); border-radius:6px; padding:4px; min-height:74px; display:flex; flex-direction:column; gap:2px}
+  .cal-celda.cal-vacia{border-color:transparent}
+  .cal-celda.cal-feriado{background:rgba(56,189,248,.1); border-color:var(--accent)}
+  .cal-dia{font-size:12px; font-weight:700}
+  .cal-feriado-nombre{font-size:9px; color:var(--accent); line-height:1.25; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .cal-turno{font-size:10px; text-align:left; background:none; border:1px solid var(--line); border-radius:4px;
+    padding:2px 4px; cursor:pointer; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .cal-turno:hover{border-color:var(--accent)}
   .sheet h2{margin:0 0 2px; font-size:20px; padding-right:8px}
   .sheet .scod{color:var(--accent); font-weight:700; font-size:14px}
   .sheet .scat{color:var(--muted); font-size:13px; margin-bottom:14px}
@@ -212,6 +224,7 @@
       <button id="clientesBtn" class="fbtn" title="Cuenta corriente de clientes">👤</button>
       <button id="traspasosBtn" class="fbtn" title="Traspaso de stock entre locales">🔁</button>
       <button id="devolucionesBtn" class="fbtn" title="Devoluciones de mercadería">↩️</button>
+      <button id="calendarioBtn" class="fbtn" title="Calendario de turnos (gerente)">📅</button>
       <button id="dashboardBtn" class="fbtn" title="Dashboard ASOEM (gerente)">📊</button>
       <button id="helpBtn" class="fbtn" title="Ayuda">❓</button>
       <button id="cartBtn" class="fbtn" title="Carrito">🛒<span id="cartN" class="cbadge" style="display:none"></span></button>
@@ -1431,6 +1444,7 @@ document.getElementById('scanBtn').onclick = async ()=>{
    el PIN del modo editor NO alcanza. */
 let sbSession = getLS('sb_session', null);
 let stOpen=false, stStream=null, stStopped=true, stBusy=false, stCount=0, stLast=null, stVentaTotal=0, stVentaItems=[], stZXingReader=null;
+let stVendedorSel = null; // vendedor (persona) elegido para las ventas de este local en Vender (POS)
 let stVentaDevolucionId=null;   // si esta venta viene de cobrar la diferencia de un cambio, id de la devolución que la originó
 let stSeccion='carga';   // 'carga' (cargar stock, descuenta al toque) o 'venta' (carrito, descuenta al Guardar venta)
 let stCoolCode='', stCoolUntil=0;
@@ -2330,7 +2344,7 @@ function wireVentaCard(){
       const rVenta = await sbAuthed('/rest/v1/ventas', { method:'POST',
         headers:{ Prefer:'return=representation' },
         body: JSON.stringify({
-          local: localSel, vendedor: sbSession.email||null, items: stVentaItems, total,
+          local: localSel, vendedor: sbSession.email||null, vendedor_id: stVendedorSel||null, items: stVentaItems, total,
           fecha: isoLocal(new Date()),
           pago_contado: pagoContado, contado_descuento_pct: contadoDescPct,
           pago_transferencia: pagoTransf, transferencia_alias: transfAlias,
@@ -2526,6 +2540,13 @@ document.getElementById('dashboardBtn').onclick = ()=>{
   setLS('pantalla_actual', 'dashboard');
   drawDashboardAsoem();
 };
+document.getElementById('calendarioBtn').onclick = ()=>{
+  stOpen = true;
+  document.getElementById('ov').classList.add('open','ov-full');
+  history.pushState({detalle:1}, '');
+  setLS('pantalla_actual', 'calendario');
+  drawCalendario();
+};
 function stCerrar(viaHistory){
   if(!stOpen) return;
   stOpen=false; stStopped=true; stBusy=false;
@@ -2569,6 +2590,7 @@ function navIconsHtml(){
     <button type="button" class="fbtn" data-nav="clientesBtn" title="Cuenta corriente de clientes">👤</button>
     <button type="button" class="fbtn" data-nav="traspasosBtn" title="Traspaso de stock entre locales">🔁</button>
     <button type="button" class="fbtn" data-nav="devolucionesBtn" title="Devoluciones de mercadería">↩️</button>
+    <button type="button" class="fbtn" data-nav="calendarioBtn" title="Calendario de turnos (gerente)">📅</button>
     <button type="button" class="fbtn" data-nav="dashboardBtn" title="Dashboard ASOEM (gerente)">📊</button>
     <button type="button" class="fbtn" data-nav="helpBtn" title="Ayuda">❓</button>
     <button type="button" class="fbtn" data-nav="cartBtn" title="Carrito">🛒</button>
@@ -2756,6 +2778,8 @@ function drawVender(){
           <button class="talle" id="stLocCam">Camerino</button>
           <button class="talle" id="stLocGiu">Giustozzi</button>
         </div>
+        <div class="label" style="margin-top:8px">Vendedor</div>
+        <div id="stVendedorBox"><div class="note">Cargando…</div></div>
         <div id="stVideoBox"></div>
         <div class="filters" style="margin-top:8px">
           <input id="stManual" class="search" placeholder="O escribí el código o nombre…" inputmode="text" autocomplete="off" style="flex:1">
@@ -2899,10 +2923,10 @@ function drawVender(){
   const bC=document.getElementById('stLocCam'), bG=document.getElementById('stLocGiu');
   const refLoc=()=>{ const l=stLocal();
     bC.classList.toggle('sel', l==='camerino'); bG.classList.toggle('sel', l==='giustozzi'); };
-  bC.onclick=()=>{ if(bC.disabled) return; setLS('stock_local','camerino'); refLoc(); renderResumenDia(); renderCajaStatus(); };
-  bG.onclick=()=>{ if(bG.disabled) return; setLS('stock_local','giustozzi'); refLoc(); renderResumenDia(); renderCajaStatus(); };
+  bC.onclick=()=>{ if(bC.disabled) return; setLS('stock_local','camerino'); stVendedorSel=null; refLoc(); renderResumenDia(); renderCajaStatus(); renderVendedorSel(); };
+  bG.onclick=()=>{ if(bG.disabled) return; setLS('stock_local','giustozzi'); stVendedorSel=null; refLoc(); renderResumenDia(); renderCajaStatus(); renderVendedorSel(); };
   refLoc();
-  aplicarRestriccionLocal(bC, bG).then(()=>{ refLoc(); renderResumenDia(); renderCajaStatus(); });
+  aplicarRestriccionLocal(bC, bG).then(()=>{ refLoc(); renderResumenDia(); renderCajaStatus(); renderVendedorSel(); });
   const man=document.getElementById('stManual');
   const resultadosBox = document.getElementById('stManualResultados');
   const go=()=>{ if(man.value.trim()){ stProcesar(man.value); man.value=''; resultadosBox.innerHTML=''; } };
@@ -2948,6 +2972,61 @@ function drawVender(){
 // ===== Sesión de caja real: hay que abrirla (con un fondo inicial) antes de
 // poder guardar una venta en ese local, y se cierra con arqueo/gastos/
 // retiros/adelantos, calculando la diferencia contra lo esperado.
+// Turno actual según la hora — antes de las 14:00 es mañana, si no, tarde.
+// Corte simple; avisar si en la tienda el corte real es otro.
+function turnoActual(){ return new Date().getHours() < 14 ? 'manana' : 'tarde'; }
+
+// Sugiere solo, según el calendario de turnos (📅), quién está atendiendo
+// hoy en el local elegido — el vendedor puede tocar otro chip si hace
+// falta (alguien cubriendo, nadie cargado ese día, etc.). No es obligatorio:
+// si no se elige a nadie, la venta se guarda igual sin vendedor_id.
+async function renderVendedorSel(){
+  const box = document.getElementById('stVendedorBox');
+  if(!box) return;
+  const local = stLocal();
+  const hoy = isoLocal(new Date());
+  const turno = turnoActual();
+  box.innerHTML = '<div class="note">Cargando…</div>';
+  try{
+    const [vendedoresRes, turnosRes] = await Promise.all([
+      sbAuthed(`/rest/v1/vendedores?local=eq.${local}&activo=eq.true&order=nombre.asc&select=*`),
+      sbAuthed(`/rest/v1/turnos?local=eq.${local}&fecha=eq.${hoy}&turno=eq.${turno}&select=vendedor_id`),
+    ]);
+    const vendedores = vendedoresRes.ok ? await vendedoresRes.json() : [];
+    const turnosHoy = turnosRes.ok ? await turnosRes.json() : [];
+    const asignadosIds = new Set(turnosHoy.map(t=>t.vendedor_id));
+    if(!vendedores.length){
+      box.innerHTML = '<div class="note">No hay vendedores cargados para este local — se puede vender igual (cargalos en 📅 Calendario).</div>';
+      return;
+    }
+    if(stVendedorSel && !vendedores.some(v=>v.id===stVendedorSel)) stVendedorSel = null;
+    // Si nadie fue elegido todavía en esta sesión y hay un único asignado al
+    // turno de hoy, se autoselecciona — con más de uno o ninguno, se pide elegir.
+    if(!stVendedorSel && asignadosIds.size===1) stVendedorSel = [...asignadosIds][0];
+    const asignados = vendedores.filter(v=>asignadosIds.has(v.id));
+    const resto = vendedores.filter(v=>!asignadosIds.has(v.id));
+    const chip = v => `<button type="button" class="talle ${stVendedorSel===v.id?'sel':''}" data-vid="${v.id}">${esc(v.nombre)}</button>`;
+    box.innerHTML = `
+      ${asignados.length ? `
+        <div class="talles">${asignados.map(chip).join('')}</div>
+        ${resto.length ? `<a href="#" id="stVendedorVerTodos" style="color:var(--accent); font-size:12px; display:inline-block; margin-top:4px">▾ Ver todo el plantel</a>
+          <div class="talles" id="stVendedorResto" style="display:none; margin-top:4px">${resto.map(chip).join('')}</div>` : ''}
+        ` : `
+        <div class="note" style="margin-bottom:4px">Nadie asignado hoy (turno ${turno==='manana'?'mañana':'tarde'}) en el calendario — elegí quién atiende:</div>
+        <div class="talles">${vendedores.map(chip).join('')}</div>`}`;
+    const verTodos = document.getElementById('stVendedorVerTodos');
+    if(verTodos) verTodos.onclick = (e)=>{ e.preventDefault(); document.getElementById('stVendedorResto').style.display=''; verTodos.style.display='none'; };
+    [...box.querySelectorAll('[data-vid]')].forEach(b=>{
+      b.onclick = ()=>{
+        stVendedorSel = stVendedorSel===b.dataset.vid ? null : b.dataset.vid;
+        renderVendedorSel();
+      };
+    });
+  }catch(e){
+    box.innerHTML = '<div class="note">No se pudo cargar el plantel.</div>';
+  }
+}
+
 async function obtenerCajaAbierta(local){
   try{
     const r = await sbAuthed(`/rest/v1/caja_sesiones?local=eq.${local}&estado=eq.abierta&select=*&limit=1`);
@@ -4300,6 +4379,295 @@ async function renderDashboardAsoem(){
     document.getElementById('daFiltro').addEventListener('input', e=> renderLista(e.target.value));
   }catch(e){
     box.innerHTML = `<div class="note">No se pudo cargar el dashboard: ${esc(e.message||e)}</div>`;
+  }
+}
+
+// ===== 📅 Calendario de turnos: plantel de vendedores (por local) + quién
+// trabaja el turno mañana/tarde cada día, con los feriados de Argentina
+// marcados. Solo gerentes. Esto no arma ninguna estadística todavía — solo
+// deja la agenda cargada para que la app de Vender pueda sugerir sola quién
+// está atendiendo, y ese dato (ventas.vendedor_id) quede listo para más
+// adelante armar un reporte de rendimiento por vendedor.
+let calLocal = 'camerino';
+let calAnio, calMes; // mes visible del calendario (calMes: 0-11)
+const DIAS_SEMANA = ['Lun','Mar','Mié','Jue','Vie','Sáb','Dom'];
+const MESES_NOMBRE = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+const isoFecha = (anio,mes,dia)=> `${anio}-${String(mes+1).padStart(2,'0')}-${String(dia).padStart(2,'0')}`;
+
+function drawCalendario(){
+  const sheet = document.getElementById('sheet');
+  sheet.classList.add('sheet-wide');
+  if(!sbSession){
+    sheet.innerHTML = `
+      ${navIconsHtml()}
+      <div class="topbtns"><button class="backbtn" id="stClose">✕ Cerrar</button></div>
+      <h2>📅 Calendario de turnos</h2>
+      <div class="scat">Iniciá sesión con tu usuario del panel para poder verlo.</div>
+      <div class="label">Usuario</div>
+      <input id="stEmail" class="search" type="text" autocomplete="username">
+      <div class="label">Contraseña</div>
+      <input id="stPass" class="search" type="password" autocomplete="current-password">
+      <button class="addcart" id="stLoginBtn">Ingresar</button>
+      <div class="note" id="stLoginErr"></div>`;
+    wireNavIcons(sheet);
+    document.getElementById('stClose').onclick = ()=> stCerrar(false);
+    document.getElementById('stLoginBtn').onclick = async ()=>{
+      const err = document.getElementById('stLoginErr');
+      const b = document.getElementById('stLoginBtn');
+      b.disabled = true; b.textContent = 'Ingresando…';
+      try{
+        await sbLogin(usuarioAEmail(document.getElementById('stEmail').value),
+                      document.getElementById('stPass').value);
+        drawCalendario();
+      }catch(e){ b.disabled=false; b.textContent='Ingresar'; err.textContent = e.message; }
+    };
+    return;
+  }
+  sheet.innerHTML = `
+    ${navIconsHtml()}
+    <div class="topbtns"><button class="backbtn" id="stClose">✕ Cerrar</button></div>
+    <h2>📅 Calendario de turnos</h2>
+    <div class="scat">Sesión: ${esc(mostrarUsuario(sbSession.email))} · <a href="#" id="stLogout" style="color:var(--accent)">salir</a></div>
+    <div id="calBox"><div class="note">Verificando permisos…</div></div>`;
+  wireNavIcons(sheet);
+  document.getElementById('stClose').onclick = ()=> stCerrar(false);
+  document.getElementById('stLogout').onclick = (e)=>{ e.preventDefault();
+    sbSession=null; setLS('sb_session', null); miRolCache=null; miLocalAsignadoCache=undefined; drawCalendario(); };
+  cargarMiRol().then(rol=>{
+    if(rol!=='gerente'){
+      document.getElementById('calBox').innerHTML = `<div class="lista" style="margin-top:10px">
+        <div class="l">Acceso restringido</div>
+        <div class="v" style="font-size:16px">Esta sección es solo para gerentes.</div></div>`;
+      return;
+    }
+    const hoy = new Date();
+    if(calAnio==null){ calAnio = hoy.getFullYear(); calMes = hoy.getMonth(); }
+    renderCalendario();
+  });
+}
+
+function renderCalendario(){
+  const box = document.getElementById('calBox');
+  box.innerHTML = `
+    <div class="label" style="margin-top:10px">Local</div>
+    <div class="talles">
+      <button class="talle ${calLocal==='camerino'?'sel':''}" data-local="camerino">Camerino</button>
+      <button class="talle ${calLocal==='giustozzi'?'sel':''}" data-local="giustozzi">Giustozzi</button>
+    </div>
+    <div id="calMesBox" style="margin-top:12px"><div class="note">Cargando calendario…</div></div>
+    <div class="st-grid" style="margin-top:20px">
+      <div id="calPlantel"><div class="note">Cargando plantel…</div></div>
+      <div id="calFeriados"><div class="note">Cargando feriados…</div></div>
+    </div>`;
+  [...box.querySelectorAll('[data-local]')].forEach(b=> b.onclick = ()=>{ calLocal = b.dataset.local; renderCalendario(); });
+  renderPlantel();
+  renderMesCalendario();
+  renderFeriados();
+}
+
+// ---- Plantel de vendedores (por local) ----
+async function cargarVendedores(local, soloActivos){
+  const filtro = soloActivos ? '&activo=eq.true' : '';
+  const r = await sbAuthed(`/rest/v1/vendedores?local=eq.${local}&order=nombre.asc&select=*${filtro}`);
+  return r.ok ? await r.json() : [];
+}
+async function renderPlantel(){
+  const box = document.getElementById('calPlantel');
+  if(!box) return;
+  box.innerHTML = `<div class="label">Plantel — ${stLocalNombre(calLocal)}</div><div class="note">Cargando…</div>`;
+  try{
+    const vendedores = await cargarVendedores(calLocal, false);
+    box.innerHTML = `
+      <div class="label">Plantel — ${stLocalNombre(calLocal)}</div>
+      <div style="display:flex; gap:6px; margin-bottom:8px">
+        <input id="calNuevoNombre" class="search" placeholder="Nombre y apellido" style="flex:1">
+        <button class="fbtn" id="calNuevoOk">+ Agregar</button>
+      </div>
+      <div class="note" id="calVendErr"></div>
+      ${vendedores.length ? vendedores.map(v=>`
+        <div class="lista" data-id="${v.id}" style="margin-top:6px; display:flex; align-items:center; justify-content:space-between; text-align:left; ${v.activo?'':'opacity:.55'}">
+          <span class="l" style="margin:0">${esc(v.nombre)}${v.activo?'':' (inactivo)'}</span>
+          <span style="display:flex; gap:4px">
+            <button class="fbtn" data-act="toggle" title="${v.activo?'Marcar inactivo':'Marcar activo'}">${v.activo?'⏸':'▶'}</button>
+            <button class="fbtn" data-act="del" title="Eliminar">🗑</button>
+          </span>
+        </div>`).join('') : '<div class="note">Todavía no cargaste a nadie de este local.</div>'}`;
+    document.getElementById('calNuevoOk').onclick = async ()=>{
+      const input = document.getElementById('calNuevoNombre');
+      const err = document.getElementById('calVendErr');
+      const nombre = input.value.trim();
+      if(!nombre){ err.textContent = 'Escribí un nombre.'; return; }
+      err.textContent = '';
+      try{
+        const r = await sbAuthed('/rest/v1/vendedores', { method:'POST', body: JSON.stringify({ local: calLocal, nombre }) });
+        if(!r.ok) throw new Error('No se pudo agregar.');
+        renderPlantel();
+      }catch(e){ err.textContent = e.message||'No se pudo agregar.'; }
+    };
+    [...box.querySelectorAll('[data-act]')].forEach(b=>{
+      const fila = b.closest('[data-id]');
+      const id = fila.dataset.id;
+      const v = vendedores.find(x=>x.id===id);
+      b.onclick = async ()=>{
+        if(b.dataset.act==='toggle'){
+          await sbAuthed(`/rest/v1/vendedores?id=eq.${id}`, { method:'PATCH', body: JSON.stringify({ activo: !v.activo }) });
+          renderPlantel();
+        } else if(b.dataset.act==='del'){
+          if(!confirm(`¿Eliminar a "${v.nombre}" del plantel? También se borran sus turnos asignados.`)) return;
+          await sbAuthed(`/rest/v1/vendedores?id=eq.${id}`, { method:'DELETE' });
+          renderPlantel(); renderMesCalendario();
+        }
+      };
+    });
+  }catch(e){
+    box.innerHTML = `<div class="note">No se pudo cargar el plantel.</div>`;
+  }
+}
+
+// ---- Calendario mensual: quién trabaja cada turno, por día ----
+async function renderMesCalendario(){
+  const box = document.getElementById('calMesBox');
+  if(!box) return;
+  box.innerHTML = `<div class="note">Cargando…</div>`;
+  const primerDia = new Date(calAnio, calMes, 1);
+  const totalDias = new Date(calAnio, calMes+1, 0).getDate();
+  const fechaDesde = isoFecha(calAnio, calMes, 1);
+  const fechaHasta = isoFecha(calAnio, calMes, totalDias);
+  try{
+    const [vendedores, turnosRes, feriadosRes] = await Promise.all([
+      cargarVendedores(calLocal, true),
+      sbAuthed(`/rest/v1/turnos?local=eq.${calLocal}&fecha=gte.${fechaDesde}&fecha=lte.${fechaHasta}&select=*,vendedores(nombre)`),
+      sbAuthed(`/rest/v1/feriados?fecha=gte.${fechaDesde}&fecha=lte.${fechaHasta}&select=*`),
+    ]);
+    const turnos = turnosRes.ok ? await turnosRes.json() : [];
+    const feriados = feriadosRes.ok ? await feriadosRes.json() : [];
+    const feriadoPorFecha = {}; feriados.forEach(f=> feriadoPorFecha[f.fecha]=f.nombre);
+    const turnosPorFecha = {};
+    turnos.forEach(t=>{
+      turnosPorFecha[t.fecha] = turnosPorFecha[t.fecha] || {manana:[], tarde:[]};
+      turnosPorFecha[t.fecha][t.turno].push({id:t.id, vendedorId:t.vendedor_id, nombre:(t.vendedores&&t.vendedores.nombre)||'—'});
+    });
+    // getDay(): Domingo=0 … Sábado=6 — lo paso a Lunes=0 … Domingo=6.
+    const offset = (primerDia.getDay()+6)%7;
+    let celdas = '';
+    for(let i=0;i<offset;i++) celdas += `<div class="cal-celda cal-vacia"></div>`;
+    for(let d=1; d<=totalDias; d++){
+      const fecha = isoFecha(calAnio, calMes, d);
+      const feriado = feriadoPorFecha[fecha];
+      const t = turnosPorFecha[fecha] || {manana:[], tarde:[]};
+      const nombreCorto = n => (n||'').split(' ')[0];
+      celdas += `
+        <div class="cal-celda ${feriado?'cal-feriado':''}" data-fecha="${fecha}">
+          <div class="cal-dia">${d}</div>
+          ${feriado ? `<div class="cal-feriado-nombre" title="${esc(feriado)}">🎌 ${esc(feriado)}</div>` : ''}
+          <button type="button" class="cal-turno" data-turno="manana" title="Turno mañana">M: ${t.manana.length? esc(t.manana.map(x=>nombreCorto(x.nombre)).join(', ')) : '—'}</button>
+          <button type="button" class="cal-turno" data-turno="tarde" title="Turno tarde">T: ${t.tarde.length? esc(t.tarde.map(x=>nombreCorto(x.nombre)).join(', ')) : '—'}</button>
+        </div>`;
+    }
+    box.innerHTML = `
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px">
+        <button class="fbtn" id="calMesAnterior">‹ Anterior</button>
+        <div class="label" style="margin:0">${MESES_NOMBRE[calMes]} ${calAnio}</div>
+        <button class="fbtn" id="calMesSiguiente">Siguiente ›</button>
+      </div>
+      <div class="cal-grid cal-grid-head">${DIAS_SEMANA.map(d=>`<div class="cal-celda-head">${d}</div>`).join('')}</div>
+      <div class="cal-grid">${celdas}</div>
+      ${!vendedores.length ? '<div class="note" style="margin-top:8px">Cargá primero el plantel de este local para poder asignar turnos.</div>' : ''}`;
+    document.getElementById('calMesAnterior').onclick = ()=>{ calMes--; if(calMes<0){calMes=11; calAnio--;} renderMesCalendario(); };
+    document.getElementById('calMesSiguiente').onclick = ()=>{ calMes++; if(calMes>11){calMes=0; calAnio++;} renderMesCalendario(); };
+    [...box.querySelectorAll('.cal-turno')].forEach(b=>{
+      const fecha = b.closest('[data-fecha]').dataset.fecha;
+      const turno = b.dataset.turno;
+      b.onclick = ()=> abrirAsignarTurno(fecha, turno, vendedores, (turnosPorFecha[fecha]||{manana:[],tarde:[]})[turno]);
+    });
+  }catch(e){
+    box.innerHTML = `<div class="note">No se pudo cargar el calendario.</div>`;
+  }
+}
+
+// Popup para asignar/sacar vendedores de un turno puntual (tocás un chip
+// para sumarlo o quitarlo — no hace falta guardar, queda al toque).
+function abrirAsignarTurno(fecha, turno, vendedoresActivos, asignadosActuales){
+  const fechaFmt = fecha.split('-').reverse().join('/');
+  const asignadosIds = new Set((asignadosActuales||[]).map(a=>a.vendedorId));
+  abrirPopup(`
+    <div style="display:flex; justify-content:space-between; align-items:center">
+      <div class="label" style="margin:0">${turno==='manana'?'☀️ Turno mañana':'🌆 Turno tarde'} — ${esc(fechaFmt)}</div>
+      <button class="fbtn" id="ppCerrar">✕</button>
+    </div>
+    ${vendedoresActivos.length ? `
+      <div class="talles" style="margin-top:10px">
+        ${vendedoresActivos.map(v=>`<button type="button" class="talle ${asignadosIds.has(v.id)?'sel':''}" data-vid="${v.id}">${esc(v.nombre)}</button>`).join('')}
+      </div>` : '<div class="note" style="margin-top:8px">No hay vendedores activos cargados en el plantel de este local.</div>'}
+    <div class="note" id="calAsigErr" style="margin-top:8px"></div>`);
+  [...document.querySelectorAll('#sheetPopup [data-vid]')].forEach(b=>{
+    b.onclick = async ()=>{
+      const vid = b.dataset.vid;
+      const err = document.getElementById('calAsigErr');
+      b.disabled = true;
+      try{
+        if(asignadosIds.has(vid)){
+          const actual = (asignadosActuales||[]).find(a=>a.vendedorId===vid);
+          await sbAuthed(`/rest/v1/turnos?id=eq.${actual.id}`, { method:'DELETE' });
+          asignadosIds.delete(vid);
+        } else {
+          await sbAuthed('/rest/v1/turnos', { method:'POST', body: JSON.stringify({ local: calLocal, fecha, turno, vendedor_id: vid }) });
+          asignadosIds.add(vid);
+        }
+        b.classList.toggle('sel');
+        renderMesCalendario();
+      }catch(e){ err.textContent = 'No se pudo actualizar.'; }
+      finally{ b.disabled = false; }
+    };
+  });
+  document.getElementById('ppCerrar').onclick = cerrarPopup;
+}
+
+// ---- Feriados de Argentina (nacional, no depende del local) ----
+async function renderFeriados(){
+  const box = document.getElementById('calFeriados');
+  if(!box) return;
+  box.innerHTML = `<div class="label">Feriados de Argentina</div><div class="note">Cargando…</div>`;
+  try{
+    const r = await sbAuthed('/rest/v1/feriados?order=fecha.asc&select=*');
+    const feriados = r.ok ? await r.json() : [];
+    box.innerHTML = `
+      <div class="label">Feriados de Argentina</div>
+      <div style="display:flex; gap:6px; margin-bottom:6px">
+        <input id="calFerFecha" class="search" type="date" style="flex:none">
+        <input id="calFerNombre" class="search" placeholder="Nombre del feriado" style="flex:1">
+      </div>
+      <button class="fbtn" id="calFerOk" style="width:100%; margin-bottom:6px">+ Agregar feriado</button>
+      <div class="note" id="calFerErr"></div>
+      <div style="max-height:340px; overflow:auto">
+        ${feriados.length ? feriados.map(f=>`
+          <div class="lista" data-fecha="${f.fecha}" style="margin-top:4px; display:flex; align-items:center; justify-content:space-between; text-align:left">
+            <span class="l" style="margin:0; font-size:13px">${esc(f.fecha.split('-').reverse().join('/'))} · ${esc(f.nombre)}</span>
+            <button class="fbtn" data-del="1">🗑</button>
+          </div>`).join('') : '<div class="note">Sin feriados cargados.</div>'}
+      </div>`;
+    document.getElementById('calFerOk').onclick = async ()=>{
+      const fecha = document.getElementById('calFerFecha').value;
+      const nombre = document.getElementById('calFerNombre').value.trim();
+      const err = document.getElementById('calFerErr');
+      if(!fecha || !nombre){ err.textContent = 'Completá la fecha y el nombre.'; return; }
+      err.textContent = '';
+      try{
+        const r2 = await sbAuthed('/rest/v1/feriados', { method:'POST', headers:{Prefer:'resolution=merge-duplicates'}, body: JSON.stringify({ fecha, nombre }) });
+        if(!r2.ok) throw new Error('No se pudo guardar.');
+        renderFeriados(); renderMesCalendario();
+      }catch(e){ err.textContent = e.message||'No se pudo guardar.'; }
+    };
+    [...box.querySelectorAll('[data-del]')].forEach(b=>{
+      const fecha = b.closest('[data-fecha]').dataset.fecha;
+      b.onclick = async ()=>{
+        if(!confirm('¿Eliminar este feriado?')) return;
+        await sbAuthed(`/rest/v1/feriados?fecha=eq.${fecha}`, { method:'DELETE' });
+        renderFeriados(); renderMesCalendario();
+      };
+    });
+  }catch(e){
+    box.innerHTML = `<div class="note">No se pudo cargar los feriados.</div>`;
   }
 }
 
