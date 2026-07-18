@@ -224,7 +224,7 @@
       <button id="clientesBtn" class="fbtn" title="Cuenta corriente de clientes">👤</button>
       <button id="traspasosBtn" class="fbtn" title="Traspaso de stock entre locales">🔁</button>
       <button id="devolucionesBtn" class="fbtn" title="Devoluciones de mercadería">↩️</button>
-      <button id="calendarioBtn" class="fbtn" title="Calendario de turnos (gerente)">📅</button>
+      <button id="calendarioBtn" class="fbtn" title="Calendario de turnos">📅</button>
       <button id="dashboardBtn" class="fbtn" title="Dashboard ASOEM (gerente)">📊</button>
       <button id="helpBtn" class="fbtn" title="Ayuda">❓</button>
       <button id="cartBtn" class="fbtn" title="Carrito">🛒<span id="cartN" class="cbadge" style="display:none"></span></button>
@@ -2590,7 +2590,7 @@ function navIconsHtml(){
     <button type="button" class="fbtn" data-nav="clientesBtn" title="Cuenta corriente de clientes">👤</button>
     <button type="button" class="fbtn" data-nav="traspasosBtn" title="Traspaso de stock entre locales">🔁</button>
     <button type="button" class="fbtn" data-nav="devolucionesBtn" title="Devoluciones de mercadería">↩️</button>
-    <button type="button" class="fbtn" data-nav="calendarioBtn" title="Calendario de turnos (gerente)">📅</button>
+    <button type="button" class="fbtn" data-nav="calendarioBtn" title="Calendario de turnos">📅</button>
     <button type="button" class="fbtn" data-nav="dashboardBtn" title="Dashboard ASOEM (gerente)">📊</button>
     <button type="button" class="fbtn" data-nav="helpBtn" title="Ayuda">❓</button>
     <button type="button" class="fbtn" data-nav="cartBtn" title="Carrito">🛒</button>
@@ -4390,6 +4390,8 @@ async function renderDashboardAsoem(){
 // adelante armar un reporte de rendimiento por vendedor.
 let calLocal = 'camerino';
 let calAnio, calMes; // mes visible del calendario (calMes: 0-11)
+let calPuedeEditar = false;   // solo gerente
+let calLocalForzado = null;   // vendedor: local_asignado (solo ve/opera el suyo)
 const DIAS_SEMANA = ['Lun','Mar','Mié','Jue','Vie','Sáb','Dom'];
 const MESES_NOMBRE = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
 const isoFecha = (anio,mes,dia)=> `${anio}-${String(mes+1).padStart(2,'0')}-${String(dia).padStart(2,'0')}`;
@@ -4433,13 +4435,10 @@ function drawCalendario(){
   document.getElementById('stClose').onclick = ()=> stCerrar(false);
   document.getElementById('stLogout').onclick = (e)=>{ e.preventDefault();
     sbSession=null; setLS('sb_session', null); miRolCache=null; miLocalAsignadoCache=undefined; drawCalendario(); };
-  cargarMiRol().then(rol=>{
-    if(rol!=='gerente'){
-      document.getElementById('calBox').innerHTML = `<div class="lista" style="margin-top:10px">
-        <div class="l">Acceso restringido</div>
-        <div class="v" style="font-size:16px">Esta sección es solo para gerentes.</div></div>`;
-      return;
-    }
+  Promise.all([cargarMiRol(), cargarMiLocalAsignado()]).then(([rol, asignado])=>{
+    calPuedeEditar = rol==='gerente';
+    calLocalForzado = asignado || null;
+    if(calLocalForzado) calLocal = calLocalForzado;
     const hoy = new Date();
     if(calAnio==null){ calAnio = hoy.getFullYear(); calMes = hoy.getMonth(); }
     renderCalendario();
@@ -4448,18 +4447,23 @@ function drawCalendario(){
 
 function renderCalendario(){
   const box = document.getElementById('calBox');
+  const bloqCam = calLocalForzado && calLocalForzado!=='camerino';
+  const bloqGiu = calLocalForzado && calLocalForzado!=='giustozzi';
   box.innerHTML = `
     <div class="label" style="margin-top:10px">Local</div>
     <div class="talles">
-      <button class="talle ${calLocal==='camerino'?'sel':''}" data-local="camerino">Camerino</button>
-      <button class="talle ${calLocal==='giustozzi'?'sel':''}" data-local="giustozzi">Giustozzi</button>
+      <button class="talle ${calLocal==='camerino'?'sel':''}" data-local="camerino" ${bloqCam?'disabled':''}
+        ${bloqCam?'style="opacity:.5; cursor:not-allowed"':''}>Camerino</button>
+      <button class="talle ${calLocal==='giustozzi'?'sel':''}" data-local="giustozzi" ${bloqGiu?'disabled':''}
+        ${bloqGiu?'style="opacity:.5; cursor:not-allowed"':''}>Giustozzi</button>
     </div>
+    ${!calPuedeEditar ? '<div class="note" style="margin-top:4px">Podés ver el calendario y el plantel de tu local — solo el gerente puede editarlos.</div>' : ''}
     <div id="calMesBox" style="margin-top:12px"><div class="note">Cargando calendario…</div></div>
     <div class="st-grid" style="margin-top:20px">
       <div id="calPlantel"><div class="note">Cargando plantel…</div></div>
       <div id="calFeriados"><div class="note">Cargando feriados…</div></div>
     </div>`;
-  [...box.querySelectorAll('[data-local]')].forEach(b=> b.onclick = ()=>{ calLocal = b.dataset.local; renderCalendario(); });
+  [...box.querySelectorAll('[data-local]')].forEach(b=> b.onclick = ()=>{ if(b.disabled) return; calLocal = b.dataset.local; renderCalendario(); });
   renderPlantel();
   renderMesCalendario();
   renderFeriados();
@@ -4479,19 +4483,22 @@ async function renderPlantel(){
     const vendedores = await cargarVendedores(calLocal, false);
     box.innerHTML = `
       <div class="label">Plantel — ${stLocalNombre(calLocal)}</div>
-      <div style="display:flex; gap:6px; margin-bottom:8px">
-        <input id="calNuevoNombre" class="search" placeholder="Nombre y apellido" style="flex:1">
-        <button class="fbtn" id="calNuevoOk">+ Agregar</button>
-      </div>
-      <div class="note" id="calVendErr"></div>
+      ${calPuedeEditar ? `
+        <div style="display:flex; gap:6px; margin-bottom:8px">
+          <input id="calNuevoNombre" class="search" placeholder="Nombre y apellido" style="flex:1">
+          <button class="fbtn" id="calNuevoOk">+ Agregar</button>
+        </div>
+        <div class="note" id="calVendErr"></div>` : ''}
       ${vendedores.length ? vendedores.map(v=>`
         <div class="lista" data-id="${v.id}" style="margin-top:6px; display:flex; align-items:center; justify-content:space-between; text-align:left; ${v.activo?'':'opacity:.55'}">
           <span class="l" style="margin:0">${esc(v.nombre)}${v.activo?'':' (inactivo)'}</span>
-          <span style="display:flex; gap:4px">
-            <button class="fbtn" data-act="toggle" title="${v.activo?'Marcar inactivo':'Marcar activo'}">${v.activo?'⏸':'▶'}</button>
-            <button class="fbtn" data-act="del" title="Eliminar">🗑</button>
-          </span>
-        </div>`).join('') : '<div class="note">Todavía no cargaste a nadie de este local.</div>'}`;
+          ${calPuedeEditar ? `
+            <span style="display:flex; gap:4px">
+              <button class="fbtn" data-act="toggle" title="${v.activo?'Marcar inactivo':'Marcar activo'}">${v.activo?'⏸':'▶'}</button>
+              <button class="fbtn" data-act="del" title="Eliminar">🗑</button>
+            </span>` : ''}
+        </div>`).join('') : '<div class="note">Todavía no hay nadie cargado en este local.</div>'}`;
+    if(!calPuedeEditar) return;
     document.getElementById('calNuevoOk').onclick = async ()=>{
       const input = document.getElementById('calNuevoNombre');
       const err = document.getElementById('calVendErr');
@@ -4556,12 +4563,13 @@ async function renderMesCalendario(){
       const feriado = feriadoPorFecha[fecha];
       const t = turnosPorFecha[fecha] || {manana:[], tarde:[]};
       const nombreCorto = n => (n||'').split(' ')[0];
+      const soloLectura = !calPuedeEditar ? 'disabled style="cursor:default"' : '';
       celdas += `
         <div class="cal-celda ${feriado?'cal-feriado':''}" data-fecha="${fecha}">
           <div class="cal-dia">${d}</div>
           ${feriado ? `<div class="cal-feriado-nombre" title="${esc(feriado)}">🎌 ${esc(feriado)}</div>` : ''}
-          <button type="button" class="cal-turno" data-turno="manana" title="Turno mañana">M: ${t.manana.length? esc(t.manana.map(x=>nombreCorto(x.nombre)).join(', ')) : '—'}</button>
-          <button type="button" class="cal-turno" data-turno="tarde" title="Turno tarde">T: ${t.tarde.length? esc(t.tarde.map(x=>nombreCorto(x.nombre)).join(', ')) : '—'}</button>
+          <button type="button" class="cal-turno" data-turno="manana" title="Turno mañana" ${soloLectura}>M: ${t.manana.length? esc(t.manana.map(x=>nombreCorto(x.nombre)).join(', ')) : '—'}</button>
+          <button type="button" class="cal-turno" data-turno="tarde" title="Turno tarde" ${soloLectura}>T: ${t.tarde.length? esc(t.tarde.map(x=>nombreCorto(x.nombre)).join(', ')) : '—'}</button>
         </div>`;
     }
     box.innerHTML = `
@@ -4572,14 +4580,16 @@ async function renderMesCalendario(){
       </div>
       <div class="cal-grid cal-grid-head">${DIAS_SEMANA.map(d=>`<div class="cal-celda-head">${d}</div>`).join('')}</div>
       <div class="cal-grid">${celdas}</div>
-      ${!vendedores.length ? '<div class="note" style="margin-top:8px">Cargá primero el plantel de este local para poder asignar turnos.</div>' : ''}`;
+      ${calPuedeEditar && !vendedores.length ? '<div class="note" style="margin-top:8px">Cargá primero el plantel de este local para poder asignar turnos.</div>' : ''}`;
     document.getElementById('calMesAnterior').onclick = ()=>{ calMes--; if(calMes<0){calMes=11; calAnio--;} renderMesCalendario(); };
     document.getElementById('calMesSiguiente').onclick = ()=>{ calMes++; if(calMes>11){calMes=0; calAnio++;} renderMesCalendario(); };
-    [...box.querySelectorAll('.cal-turno')].forEach(b=>{
-      const fecha = b.closest('[data-fecha]').dataset.fecha;
-      const turno = b.dataset.turno;
-      b.onclick = ()=> abrirAsignarTurno(fecha, turno, vendedores, (turnosPorFecha[fecha]||{manana:[],tarde:[]})[turno]);
-    });
+    if(calPuedeEditar){
+      [...box.querySelectorAll('.cal-turno')].forEach(b=>{
+        const fecha = b.closest('[data-fecha]').dataset.fecha;
+        const turno = b.dataset.turno;
+        b.onclick = ()=> abrirAsignarTurno(fecha, turno, vendedores, (turnosPorFecha[fecha]||{manana:[],tarde:[]})[turno]);
+      });
+    }
   }catch(e){
     box.innerHTML = `<div class="note">No se pudo cargar el calendario.</div>`;
   }
@@ -4633,19 +4643,21 @@ async function renderFeriados(){
     const feriados = r.ok ? await r.json() : [];
     box.innerHTML = `
       <div class="label">Feriados de Argentina</div>
-      <div style="display:flex; gap:6px; margin-bottom:6px">
-        <input id="calFerFecha" class="search" type="date" style="flex:none">
-        <input id="calFerNombre" class="search" placeholder="Nombre del feriado" style="flex:1">
-      </div>
-      <button class="fbtn" id="calFerOk" style="width:100%; margin-bottom:6px">+ Agregar feriado</button>
-      <div class="note" id="calFerErr"></div>
+      ${calPuedeEditar ? `
+        <div style="display:flex; gap:6px; margin-bottom:6px">
+          <input id="calFerFecha" class="search" type="date" style="flex:none">
+          <input id="calFerNombre" class="search" placeholder="Nombre del feriado" style="flex:1">
+        </div>
+        <button class="fbtn" id="calFerOk" style="width:100%; margin-bottom:6px">+ Agregar feriado</button>
+        <div class="note" id="calFerErr"></div>` : ''}
       <div style="max-height:340px; overflow:auto">
         ${feriados.length ? feriados.map(f=>`
           <div class="lista" data-fecha="${f.fecha}" style="margin-top:4px; display:flex; align-items:center; justify-content:space-between; text-align:left">
             <span class="l" style="margin:0; font-size:13px">${esc(f.fecha.split('-').reverse().join('/'))} · ${esc(f.nombre)}</span>
-            <button class="fbtn" data-del="1">🗑</button>
+            ${calPuedeEditar ? '<button class="fbtn" data-del="1">🗑</button>' : ''}
           </div>`).join('') : '<div class="note">Sin feriados cargados.</div>'}
       </div>`;
+    if(!calPuedeEditar) return;
     document.getElementById('calFerOk').onclick = async ()=>{
       const fecha = document.getElementById('calFerFecha').value;
       const nombre = document.getElementById('calFerNombre').value.trim();
