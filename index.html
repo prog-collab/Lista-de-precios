@@ -4457,7 +4457,7 @@ function renderCalendario(){
       <button class="talle ${calLocal==='giustozzi'?'sel':''}" data-local="giustozzi" ${bloqGiu?'disabled':''}
         ${bloqGiu?'style="opacity:.5; cursor:not-allowed"':''}>Giustozzi</button>
     </div>
-    ${!calPuedeEditar ? '<div class="note" style="margin-top:4px">Podés ver el calendario y el plantel de tu local — solo el gerente puede editarlos.</div>' : ''}
+    ${!calPuedeEditar ? '<div class="note" style="margin-top:4px">Podés asignar los turnos de hoy en adelante de tu local — los días pasados, el plantel y los feriados los administra el gerente.</div>' : ''}
     <div id="calMesBox" style="margin-top:12px"><div class="note">Cargando calendario…</div></div>
     <div class="st-grid" style="margin-top:20px">
       <div id="calPlantel"><div class="note">Cargando plantel…</div></div>
@@ -4556,6 +4556,7 @@ async function renderMesCalendario(){
     });
     // getDay(): Domingo=0 … Sábado=6 — lo paso a Lunes=0 … Domingo=6.
     const offset = (primerDia.getDay()+6)%7;
+    const hoyIso = isoLocal(new Date());
     let celdas = '';
     for(let i=0;i<offset;i++) celdas += `<div class="cal-celda cal-vacia"></div>`;
     for(let d=1; d<=totalDias; d++){
@@ -4563,7 +4564,9 @@ async function renderMesCalendario(){
       const feriado = feriadoPorFecha[fecha];
       const t = turnosPorFecha[fecha] || {manana:[], tarde:[]};
       const nombreCorto = n => (n||'').split(' ')[0];
-      const soloLectura = !calPuedeEditar ? 'disabled style="cursor:default"' : '';
+      // El gerente edita cualquier fecha; un vendedor solo hoy en adelante.
+      const editable = calPuedeEditar || fecha>=hoyIso;
+      const soloLectura = editable ? '' : 'disabled style="cursor:default"';
       celdas += `
         <div class="cal-celda ${feriado?'cal-feriado':''}" data-fecha="${fecha}">
           <div class="cal-dia">${d}</div>
@@ -4580,16 +4583,15 @@ async function renderMesCalendario(){
       </div>
       <div class="cal-grid cal-grid-head">${DIAS_SEMANA.map(d=>`<div class="cal-celda-head">${d}</div>`).join('')}</div>
       <div class="cal-grid">${celdas}</div>
-      ${calPuedeEditar && !vendedores.length ? '<div class="note" style="margin-top:8px">Cargá primero el plantel de este local para poder asignar turnos.</div>' : ''}`;
+      ${!vendedores.length ? '<div class="note" style="margin-top:8px">Todavía no hay vendedores cargados en el plantel de este local.</div>' : ''}`;
     document.getElementById('calMesAnterior').onclick = ()=>{ calMes--; if(calMes<0){calMes=11; calAnio--;} renderMesCalendario(); };
     document.getElementById('calMesSiguiente').onclick = ()=>{ calMes++; if(calMes>11){calMes=0; calAnio++;} renderMesCalendario(); };
-    if(calPuedeEditar){
-      [...box.querySelectorAll('.cal-turno')].forEach(b=>{
-        const fecha = b.closest('[data-fecha]').dataset.fecha;
-        const turno = b.dataset.turno;
-        b.onclick = ()=> abrirAsignarTurno(fecha, turno, vendedores, (turnosPorFecha[fecha]||{manana:[],tarde:[]})[turno]);
-      });
-    }
+    [...box.querySelectorAll('.cal-turno')].forEach(b=>{
+      if(b.disabled) return;
+      const fecha = b.closest('[data-fecha]').dataset.fecha;
+      const turno = b.dataset.turno;
+      b.onclick = ()=> abrirAsignarTurno(fecha, turno, vendedores, (turnosPorFecha[fecha]||{manana:[],tarde:[]})[turno]);
+    });
   }catch(e){
     box.innerHTML = `<div class="note">No se pudo cargar el calendario.</div>`;
   }
