@@ -99,7 +99,8 @@
   .cal-grid{display:grid; grid-template-columns:repeat(7,1fr); gap:4px}
   .cal-grid-head{margin-bottom:2px}
   .cal-celda-head{text-align:center; font-size:11px; text-transform:uppercase; letter-spacing:.5px; color:var(--muted); padding:2px 0}
-  .cal-celda{border:1px solid var(--line); border-radius:6px; padding:4px; min-height:74px; display:flex; flex-direction:column; gap:2px}
+  .cal-celda{border:1px solid var(--line); border-radius:6px; padding:4px; min-height:74px; min-width:0; display:flex; flex-direction:column; gap:2px}
+  .cal-celda > *{min-width:0}
   .cal-celda.cal-vacia{border-color:transparent}
   .cal-celda.cal-feriado{background:rgba(56,189,248,.1); border-color:var(--accent)}
   .cal-dia{font-size:12px; font-weight:700}
