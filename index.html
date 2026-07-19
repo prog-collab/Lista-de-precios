@@ -103,7 +103,9 @@
   .cal-celda > *{min-width:0}
   .cal-celda.cal-vacia{border-color:transparent}
   .cal-celda.cal-feriado{background:rgba(56,189,248,.1); border-color:var(--accent)}
+  .cal-celda.cal-hoy{border-color:var(--accent2); border-width:2px; padding:3px; background:rgba(34,197,94,.12)}
   .cal-dia{font-size:12px; font-weight:700}
+  .cal-hoy .cal-dia{color:var(--accent2)}
   .cal-feriado-nombre{font-size:9px; color:var(--accent); line-height:1.25; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
   .cal-turno{font-size:10px; text-align:left; background:none; border:1px solid var(--line); border-radius:4px;
     padding:2px 4px; cursor:pointer; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
@@ -4675,9 +4677,10 @@ async function renderMesCalendario(){
       // El gerente edita cualquier fecha; un vendedor solo hoy en adelante.
       const editable = calPuedeEditar || fecha>=hoyIso;
       const soloLectura = editable ? '' : 'disabled style="cursor:default"';
+      const esHoy = fecha===hoyIso;
       celdas += `
-        <div class="cal-celda ${feriado?'cal-feriado':''}" data-fecha="${fecha}">
-          <div class="cal-dia">${d}</div>
+        <div class="cal-celda ${feriado?'cal-feriado':''} ${esHoy?'cal-hoy':''}" data-fecha="${fecha}">
+          <div class="cal-dia">${esHoy?'📍 ':''}${d}</div>
           ${feriado ? `<div class="cal-feriado-nombre" title="${esc(feriado)}">🎌 ${esc(feriado)}</div>` : ''}
           <button type="button" class="cal-turno" data-turno="manana" title="Turno mañana" ${soloLectura}>M: ${t.manana.length? esc(t.manana.map(x=>nombreCorto(x.nombre)).join(', ')) : '—'}</button>
           <button type="button" class="cal-turno" data-turno="tarde" title="Turno tarde" ${soloLectura}>T: ${t.tarde.length? esc(t.tarde.map(x=>nombreCorto(x.nombre)).join(', ')) : '—'}</button>
