@@ -2019,6 +2019,80 @@ function wireReciboXButtons(card, items, total, formaPagoTexto, localSel){
   };
 }
 
+// ===== 🎤 Dictado por voz para cargar los montos más rápido con gente
+// esperando en el local. Reconocimiento nativo del navegador (gratis, sin
+// backend) — en iPhone/Safari puede no estar disponible, ahí se avisa y
+// se sigue tipeando como siempre. Nunca guarda solo: dicta, completa el
+// campo, y el vendedor lo ve y lo puede corregir a mano antes de guardar
+// la venta, igual que si lo hubiera escrito él.
+function reconocimientoDeVozDisponible(){
+  return !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+}
+function escucharUnaFrase(onTexto, onError){
+  const Ctor = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if(!Ctor){ onError && onError('Este navegador no tiene dictado por voz — probá con Chrome.'); return null; }
+  const rec = new Ctor();
+  rec.lang = 'es-AR';
+  rec.interimResults = false;
+  rec.maxAlternatives = 1;
+  rec.onresult = (e)=> onTexto(e.results[0][0].transcript);
+  rec.onerror = (e)=> onError && onError(e.error==='no-speech' ? 'No se escuchó nada, probá de nuevo.' : `No se pudo escuchar (${e.error}).`);
+  rec.start();
+  return rec;
+}
+const NUM_UNIDADES = {
+  cero:0, un:1, uno:1, una:1, dos:2, tres:3, cuatro:4, cinco:5, seis:6, siete:7, ocho:8, nueve:9,
+  diez:10, once:11, doce:12, trece:13, catorce:14, quince:15,
+  dieciseis:16, diecisiete:17, dieciocho:18, diecinueve:19,
+  veinte:20, veintiuno:21, veintidos:22, veintitres:23, veinticuatro:24, veinticinco:25,
+  veintiseis:26, veintisiete:27, veintiocho:28, veintinueve:29,
+};
+const NUM_DECENAS = { treinta:30, cuarenta:40, cincuenta:50, sesenta:60, setenta:70, ochenta:80, noventa:90 };
+const NUM_CENTENAS = {
+  cien:100, ciento:100, doscientos:200, trescientos:300, cuatrocientos:400,
+  quinientos:500, seiscientos:600, setecientos:700, ochocientos:800, novecientos:900,
+};
+// Convierte lo dictado ("quince mil", "ochenta y nueve mil", "$15.000",
+// "15000 pesos") a un número. Devuelve null si no se reconoció ninguno.
+function textoAMonto(textoOriginal){
+  // "15.000" / "15,000" (separador de miles) -> "15000", antes de sacar
+  // la puntuación (si no, "15" y "000" quedarían como dos números sueltos).
+  let texto = (textoOriginal||'').replace(/(\d)[.,](\d{3})(?!\d)/g, '$1$2');
+  texto = norm(texto).replace(/[^a-z0-9\s]/g, ' ');
+  const tokens = texto.split(/\s+/).filter(Boolean);
+  let total = 0, actual = 0, huboNumero = false;
+  for(const t of tokens){
+    if(t==='pesos' || t==='peso' || t==='con' || t==='de' || t==='y') continue;
+    if(/^\d+$/.test(t)){ actual += Number(t); huboNumero = true; continue; }
+    if(t==='millon' || t==='millones'){ total += (actual||1)*1000000; actual=0; huboNumero=true; continue; }
+    if(t==='mil'){ total += (actual||1)*1000; actual=0; huboNumero=true; continue; }
+    if(NUM_CENTENAS[t]!=null){ actual += NUM_CENTENAS[t]; huboNumero=true; continue; }
+    if(NUM_DECENAS[t]!=null){ actual += NUM_DECENAS[t]; huboNumero=true; continue; }
+    if(NUM_UNIDADES[t]!=null){ actual += NUM_UNIDADES[t]; huboNumero=true; continue; }
+  }
+  return huboNumero ? (total+actual) : null;
+}
+// Dicta un monto y lo carga en el input -- no guarda nada solo, el
+// vendedor lo ve y lo corrige a mano si hizo falta, igual que si lo
+// hubiera tipeado.
+function dictarMonto(input, boton){
+  if(!reconocimientoDeVozDisponible()){ toast('Este navegador no tiene dictado por voz — probá con Chrome.'); return; }
+  const textoBoton = boton.textContent;
+  boton.textContent = '🔴'; boton.disabled = true;
+  const terminar = ()=>{ boton.textContent = textoBoton; boton.disabled = false; };
+  escucharUnaFrase(
+    (texto)=>{
+      terminar();
+      const monto = textoAMonto(texto);
+      if(monto==null){ toast(`No entendí un monto en "${texto}"`); return; }
+      input.value = monto;
+      input.dispatchEvent(new Event('input', {bubbles:true}));
+      toast(`🎤 "${texto}" → ${money(monto)}`);
+    },
+    (msg)=>{ terminar(); toast(msg); }
+  );
+}
+
 function wireVentaCard(){
   const card = document.getElementById('stVentaCard');
   // OJO: no cachear stLocal() en una const acá — este bloque se arma antes de
@@ -2086,6 +2160,12 @@ function wireVentaCard(){
     CAMPOS_PAGO.forEach(id=> card.querySelector('#'+id).value = id===campo ? stVentaTotal : 0);
     recalcSaldoVenta();
   });
+  const botonesDictar = [...card.querySelectorAll('[data-dictar]')];
+  if(reconocimientoDeVozDisponible()){
+    botonesDictar.forEach(b=> b.onclick = ()=> dictarMonto(card.querySelector('#'+b.dataset.dictar), b));
+  } else {
+    botonesDictar.forEach(b=>{ b.style.display='none'; });
+  }
   // Deja la venta lista para arrancar otra de cero (medios de pago, cliente,
   // facturar, cuotas ASOEM, etc.) sin tocar el resultado (#stFcResultado)
   // que sigue mostrando el ticket/Recibo X de la venta que se acaba de
@@ -2830,6 +2910,7 @@ function drawVender(){
             <div style="display:flex; gap:4px">
               <input id="stCvContado" class="search" type="number" inputmode="decimal" value="0" style="flex:1">
               <button class="fbtn" type="button" data-usar-total="stCvContado" style="flex:none; padding:0 10px" title="Usar el total del carrito">＝</button>
+              <button class="fbtn" type="button" data-dictar="stCvContado" style="flex:none; padding:0 10px" title="Dictar el monto por voz">🎤</button>
             </div>
             <div class="talles" id="stCvContadoDescuento" style="margin-top:4px">
               <button class="talle sel" type="button" data-desc="0">Sin descuento</button>
@@ -2842,6 +2923,7 @@ function drawVender(){
             <div style="display:flex; gap:4px">
               <input id="stCvTransf" class="search" type="number" inputmode="decimal" value="0" style="flex:1">
               <button class="fbtn" type="button" data-usar-total="stCvTransf" style="flex:none; padding:0 10px" title="Usar el total del carrito">＝</button>
+              <button class="fbtn" type="button" data-dictar="stCvTransf" style="flex:none; padding:0 10px" title="Dictar el monto por voz">🎤</button>
             </div>
             <select id="stCvTransfAlias" class="search" style="margin-top:4px">
               <option value="">¿A qué alias?</option>
@@ -2861,6 +2943,7 @@ function drawVender(){
             <div style="display:flex; gap:4px">
               <input id="stCvTCred" class="search" type="number" inputmode="decimal" value="0" style="flex:1">
               <button class="fbtn" type="button" data-usar-total="stCvTCred" style="flex:none; padding:0 10px" title="Usar el total del carrito">＝</button>
+              <button class="fbtn" type="button" data-dictar="stCvTCred" style="flex:none; padding:0 10px" title="Dictar el monto por voz">🎤</button>
             </div>
             <select id="stCvTCredCuotas" class="search" style="margin-top:4px">
               <option value="1">1 cuota</option>
@@ -2873,11 +2956,13 @@ function drawVender(){
             <div style="display:flex; gap:4px">
               <input id="stCvTDeb" class="search" type="number" inputmode="decimal" value="0" style="flex:1">
               <button class="fbtn" type="button" data-usar-total="stCvTDeb" style="flex:none; padding:0 10px" title="Usar el total del carrito">＝</button>
+              <button class="fbtn" type="button" data-dictar="stCvTDeb" style="flex:none; padding:0 10px" title="Dictar el monto por voz">🎤</button>
             </div></div>
           <div><div class="note" style="margin:0 0 4px">Crédito personal</div>
             <div style="display:flex; gap:4px">
               <input id="stCvCPer" class="search" type="number" inputmode="decimal" value="0" style="flex:1">
               <button class="fbtn" type="button" data-usar-total="stCvCPer" style="flex:none; padding:0 10px" title="Usar el total del carrito">＝</button>
+              <button class="fbtn" type="button" data-dictar="stCvCPer" style="flex:none; padding:0 10px" title="Dictar el monto por voz">🎤</button>
             </div>
             <div class="note">Elegí el cliente arriba, junto al total.</div>
           </div>
@@ -2885,6 +2970,7 @@ function drawVender(){
             <div style="display:flex; gap:4px">
               <input id="stCvCFin" class="search" type="number" inputmode="decimal" value="0" style="flex:1">
               <button class="fbtn" type="button" data-usar-total="stCvCFin" style="flex:none; padding:0 10px" title="Usar el total del carrito">＝</button>
+              <button class="fbtn" type="button" data-dictar="stCvCFin" style="flex:none; padding:0 10px" title="Dictar el monto por voz">🎤</button>
             </div>
             <select id="stCvCFinCuotas" class="search" style="margin-top:4px">
               <option value="1">1 pago</option>
