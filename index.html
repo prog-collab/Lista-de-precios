@@ -1941,11 +1941,29 @@ function wireTicketButtons(card, d, localSel, telefono){
   };
 }
 
+// Compara el total final (ya con el descuento de contado/transferencia o el
+// recargo de cuotas aplicado) contra la suma de los ítems del carrito, para
+// poder mostrar en el recibo "Total $X" y, si cambió, "Total con descuento/
+// recargo Y% $Z". Devuelve null si no hubo diferencia (nada que aclarar).
+function descRecargoPct(subtotal, total){
+  if(!(subtotal>0)) return null;
+  const pct = (total-subtotal)/subtotal*100;
+  return Math.abs(pct)>=0.05 ? pct : null;
+}
+function pctFmt(pct){
+  return (Math.round(Math.abs(pct)*10)/10).toString().replace(/\.0$/,'');
+}
+function subtotalItems(items){
+  return items.reduce((s,it)=> s + (Number(it.precio)||0), 0);
+}
+
 // Recibo sin valor fiscal para una venta del POS que no se facturó — mismo
 // diseño que "Compartir resumen" del carrito de clientes (drawResumen),
 // pero con los datos reales de la venta (items + medios de pago mixtos).
 function renderReciboX(items, total, formaPagoTexto, localSel){
   const fecha = new Date().toLocaleDateString('es-AR');
+  const subtotal = subtotalItems(items);
+  const pct = descRecargoPct(subtotal, total);
   const filas = items.map(it=>{
     const cant = it.manual ? (it.cantidad||1) : 1;
     const detalle = it.manual ? '' : [it.talle, it.color].filter(Boolean).join(' · ');
@@ -1968,23 +1986,71 @@ function renderReciboX(items, total, formaPagoTexto, localSel){
       </table>
       <div style="border-top:1px dashed #bbb;margin:8px 0"></div>
       <div style="display:flex;justify-content:space-between;font-size:13px"><span style="color:#555">Forma de pago</span><span style="text-align:right">${esc(formaPagoTexto)}</span></div>
-      <div style="display:flex;justify-content:space-between;align-items:baseline;font-weight:800;font-size:20px;margin-top:8px"><span>TOTAL</span><span>${fmt(total)}</span></div>
+      ${pct ? `<div style="display:flex;justify-content:space-between;font-size:14px;margin-top:8px"><span style="color:#555">Total</span><span>${fmt(subtotal)}</span></div>` : ''}
+      <div style="display:flex;justify-content:space-between;align-items:baseline;font-weight:800;font-size:20px;margin-top:${pct?'2px':'8px'}">
+        <span>${pct ? `Total ${pct<0?'con descuento −':'con recargo +'}${pctFmt(pct)}%` : 'TOTAL'}</span><span>${fmt(total)}</span>
+      </div>
       <div style="text-align:center;font-size:11px;color:#999;margin-top:12px">¡Gracias por su compra!</div>
     </div>
     <button class="addcart" id="stReciboTxt" style="margin-top:8px">📋 Compartir texto</button>
     <button class="addcart" id="stReciboImg" style="background:var(--accent); color:#03283a; margin-top:6px">🖼 Compartir imagen</button>
+    <button class="fbtn" id="stReciboPrint" style="width:100%; margin-top:6px">🖨️ Imprimir</button>
     <div class="note" id="stReciboErr"></div>`;
 }
 
 function textoReciboX(items, total, formaPagoTexto, localSel){
   const fecha = new Date().toLocaleDateString('es-AR');
+  const subtotal = subtotalItems(items);
+  const pct = descRecargoPct(subtotal, total);
   const lineas = items.map(it=>{
     const cant = it.manual ? (it.cantidad||1) : 1;
     const detalle = it.manual ? '' : [it.talle, it.color].filter(Boolean).join(' · ');
     return `${cant}x ${it.nombre||'(sin nombre)'}${detalle?` (${detalle})`:''} — ${fmt(it.precio)}`;
   }).join('\n');
+  const totalTexto = pct
+    ? `Total: ${fmt(subtotal)}\nTotal ${pct<0?'con descuento −':'con recargo +'}${pctFmt(pct)}%: ${fmt(total)}`
+    : `TOTAL: ${fmt(total)}`;
   return `${stLocalNombre(localSel).toUpperCase()}\nRecibo X · ${fecha}\n\n${lineas}\n\n`+
-    `Forma de pago: ${formaPagoTexto}\nTOTAL: ${fmt(total)}\n\n¡Gracias por su compra!`;
+    `Forma de pago: ${formaPagoTexto}\n${totalTexto}\n\n¡Gracias por su compra!`;
+}
+
+// Mismo formato de papel y fuente que la factura (Courier New monospace,
+// pensado para la térmica de 80mm) pero sin datos fiscales (no es un
+// comprobante AFIP) — se usa solo al tocar "Imprimir" en el Recibo X.
+function renderReciboXTicket(items, total, formaPagoTexto, localSel){
+  const info = LOCAL_INFO[localSel] || LOCAL_INFO.camerino;
+  const fecha = new Date().toLocaleDateString('es-AR');
+  const subtotal = subtotalItems(items);
+  const pct = descRecargoPct(subtotal, total);
+  const filas = items.map(it=>{
+    const cant = it.manual ? (it.cantidad||1) : 1;
+    const detalle = it.manual ? '' : [it.talle, it.color].filter(Boolean).join(' · ');
+    return `<div class="l" style="display:flex; justify-content:space-between; gap:8px">
+      <span>${cant>1?cant+'x ':''}${esc(it.nombre)||'(sin nombre)'}${detalle?` (${esc(detalle)})`:''}</span>
+      <span style="white-space:nowrap">${fmt(it.precio)}</span></div>`;
+  }).join('');
+  return `
+    <div id="stReciboTicket" class="lista" style="margin-top:10px; font-family:'Courier New',monospace">
+      ${logoTicket(localSel)}
+      <div style="text-align:left">
+        <div class="v" style="font-size:15px">${esc(info.razonSocial)}</div>
+        <div class="l">Domicilio: ${esc(info.domicilio)}</div>
+        <div style="border-top:1px dashed var(--accent); margin:8px 0"></div>
+        <div class="l" style="text-align:center; font-weight:700">RECIBO X · sin valor fiscal</div>
+        <div class="l" style="text-align:center">${esc(fecha)}</div>
+        <div style="border-top:1px dashed var(--accent); margin:8px 0"></div>
+        ${filas}
+        <div style="border-top:1px dashed var(--accent); margin:8px 0"></div>
+        <div class="l">Forma de pago:</div>
+        <div class="l">${esc(formaPagoTexto)}</div>
+        <div style="border-top:1px dashed var(--accent); margin:8px 0"></div>
+        ${pct ? `<div class="l" style="display:flex; justify-content:space-between"><span>Total</span><span>${fmt(subtotal)}</span></div>` : ''}
+        <div class="v" style="font-size:20px; display:flex; justify-content:space-between">
+          <span>${pct ? `TOTAL ${pct<0?'c/desc. −':'c/rec. +'}${pctFmt(pct)}%` : 'TOTAL'}</span><span>${fmt(total)}</span>
+        </div>
+      </div>
+      <div style="text-align:center; font-size:11px; margin-top:10px">¡Gracias por su compra!</div>
+    </div>`;
 }
 
 function wireReciboXButtons(card, items, total, formaPagoTexto, localSel){
@@ -2019,6 +2085,31 @@ function wireReciboXButtons(card, items, total, formaPagoTexto, localSel){
       err.textContent = 'No se pudo generar la imagen (¿sin internet?).';
       btn.disabled=false; btn.textContent='🖼 Compartir imagen';
     }
+  };
+  card.querySelector('#stReciboPrint').onclick = ()=>{
+    const html = renderReciboXTicket(items, total, formaPagoTexto, localSel);
+    const w = window.open('', '_blank');
+    // Mismo criterio que la impresión de factura (wireTicketButtons):
+    // redefinir la tipografía a mano porque esta ventana no hereda el CSS
+    // de la app, y fijar el alto real de página en mm para que la térmica
+    // de rollo continuo no expulse metros de papel en blanco.
+    w.document.write(`<html><head><title>Recibo</title><style>
+      html, body{ margin:0; padding:0 }
+      body{font-family:'Courier New',monospace; width:100%; box-sizing:border-box; font-size:13px; font-weight:600}
+      .lista{text-align:center}
+      .l{font-size:13px; font-weight:600}
+      .v{font-weight:800}
+      *{color:#000!important; background:#fff!important; border-color:#000!important}
+    </style></head><body>${html}</body></html>`);
+    w.document.close();
+    w.focus();
+    setTimeout(()=>{
+      const alturaMm = Math.ceil(w.document.body.scrollHeight / 96 * 25.4) + 6;
+      const style = w.document.createElement('style');
+      style.textContent = `@page{ size: 80mm ${alturaMm}mm; margin: 3mm 2mm; }`;
+      w.document.head.appendChild(style);
+      w.print();
+    }, 50);
   };
 }
 
@@ -2185,6 +2276,7 @@ function wireVentaCard(){
     card.querySelector('#stCvContadoDescuento [data-desc="0"]').classList.add('sel');
     card.querySelector('#stCvTransfDescuento').checked = false;
     card.querySelector('#stCvTransfAlias').value = '';
+    card.querySelector('#stCvNota').value = '';
     card.querySelector('#stCvTransfVerificar').style.display = 'none';
     card.querySelector('#stCvTransfVerificarInfo').textContent = '';
     transfVentanaDesde = null;
@@ -2402,6 +2494,7 @@ function wireVentaCard(){
     const recargoPctCFin = CUOTAS_INT.includes(cuotasCFin) ? Number((tasaMensual*cuotasCFin).toFixed(2)) : 0;
     const pagoCFin = montoFinalCFin();
     const autorizacionAsoem = (card.querySelector('#stCvCFinAutorizacion').value||'').trim();
+    const nota = (card.querySelector('#stCvNota').value||'').trim() || null;
     const saldoPendiente = Math.max(0, total - (pagoContado+pagoTransf+pagoTCred+pagoTDeb+pagoCPer+pagoCFin));
     const cuit = (card.querySelector('#stFcCuit').value||'').replace(/\D/g,'');
     const fecha = card.querySelector('#stFcFecha').value;
@@ -2453,6 +2546,7 @@ function wireVentaCard(){
           caja_sesion_id: sesionAbierta.id,
           facturada: false,
           devolucion_id: stVentaDevolucionId || null,
+          nota,
         }) });
       const ventaRows = await rVenta.json().catch(()=>null);
       if(!rVenta.ok || !ventaRows || !ventaRows[0]) throw new Error('No se pudo guardar la venta.');
@@ -2898,9 +2992,15 @@ function drawVender(){
         <div id="stCarrito"></div>
       </div>
       <div class="st-col-right" id="stVentaCard">
-        <div class="lista">
-          <div class="l">Total del carrito</div>
-          <div class="v" id="stCvTotalDisplay" style="font-size:28px">${money(stVentaTotal)}</div>
+        <div class="lista" style="display:flex; align-items:center; justify-content:space-between; gap:10px; text-align:left; padding:14px 16px">
+          <div>
+            <div class="l">Total del carrito</div>
+            <div class="v" id="stCvTotalDisplay" style="font-size:28px">${money(stVentaTotal)}</div>
+          </div>
+          <div style="text-align:right; flex:none">
+            <div class="l">Prendas</div>
+            <div class="v" id="stCvPrendasDisplay" style="font-size:22px">0</div>
+          </div>
         </div>
         <div class="label">Cliente de esta venta (opcional)</div>
         <div class="note">Elegilo para que la compra quede en su historial, tenga o no crédito personal.</div>
@@ -2988,9 +3088,15 @@ function drawVender(){
           </div>
         </div>
         <div class="note">Tocá "＝" al lado de un medio de pago para cargarle el total del carrito de una — pone el resto en $0.</div>
-        <div class="lista" style="margin-top:8px; display:flex; align-items:center; justify-content:space-between; text-align:left; padding:10px 14px">
-          <div class="l" style="margin:0">Saldo pendiente</div>
-          <div class="v" id="stCvSaldo" style="font-size:20px; margin:0">${money(0)}</div>
+        <div class="lista" style="margin-top:8px; display:flex; align-items:stretch; gap:10px; text-align:left; padding:10px 14px">
+          <div style="flex:1 1 55%; display:flex; align-items:center; justify-content:space-between; gap:8px">
+            <div class="l" style="margin:0">Saldo pendiente</div>
+            <div class="v" id="stCvSaldo" style="font-size:20px; margin:0">${money(0)}</div>
+          </div>
+          <div style="flex:1 1 45%; border-left:1px solid var(--line); padding-left:10px">
+            <div class="l" style="margin:0">Observación</div>
+            <input id="stCvNota" class="search" placeholder="Opcional" maxlength="140" autocomplete="off" style="margin-top:4px; font-size:13px; padding:6px 8px">
+          </div>
         </div>
         <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-top:6px">
           <div class="label" style="margin:0">¿Facturar?</div>
@@ -4965,6 +5071,7 @@ async function renderResumenDia(){
           </div>
           <div class="note" style="margin-top:2px">${items || '(sin detalle de items)'}</div>
           <div class="note" style="margin-top:2px">${mediosDePagoVenta(v)}${v.saldo_pendiente>0?` · ⚠ Saldo pendiente: ${money(v.saldo_pendiente)}`:''}</div>
+          ${v.nota ? `<div class="note" style="margin-top:2px">📝 ${esc(v.nota)}</div>` : ''}
           <div class="ventaDetalle" style="display:none; margin-top:8px; padding-top:8px; border-top:1px solid var(--border)"></div>
         </div>`;
       }).join('') : '<div class="note">Todavía no hay ventas registradas hoy en este local.</div>'}`;
@@ -4995,15 +5102,29 @@ function armarDetalleVenta(detBox, v, rol, localSel){
   detBox.innerHTML = `
     ${!v.facturada ? `<button class="fbtn" type="button" data-accion="facturar" style="width:100%">🧾 Facturar esta venta</button>` : ''}
     ${v.facturada ? `<button class="fbtn" type="button" data-accion="ticket" style="width:100%">📤 Compartir / imprimir factura</button>` : ''}
+    <button class="fbtn" type="button" data-accion="recibo" style="width:100%; margin-top:6px">🧾 Compartir / imprimir Recibo X</button>
     ${puedeEditar ? `<button class="fbtn" type="button" data-accion="editar" style="width:100%; margin-top:6px">✏️ Editar venta</button>` : ''}
     <div class="ventaAccionBox" style="margin-top:8px"></div>`;
   const accionBox = detBox.querySelector('.ventaAccionBox');
   const bFacturar = detBox.querySelector('[data-accion="facturar"]');
   const bTicket = detBox.querySelector('[data-accion="ticket"]');
+  const bRecibo = detBox.querySelector('[data-accion="recibo"]');
   const bEditar = detBox.querySelector('[data-accion="editar"]');
   if(bFacturar) bFacturar.onclick = ()=> armarFacturarVentaExistente(accionBox, v, localSel);
   if(bTicket) bTicket.onclick = ()=> armarTicketVentaExistente(accionBox, v);
+  if(bRecibo) bRecibo.onclick = ()=> armarReciboVentaExistente(accionBox, v);
   if(bEditar) bEditar.onclick = ()=> armarEditarVentaExistente(accionBox, v, localSel);
+}
+
+// Reconstruye el Recibo X (sin valor fiscal) de una venta ya guardada, con
+// sus items y medios de pago reales — mismo botón "Compartir/imprimir" que
+// ya existe para la factura, pero disponible para cualquier venta.
+function armarReciboVentaExistente(box, v){
+  const formaPagoTexto = mediosDePagoVenta(v);
+  const total = Number(v.total)||0;
+  const items = v.items||[];
+  box.innerHTML = renderReciboX(items, total, formaPagoTexto, v.local);
+  wireReciboXButtons(box, items, total, formaPagoTexto, v.local);
 }
 
 // Reconstruye el ticket (mismas opciones de compartir/imprimir que al
@@ -5291,9 +5412,16 @@ function armarProductoManual(){
   };
 }
 
+// Cantidad total de prendas en el carrito (no de líneas): los ítems
+// manuales pueden representar más de una unidad (ver armarProductoManual).
+function totalPrendasCarrito(){
+  return stVentaItems.reduce((acc,it)=> acc + (it.manual ? (Number(it.cantidad)||1) : 1), 0);
+}
 function renderCarrito(){
   const box = document.getElementById('stCarrito');
   if(!box) return;
+  const prendasEl = document.getElementById('stCvPrendasDisplay');
+  if(prendasEl) prendasEl.textContent = totalPrendasCarrito();
   box.innerHTML = stVentaItems.length ? stVentaItems.map((it,i)=>`
     <div class="lista" style="margin-top:6px; display:flex; justify-content:space-between; align-items:center; gap:8px; text-align:left">
       <div>
