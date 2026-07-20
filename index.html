@@ -2186,6 +2186,43 @@ function dictarMonto(input, boton){
     (msg)=>{ terminar(); toast(msg); }
   );
 }
+// Igual que dictarMonto, pero para una cantidad de unidades (no un importe
+// en pesos) -- el mismo parser de números dictados, otro texto en el toast.
+function dictarNumero(input, boton){
+  if(!reconocimientoDeVozDisponible()){ toast('Este navegador no tiene dictado por voz — probá con Chrome.'); return; }
+  const textoBoton = boton.textContent;
+  boton.textContent = '🔴'; boton.disabled = true;
+  const terminar = ()=>{ boton.textContent = textoBoton; boton.disabled = false; };
+  escucharUnaFrase(
+    (texto)=>{
+      terminar();
+      const cantidad = textoAMonto(texto);
+      if(cantidad==null){ toast(`No entendí un número en "${texto}"`); return; }
+      input.value = cantidad;
+      input.dispatchEvent(new Event('input', {bubbles:true}));
+      toast(`🎤 "${texto}" → ${cantidad}`);
+    },
+    (msg)=>{ terminar(); toast(msg); }
+  );
+}
+// Dicta un texto libre (nombre de producto, búsqueda por código o nombre,
+// etc.) y lo carga tal cual en el input -- a diferencia de dictarMonto/
+// dictarNumero, no intenta convertirlo a número.
+function dictarTexto(input, boton){
+  if(!reconocimientoDeVozDisponible()){ toast('Este navegador no tiene dictado por voz — probá con Chrome.'); return; }
+  const textoBoton = boton.textContent;
+  boton.textContent = '🔴'; boton.disabled = true;
+  const terminar = ()=>{ boton.textContent = textoBoton; boton.disabled = false; };
+  escucharUnaFrase(
+    (texto)=>{
+      terminar();
+      input.value = texto;
+      input.dispatchEvent(new Event('input', {bubbles:true}));
+      toast(`🎤 "${texto}"`);
+    },
+    (msg)=>{ terminar(); toast(msg); }
+  );
+}
 
 function wireVentaCard(){
   const card = document.getElementById('stVentaCard');
@@ -2971,21 +3008,24 @@ function drawVender(){
     <div id="stCajaFormBox"></div>
     <div class="st-grid st-grid-3">
       <div class="st-col-left">
-        <div class="label">Local donde se vende</div>
-        <div class="talles">
-          <button class="talle" id="stLocCam">Camerino</button>
-          <button class="talle" id="stLocGiu">Giustozzi</button>
+        <div class="label">Local y vendedor</div>
+        <div style="display:flex; gap:8px">
+          <select id="stLocSel" class="search" style="flex:1 1 0">
+            <option value="camerino">Camerino</option>
+            <option value="giustozzi">Giustozzi</option>
+          </select>
+          <select id="stVendedorDD" class="search" style="flex:1 1 0">
+            <option value="">Cargando…</option>
+          </select>
         </div>
-        <div class="label" style="margin-top:8px">Vendedor</div>
-        <div id="stVendedorBox"><div class="note">Cargando…</div></div>
         <div id="stVideoBox"></div>
         <div class="filters" style="margin-top:8px">
           <input id="stManual" class="search" placeholder="O escribí el código o nombre…" inputmode="text" autocomplete="off" style="flex:1">
+          <button id="stManualDictar" class="fbtn" style="font-size:16px" title="Dictar por voz">🎤</button>
           <button id="stManualGo" class="fbtn" style="font-size:16px">OK</button>
           <button id="stAbrirCamara" class="fbtn" style="font-size:16px" title="Abrir cámara">📷</button>
         </div>
         <div id="stManualResultados"></div>
-        <div style="margin-top:6px"><a href="#" id="stProductoManualLink" style="color:var(--accent); font-size:13px">➕ Vender algo que no está en el catálogo</a></div>
         <div id="stProductoManualBox"></div>
         <div id="stCard"></div>
         <div class="label">Carrito de esta venta</div>
@@ -3136,14 +3176,16 @@ function drawVender(){
   document.getElementById('stClose').onclick = ()=> stCerrar(false);
   document.getElementById('stLogout').onclick = (e)=>{ e.preventDefault();
     sbSession=null; setLS('sb_session', null); miRolCache=null; miLocalAsignadoCache=undefined; actualizarVisibilidadRendimiento(); drawVender(); };
-  const bC=document.getElementById('stLocCam'), bG=document.getElementById('stLocGiu');
-  const refLoc=()=>{ const l=stLocal();
-    bC.classList.toggle('sel', l==='camerino'); bG.classList.toggle('sel', l==='giustozzi'); };
-  bC.onclick=()=>{ if(bC.disabled) return; setLS('stock_local','camerino'); stVendedorSel=null; refLoc(); renderResumenDia(); renderCajaStatus(); renderVendedorSel(); };
-  bG.onclick=()=>{ if(bG.disabled) return; setLS('stock_local','giustozzi'); stVendedorSel=null; refLoc(); renderResumenDia(); renderCajaStatus(); renderVendedorSel(); };
+  const locSel=document.getElementById('stLocSel');
+  const refLoc=()=>{ locSel.value = stLocal(); };
+  locSel.onchange=()=>{ setLS('stock_local', locSel.value); stVendedorSel=null; refLoc(); renderResumenDia(); renderCajaStatus(); renderVendedorSel(); };
   refLoc();
-  aplicarRestriccionLocal(bC, bG).then(()=>{ refLoc(); renderResumenDia(); renderCajaStatus(); renderVendedorSel(); });
+  aplicarRestriccionLocalSelect(locSel).then(()=>{ refLoc(); renderResumenDia(); renderCajaStatus(); renderVendedorSel(); });
   const man=document.getElementById('stManual');
+  makeClearable(man);
+  const manDictarBtn = document.getElementById('stManualDictar');
+  if(reconocimientoDeVozDisponible()) manDictarBtn.onclick = ()=> dictarTexto(man, manDictarBtn);
+  else manDictarBtn.style.display = 'none';
   const resultadosBox = document.getElementById('stManualResultados');
   const go=()=>{ if(man.value.trim()){ stProcesar(man.value); man.value=''; resultadosBox.innerHTML=''; } };
   document.getElementById('stManualGo').onclick = go;
@@ -3176,7 +3218,7 @@ function drawVender(){
     });
   });
   document.getElementById('stAbrirCamara').onclick = ()=>{ stDetenerCamara(); stCamara(); };
-  document.getElementById('stProductoManualLink').onclick = (e)=>{ e.preventDefault(); armarProductoManual(); };
+  armarProductoManual();
   renderCarrito();
   wireVentaCard();
   renderResumenDia();
@@ -3193,16 +3235,20 @@ function drawVender(){
 function turnoActual(){ return new Date().getHours() < 14 ? 'manana' : 'tarde'; }
 
 // Sugiere solo, según el calendario de turnos (📅), quién está atendiendo
-// hoy en el local elegido — el vendedor puede tocar otro chip si hace
-// falta (alguien cubriendo, nadie cargado ese día, etc.). No es obligatorio:
-// si no se elige a nadie, la venta se guarda igual sin vendedor_id.
+// hoy en el local elegido — el vendedor puede elegir otra opción del
+// desplegable si hace falta (alguien cubriendo, nadie cargado ese día,
+// etc.). No es obligatorio: si no se elige a nadie, la venta se guarda
+// igual sin vendedor_id. Los asignados al turno de hoy van marcados
+// "(hoy)" y primero en la lista, para no perder esa señal al pasar de
+// chips a un solo <select> (ahorra espacio en la pantalla).
 async function renderVendedorSel(){
-  const box = document.getElementById('stVendedorBox');
-  if(!box) return;
+  const sel = document.getElementById('stVendedorDD');
+  if(!sel) return;
   const local = stLocal();
   const hoy = isoLocal(new Date());
   const turno = turnoActual();
-  box.innerHTML = '<div class="note">Cargando…</div>';
+  sel.innerHTML = '<option value="">Cargando…</option>';
+  sel.disabled = true;
   try{
     const [vendedoresRes, turnosRes] = await Promise.all([
       sbAuthed(`/rest/v1/vendedores?local=eq.${local}&activo=eq.true&order=nombre.asc&select=*`),
@@ -3211,8 +3257,10 @@ async function renderVendedorSel(){
     const vendedores = vendedoresRes.ok ? await vendedoresRes.json() : [];
     const turnosHoy = turnosRes.ok ? await turnosRes.json() : [];
     const asignadosIds = new Set(turnosHoy.map(t=>t.vendedor_id));
+    sel.disabled = false;
     if(!vendedores.length){
-      box.innerHTML = '<div class="note">No hay vendedores cargados para este local — se puede vender igual (cargalos en 📅 Calendario).</div>';
+      sel.innerHTML = '<option value="">Sin vendedores cargados</option>';
+      stVendedorSel = null;
       return;
     }
     if(stVendedorSel && !vendedores.some(v=>v.id===stVendedorSel)) stVendedorSel = null;
@@ -3221,25 +3269,11 @@ async function renderVendedorSel(){
     if(!stVendedorSel && asignadosIds.size===1) stVendedorSel = [...asignadosIds][0];
     const asignados = vendedores.filter(v=>asignadosIds.has(v.id));
     const resto = vendedores.filter(v=>!asignadosIds.has(v.id));
-    const chip = v => `<button type="button" class="talle ${stVendedorSel===v.id?'sel':''}" data-vid="${v.id}">${esc(v.nombre)}</button>`;
-    box.innerHTML = `
-      ${asignados.length ? `
-        <div class="talles">${asignados.map(chip).join('')}</div>
-        ${resto.length ? `<a href="#" id="stVendedorVerTodos" style="color:var(--accent); font-size:12px; display:inline-block; margin-top:4px">▾ Ver todo el plantel</a>
-          <div class="talles" id="stVendedorResto" style="display:none; margin-top:4px">${resto.map(chip).join('')}</div>` : ''}
-        ` : `
-        <div class="note" style="margin-bottom:4px">Nadie asignado hoy (turno ${turno==='manana'?'mañana':'tarde'}) en el calendario — elegí quién atiende:</div>
-        <div class="talles">${vendedores.map(chip).join('')}</div>`}`;
-    const verTodos = document.getElementById('stVendedorVerTodos');
-    if(verTodos) verTodos.onclick = (e)=>{ e.preventDefault(); document.getElementById('stVendedorResto').style.display=''; verTodos.style.display='none'; };
-    [...box.querySelectorAll('[data-vid]')].forEach(b=>{
-      b.onclick = ()=>{
-        stVendedorSel = stVendedorSel===b.dataset.vid ? null : b.dataset.vid;
-        renderVendedorSel();
-      };
-    });
+    const opt = v => `<option value="${v.id}" ${stVendedorSel===v.id?'selected':''}>${esc(v.nombre)}${asignadosIds.has(v.id)?' (hoy)':''}</option>`;
+    sel.innerHTML = `<option value="">— Elegir vendedor —</option>${asignados.map(opt).join('')}${resto.map(opt).join('')}`;
+    sel.onchange = ()=>{ stVendedorSel = sel.value || null; };
   }catch(e){
-    box.innerHTML = '<div class="note">No se pudo cargar el plantel.</div>';
+    sel.innerHTML = '<option value="">No se pudo cargar el plantel</option>';
   }
 }
 
@@ -3402,6 +3436,19 @@ async function aplicarRestriccionLocal(bC, bG){
   otro.title = `Tu usuario solo puede operar en ${stLocalNombre(asignado)}.`;
   otro.style.opacity = '0.5';
   otro.style.cursor = 'not-allowed';
+}
+
+// Misma restricción que aplicarRestriccionLocal, pero para el desplegable
+// único de Local en Vender (POS): si el usuario tiene un local asignado,
+// fuerza ese valor y bloquea todo el <select> (no tiene sentido dejarlo
+// elegir si de todos modos no puede vender en el otro local).
+async function aplicarRestriccionLocalSelect(sel){
+  const asignado = await cargarMiLocalAsignado();
+  if(!asignado) return;
+  if(getLS('stock_local','camerino') !== asignado) setLS('stock_local', asignado);
+  sel.value = asignado;
+  sel.disabled = true;
+  sel.title = `Tu usuario solo puede operar en ${stLocalNombre(asignado)}.`;
 }
 
 // ===== 👤 Cuenta corriente de clientes: buscar, ver saldo/historial, cobrar =====
@@ -5378,27 +5425,50 @@ function recalcSaldoVenta(){
 // Vender algo que no está cargado en el catálogo: nombre y precio a mano,
 // va al carrito como un ítem "manual" (igual que la diferencia de un
 // cambio) — no descuenta stock de ningún artículo al guardar la venta.
-function armarProductoManual(){
+// Queda siempre desplegado en Vender (POS) (antes había que tocar un link
+// para abrirlo) y sus campos tienen "✕" para borrar rápido y 🎤 para
+// dictar por voz, igual que los campos de forma de pago.
+function armarProductoManual(enfocar){
   const box = document.getElementById('stProductoManualBox');
-  if(box.innerHTML){ box.innerHTML=''; return; }
+  if(!box) return;
   box.innerHTML = `
     <div class="lista" style="margin-top:6px; text-align:left">
       <div class="label" style="margin:0">Producto sin stock</div>
-      <input id="mpNombre" class="search" placeholder="Nombre del producto" style="margin-top:6px" autocomplete="off">
+      <div style="display:flex; gap:4px; margin-top:6px">
+        <input id="mpNombre" class="search" placeholder="Nombre del producto" autocomplete="off" style="flex:1">
+        <button class="fbtn" type="button" id="mpNombreDictar" style="flex:none; padding:0 10px" title="Dictar por voz">🎤</button>
+      </div>
       <div style="display:flex; gap:8px; margin-top:6px">
-        <input id="mpPrecio" class="search" type="number" inputmode="decimal" placeholder="Precio" style="flex:1 1 50%">
-        <input id="mpCantidad" class="search" type="number" inputmode="numeric" min="1" step="1" value="1" placeholder="Cantidad" style="flex:1 1 50%">
+        <div style="display:flex; gap:4px; flex:1 1 50%">
+          <input id="mpPrecio" class="search" type="number" inputmode="decimal" placeholder="Precio" style="flex:1">
+          <button class="fbtn" type="button" id="mpPrecioDictar" style="flex:none; padding:0 10px" title="Dictar el monto por voz">🎤</button>
+        </div>
+        <div style="display:flex; gap:4px; flex:1 1 50%">
+          <input id="mpCantidad" class="search" type="number" inputmode="numeric" min="1" step="1" value="1" placeholder="Cantidad" style="flex:1">
+          <button class="fbtn" type="button" id="mpCantidadDictar" style="flex:none; padding:0 10px" title="Dictar la cantidad por voz">🎤</button>
+        </div>
       </div>
       <button class="addcart" id="mpOk" style="margin-top:8px">🛒 Agregar al carrito</button>
       <div class="note" id="mpErr"></div>
     </div>`;
   const nombreInput = box.querySelector('#mpNombre');
-  nombreInput.focus();
+  const precioInput = box.querySelector('#mpPrecio');
+  const cantidadInput = box.querySelector('#mpCantidad');
+  [nombreInput, precioInput, cantidadInput].forEach(makeClearable);
+  const dNombre = box.querySelector('#mpNombreDictar'), dPrecio = box.querySelector('#mpPrecioDictar'), dCantidad = box.querySelector('#mpCantidadDictar');
+  if(reconocimientoDeVozDisponible()){
+    dNombre.onclick = ()=> dictarTexto(nombreInput, dNombre);
+    dPrecio.onclick = ()=> dictarMonto(precioInput, dPrecio);
+    dCantidad.onclick = ()=> dictarNumero(cantidadInput, dCantidad);
+  } else {
+    [dNombre, dPrecio, dCantidad].forEach(b=> b.style.display='none');
+  }
+  if(enfocar) nombreInput.focus();
   box.querySelector('#mpOk').onclick = ()=>{
     const err = box.querySelector('#mpErr');
     const nombre = nombreInput.value.trim();
-    const precioUnitario = Number(box.querySelector('#mpPrecio').value)||0;
-    const cantidad = Math.floor(Number(box.querySelector('#mpCantidad').value))||0;
+    const precioUnitario = Number(precioInput.value)||0;
+    const cantidad = Math.floor(Number(cantidadInput.value))||0;
     if(!nombre){ err.textContent='Escribí el nombre del producto.'; return; }
     if(!(precioUnitario>0)){ err.textContent='Escribí un precio válido.'; return; }
     if(!(cantidad>0)){ err.textContent='Escribí una cantidad válida.'; return; }
@@ -5406,7 +5476,7 @@ function armarProductoManual(){
     stVentaItems.push({codigo:null, nombre, talle:'', color:'', precio, cantidad, precioUnitario, manual:true});
     stVentaTotal += precio;
     toast(`🛒 + ${cantidad>1?cantidad+'x ':''}${nombre} (sin stock)`);
-    box.innerHTML='';
+    armarProductoManual(true);
     renderCarrito();
     actualizarTotalVenta();
   };
