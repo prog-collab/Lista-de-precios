@@ -36,6 +36,11 @@
   .search{width:100%; font-size:17px; padding:13px 14px; border-radius:12px;
     border:1px solid var(--line); background:var(--card); color:var(--text)}
   .search::placeholder{color:var(--muted)}
+  .inp-igual-wrap{position:relative; flex:1}
+  .inp-igual-wrap .search{padding-right:34px}
+  .inp-igual-wrap .inp-igual{position:absolute; right:2px; top:50%; transform:translateY(-50%);
+    border:none; background:transparent; color:var(--accent); font-size:17px; font-weight:800;
+    cursor:pointer; padding:6px 8px; line-height:1}
   .filters{display:flex; gap:8px; margin-top:9px; align-items:center}
   select{flex:1 1 0; min-width:0; font-size:14px; padding:10px; border-radius:10px;
     border:1px solid var(--line); background:var(--card); color:var(--text)}
@@ -2291,12 +2296,6 @@ function wireVentaCard(){
     CAMPOS_PAGO.forEach(id=> card.querySelector('#'+id).value = id===campo ? stVentaTotal : 0);
     recalcSaldoVenta();
   });
-  const botonesDictar = [...card.querySelectorAll('[data-dictar]')];
-  if(reconocimientoDeVozDisponible()){
-    botonesDictar.forEach(b=> b.onclick = ()=> dictarMonto(card.querySelector('#'+b.dataset.dictar), b));
-  } else {
-    botonesDictar.forEach(b=>{ b.style.display='none'; });
-  }
   // Deja la venta lista para arrancar otra de cero (medios de pago, cliente,
   // facturar, cuotas ASOEM, etc.) sin tocar el resultado (#stFcResultado)
   // que sigue mostrando el ticket/Recibo X de la venta que se acaba de
@@ -3051,9 +3050,10 @@ function drawVender(){
         <div class="grid">
           <div><div class="note" style="margin:0 0 4px">Efectivo (contado)</div>
             <div style="display:flex; gap:4px">
-              <input id="stCvContado" class="search" type="number" inputmode="decimal" value="0" style="flex:1">
-              <button class="fbtn" type="button" data-usar-total="stCvContado" style="flex:none; padding:0 10px" title="Usar el total del carrito">＝</button>
-              <button class="fbtn" type="button" data-dictar="stCvContado" style="flex:none; padding:0 10px" title="Dictar el monto por voz">🎤</button>
+              <div class="inp-igual-wrap">
+                <input id="stCvContado" class="search" type="number" inputmode="decimal" value="0">
+                <button class="inp-igual" type="button" data-usar-total="stCvContado" title="Usar el total del carrito">＝</button>
+              </div>
             </div>
             <div class="talles" id="stCvContadoDescuento" style="margin-top:4px">
               <button class="talle sel" type="button" data-desc="0">Sin descuento</button>
@@ -3064,9 +3064,10 @@ function drawVender(){
           </div>
           <div><div class="note" style="margin:0 0 4px">Transferencia</div>
             <div style="display:flex; gap:4px">
-              <input id="stCvTransf" class="search" type="number" inputmode="decimal" value="0" style="flex:1">
-              <button class="fbtn" type="button" data-usar-total="stCvTransf" style="flex:none; padding:0 10px" title="Usar el total del carrito">＝</button>
-              <button class="fbtn" type="button" data-dictar="stCvTransf" style="flex:none; padding:0 10px" title="Dictar el monto por voz">🎤</button>
+              <div class="inp-igual-wrap">
+                <input id="stCvTransf" class="search" type="number" inputmode="decimal" value="0">
+                <button class="inp-igual" type="button" data-usar-total="stCvTransf" title="Usar el total del carrito">＝</button>
+              </div>
             </div>
             <select id="stCvTransfAlias" class="search" style="margin-top:4px">
               <option value="">¿A qué alias?</option>
@@ -3084,9 +3085,10 @@ function drawVender(){
           </div>
           <div><div class="note" style="margin:0 0 4px">Tarjeta de crédito</div>
             <div style="display:flex; gap:4px">
-              <input id="stCvTCred" class="search" type="number" inputmode="decimal" value="0" style="flex:1">
-              <button class="fbtn" type="button" data-usar-total="stCvTCred" style="flex:none; padding:0 10px" title="Usar el total del carrito">＝</button>
-              <button class="fbtn" type="button" data-dictar="stCvTCred" style="flex:none; padding:0 10px" title="Dictar el monto por voz">🎤</button>
+              <div class="inp-igual-wrap">
+                <input id="stCvTCred" class="search" type="number" inputmode="decimal" value="0">
+                <button class="inp-igual" type="button" data-usar-total="stCvTCred" title="Usar el total del carrito">＝</button>
+              </div>
             </div>
             <select id="stCvTCredCuotas" class="search" style="margin-top:4px">
               <option value="1">1 cuota</option>
@@ -3097,23 +3099,26 @@ function drawVender(){
           </div>
           <div><div class="note" style="margin:0 0 4px">Tarjeta de débito</div>
             <div style="display:flex; gap:4px">
-              <input id="stCvTDeb" class="search" type="number" inputmode="decimal" value="0" style="flex:1">
-              <button class="fbtn" type="button" data-usar-total="stCvTDeb" style="flex:none; padding:0 10px" title="Usar el total del carrito">＝</button>
-              <button class="fbtn" type="button" data-dictar="stCvTDeb" style="flex:none; padding:0 10px" title="Dictar el monto por voz">🎤</button>
+              <div class="inp-igual-wrap">
+                <input id="stCvTDeb" class="search" type="number" inputmode="decimal" value="0">
+                <button class="inp-igual" type="button" data-usar-total="stCvTDeb" title="Usar el total del carrito">＝</button>
+              </div>
             </div></div>
           <div><div class="note" style="margin:0 0 4px">Crédito personal</div>
             <div style="display:flex; gap:4px">
-              <input id="stCvCPer" class="search" type="number" inputmode="decimal" value="0" style="flex:1">
-              <button class="fbtn" type="button" data-usar-total="stCvCPer" style="flex:none; padding:0 10px" title="Usar el total del carrito">＝</button>
-              <button class="fbtn" type="button" data-dictar="stCvCPer" style="flex:none; padding:0 10px" title="Dictar el monto por voz">🎤</button>
+              <div class="inp-igual-wrap">
+                <input id="stCvCPer" class="search" type="number" inputmode="decimal" value="0">
+                <button class="inp-igual" type="button" data-usar-total="stCvCPer" title="Usar el total del carrito">＝</button>
+              </div>
             </div>
             <div class="note">Elegí el cliente arriba, junto al total.</div>
           </div>
           <div><div class="note" style="margin:0 0 4px">Crédito financiero (ASOEM)</div>
             <div style="display:flex; gap:4px">
-              <input id="stCvCFin" class="search" type="number" inputmode="decimal" value="0" style="flex:1">
-              <button class="fbtn" type="button" data-usar-total="stCvCFin" style="flex:none; padding:0 10px" title="Usar el total del carrito">＝</button>
-              <button class="fbtn" type="button" data-dictar="stCvCFin" style="flex:none; padding:0 10px" title="Dictar el monto por voz">🎤</button>
+              <div class="inp-igual-wrap">
+                <input id="stCvCFin" class="search" type="number" inputmode="decimal" value="0">
+                <button class="inp-igual" type="button" data-usar-total="stCvCFin" title="Usar el total del carrito">＝</button>
+              </div>
             </div>
             <select id="stCvCFinCuotas" class="search" style="margin-top:4px">
               <option value="1">1 pago</option>
