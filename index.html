@@ -5444,13 +5444,11 @@ function armarProductoManual(enfocar){
         <button class="fbtn" type="button" id="mpNombreDictar" style="flex:none; padding:0 10px" title="Dictar por voz">🎤</button>
       </div>
       <div style="display:flex; gap:8px; margin-top:6px">
-        <div style="display:flex; gap:4px; flex:1 1 50%">
-          <input id="mpPrecio" class="search" type="number" inputmode="decimal" placeholder="Precio" style="flex:1">
-          <button class="fbtn" type="button" id="mpPrecioDictar" style="flex:none; padding:0 10px" title="Dictar el monto por voz">🎤</button>
+        <div style="flex:1 1 50%">
+          <input id="mpPrecio" class="search" type="number" inputmode="decimal" placeholder="Precio" style="width:100%">
         </div>
-        <div style="display:flex; gap:4px; flex:1 1 50%">
-          <input id="mpCantidad" class="search" type="number" inputmode="numeric" min="1" step="1" value="1" placeholder="Cantidad" style="flex:1">
-          <button class="fbtn" type="button" id="mpCantidadDictar" style="flex:none; padding:0 10px" title="Dictar la cantidad por voz">🎤</button>
+        <div style="flex:1 1 50%">
+          <input id="mpCantidad" class="search" type="number" inputmode="numeric" min="1" step="1" value="1" placeholder="Cantidad" style="width:100%">
         </div>
       </div>
       <button class="addcart" id="mpOk" style="margin-top:8px">🛒 Agregar al carrito</button>
@@ -5460,13 +5458,11 @@ function armarProductoManual(enfocar){
   const precioInput = box.querySelector('#mpPrecio');
   const cantidadInput = box.querySelector('#mpCantidad');
   [nombreInput, precioInput, cantidadInput].forEach(makeClearable);
-  const dNombre = box.querySelector('#mpNombreDictar'), dPrecio = box.querySelector('#mpPrecioDictar'), dCantidad = box.querySelector('#mpCantidadDictar');
+  const dNombre = box.querySelector('#mpNombreDictar');
   if(reconocimientoDeVozDisponible()){
     dNombre.onclick = ()=> dictarTexto(nombreInput, dNombre);
-    dPrecio.onclick = ()=> dictarMonto(precioInput, dPrecio);
-    dCantidad.onclick = ()=> dictarNumero(cantidadInput, dCantidad);
   } else {
-    [dNombre, dPrecio, dCantidad].forEach(b=> b.style.display='none');
+    dNombre.style.display='none';
   }
   if(enfocar) nombreInput.focus();
   box.querySelector('#mpOk').onclick = ()=>{
