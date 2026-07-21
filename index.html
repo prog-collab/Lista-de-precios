@@ -1755,8 +1755,7 @@ function renderTicket(d, localSel){
         <div style="border-top:1px dashed var(--accent); margin:8px 0"></div>
         ${transparenciaFiscalTicket(d.monto)}
         <div style="border-top:1px dashed var(--accent); margin:8px 0"></div>
-        <div class="l">CAE: ${esc(d.cae)}</div>
-        <div class="l">Vto. CAE: ${esc(fechaFmtDe(d.caeVencimiento))}</div>
+        <div class="l">CAE: ${esc(d.cae)} · Vto. CAE: ${esc(fechaFmtDe(d.caeVencimiento))}</div>
       </div>
       <div style="text-align:center; margin-top:10px"><img src="${qrImg}" width="180" height="180" alt="QR AFIP"></div>
     </div>
@@ -1815,8 +1814,7 @@ function buildTicketImage(d, localSel){
         if((d.items||[]).length){ y += 4; divider(); }
         row('TOTAL', money(d.monto), 'bold');
         y += 4; divider();
-        left(`CAE: ${d.cae}`, 'normal');
-        left(`Vto. CAE: ${fechaFmtDe(d.caeVencimiento)}`, 'normal');
+        left(`CAE: ${d.cae} · Vto. CAE: ${fechaFmtDe(d.caeVencimiento)}`, 'normal');
         if(homolog){ y += 6; center('⚠ HOMOLOGACIÓN', 'bold'); center('Sin validez fiscal real', 'normal'); }
         y += 10;
         if(ctx) ctx.drawImage(qrImg, (W-qrSize)/2, y, qrSize, qrSize);
