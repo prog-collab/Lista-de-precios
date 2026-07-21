@@ -159,6 +159,26 @@
   .lista .l{font-size:13px; color:var(--muted)}
   .lista .v{font-size:34px; font-weight:800; color:var(--text); margin-top:2px}
   .grid{display:grid; grid-template-columns:1fr 1fr; gap:8px}
+  /* Medios de pago (POS): en el celular van en UNA sola columna, cada uno en su
+     tarjeta, para que los campos no queden apretados ni desalineados. Recién en
+     pantallas más anchas pasan a dos columnas. */
+  .pos-pagos{grid-template-columns:1fr; gap:10px}
+  .pos-pagos > div{background:var(--card); border:1px solid var(--line);
+    border-radius:12px; padding:12px 12px 13px}
+  .pos-pagos > div > .note:first-child{font-weight:700; color:var(--text); font-size:13px}
+  .pos-pagos .search{font-size:16px}
+  @media (min-width:560px){
+    .pos-pagos{grid-template-columns:1fr 1fr; gap:8px}
+  }
+  /* Saldo pendiente + Observación: apilados en el celular, lado a lado si hay ancho */
+  .pos-saldo-a{display:flex; align-items:center; justify-content:space-between; gap:8px}
+  .pos-saldo-b{margin-top:8px; padding-top:8px; border-top:1px solid var(--line)}
+  @media (min-width:560px){
+    .pos-saldo{display:flex; align-items:stretch; gap:10px}
+    .pos-saldo-a{flex:1 1 50%}
+    .pos-saldo-b{flex:1 1 50%; margin-top:0; padding-top:0; border-top:none;
+      border-left:1px solid var(--line); padding-left:12px}
+  }
   .box{background:var(--card); border:1px solid var(--line); border-radius:12px; padding:12px}
   .box .t{font-size:12px; color:var(--muted)}
   .box .p{font-size:20px; font-weight:800; margin-top:3px}
@@ -234,6 +254,7 @@
       <button id="devolucionesBtn" class="fbtn" title="Devoluciones de mercadería">↩️</button>
       <button id="calendarioBtn" class="fbtn" title="Calendario de turnos">📅</button>
       <button id="dashboardBtn" class="fbtn" title="Dashboard ASOEM (gerente)">📊</button>
+      <button id="reportesBtn" class="fbtn" title="Reportes (gerente)">📋</button>
       <button id="rendimientoBtn" class="fbtn" title="Rendimiento por vendedor (gerente)" style="display:none">📈</button>
       <button id="helpBtn" class="fbtn" title="Ayuda">❓</button>
       <button id="cartBtn" class="fbtn" title="Carrito">🛒<span id="cartN" class="cbadge" style="display:none"></span></button>
@@ -400,6 +421,13 @@ function rebuild(){
     if(!CATALOG.some(p=>p.codigo===cod)) PRODS.push(Object.assign({codigo:cod}, ov.data));
   });
   PRODS.forEach(p=>{ if(p.codigo && !(p.codigo in BYCOD)) BYCOD[p.codigo]=p; });
+  // Índice de búsqueda precalculado una sola vez (evita normalizar 4900 productos
+  // en cada tecla) y código numérico cacheado para el orden por defecto.
+  PRODS.forEach(p=>{
+    p._buscar = norm(p.codigo+' '+p.nombre+' '+p.categoria);
+    const n = parseInt(p.codigo,10);
+    p._codNum = isNaN(n) ? Infinity : n;
+  });
   ensureCats(); render();
 }
 // Aplica primero la planilla (de todos) y al final las locales (recién hechas, ganan)
@@ -584,7 +612,11 @@ function checkNovedadNotifs(){
 const qEl = document.getElementById('q');
 const catEl = document.getElementById('cat');
 const sortEl = document.getElementById('sort');
-qEl.addEventListener('input', render);
+// Debounce: espera a que dejes de tipear (~120ms) antes de filtrar. En un
+// catálogo de miles de productos esto evita el "tironeo" al escribir rápido.
+let _renderT;
+function renderSoon(){ clearTimeout(_renderT); _renderT = setTimeout(render, 120); }
+qEl.addEventListener('input', renderSoon);
 
 // Botón ✕ para vaciar el buscador de un toque
 const qClear = document.getElementById('qClear');
@@ -709,7 +741,7 @@ function render(){
   let filtered = PRODS.filter(p=>{
     if(cat && p.categoria!==cat) return false;
     if(!terms.length) return true;
-    const hay = norm(p.codigo+' '+p.nombre+' '+p.categoria);
+    const hay = p._buscar || norm(p.codigo+' '+p.nombre+' '+p.categoria);
     return terms.every(t=>hay.includes(t));
   });
   const sortMode = sortEl.value;
@@ -717,8 +749,8 @@ function render(){
     if(sortMode==='nombre') return (a.nombre||'').localeCompare(b.nombre||'');
     if(sortMode==='precioAsc') return a.precio_lista - b.precio_lista;
     if(sortMode==='precioDesc') return b.precio_lista - a.precio_lista;
-    const na=parseInt(a.codigo,10), nb=parseInt(b.codigo,10);
-    if(!isNaN(na)&&!isNaN(nb)&&na!==nb) return na-nb;
+    const na=a._codNum, nb=b._codNum;
+    if(na!==Infinity&&nb!==Infinity&&na!==nb) return na-nb;
     return (a.codigo||'').localeCompare(b.codigo||'');
   });
   countEl.textContent = filtered.length + ' producto' + (filtered.length!==1?'s':'');
@@ -789,7 +821,7 @@ listEl.addEventListener('click', e=>{
   if(item){ const p = BYCOD[item.dataset.cod]; if(p) openDetail(p); }
 });
 
-function esc(s){ return (s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function esc(s){ return (s==null?'':String(s)).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
 let curProd=null, curTalle=0, promoSel=20;
 let addProductOpen=false;   // true mientras está abierto "Agregar/Editar producto"
@@ -2767,6 +2799,13 @@ document.getElementById('calendarioBtn').onclick = ()=>{
   setLS('pantalla_actual', 'calendario');
   drawCalendario();
 };
+document.getElementById('reportesBtn').onclick = ()=>{
+  stOpen = true;
+  document.getElementById('ov').classList.add('open','ov-full');
+  history.pushState({detalle:1}, '');
+  setLS('pantalla_actual', 'reportes');
+  drawReportes();
+};
 document.getElementById('rendimientoBtn').onclick = ()=>{
   stOpen = true;
   document.getElementById('ov').classList.add('open','ov-full');
@@ -2820,6 +2859,7 @@ function navIconsHtml(){
     <button type="button" class="fbtn" data-nav="devolucionesBtn" title="Devoluciones de mercadería">↩️</button>
     <button type="button" class="fbtn" data-nav="calendarioBtn" title="Calendario de turnos">📅</button>
     <button type="button" class="fbtn" data-nav="dashboardBtn" title="Dashboard ASOEM (gerente)">📊</button>
+    <button type="button" class="fbtn" data-nav="reportesBtn" title="Reportes (gerente)">📋</button>
     <button type="button" class="fbtn" data-nav="rendimientoBtn" title="Rendimiento por vendedor (gerente)" style="display:none">📈</button>
     <button type="button" class="fbtn" data-nav="helpBtn" title="Ayuda">❓</button>
     <button type="button" class="fbtn" data-nav="cartBtn" title="Carrito">🛒</button>
@@ -3042,7 +3082,7 @@ function drawVender(){
         <div id="stCvClientePicker"></div>
         <div class="note" id="stCvClienteInfo" style="margin-top:2px"></div>
         <div class="label">Medios de pago</div>
-        <div class="grid">
+        <div class="grid pos-pagos">
           <div><div class="note" style="margin:0 0 4px">Efectivo (contado)</div>
             <div style="display:flex; gap:4px">
               <div class="inp-igual-wrap">
@@ -3128,14 +3168,14 @@ function drawVender(){
           </div>
         </div>
         <div class="note">Tocá "＝" al lado de un medio de pago para cargarle el total del carrito de una — pone el resto en $0.</div>
-        <div class="lista" style="margin-top:8px; display:flex; align-items:stretch; gap:10px; text-align:left; padding:10px 14px">
-          <div style="flex:1 1 55%; display:flex; align-items:center; justify-content:space-between; gap:8px">
+        <div class="lista pos-saldo" style="margin-top:8px; text-align:left; padding:10px 14px">
+          <div class="pos-saldo-a">
             <div class="l" style="margin:0">Saldo pendiente</div>
             <div class="v" id="stCvSaldo" style="font-size:20px; margin:0">${money(0)}</div>
           </div>
-          <div style="flex:1 1 45%; border-left:1px solid var(--line); padding-left:10px">
+          <div class="pos-saldo-b">
             <div class="l" style="margin:0">Observación</div>
-            <input id="stCvNota" class="search" placeholder="Opcional" maxlength="140" autocomplete="off" style="margin-top:4px; font-size:13px; padding:6px 8px">
+            <input id="stCvNota" class="search" placeholder="Opcional" maxlength="140" autocomplete="off" style="margin-top:4px; font-size:14px; padding:8px 10px">
           </div>
         </div>
         <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-top:6px">
@@ -3766,7 +3806,7 @@ async function mostrarDetalleCliente(clienteParcial){
       ${saldo>0 ? `
       <div id="ccPagoBox">
       <div class="label" style="margin-top:10px">Registrar pago (en ${esc(stLocalNombre(stLocal()))})</div>
-      <div class="grid">
+      <div class="grid pos-pagos">
         <div><div class="note" style="margin:0 0 4px">Efectivo</div>
           <div style="display:flex; gap:4px">
             <input id="ccPgContado" class="search" type="number" inputmode="decimal" value="0" style="flex:1">
@@ -4643,6 +4683,436 @@ async function renderDashboardAsoem(){
   }catch(e){
     box.innerHTML = `<div class="note">No se pudo cargar el dashboard: ${esc(e.message||e)}</div>`;
   }
+}
+
+// ===== 📋 Reportes (solo lectura, solo gerente) =====
+// Tres pestañas: (1) productos sin stock / a reponer, calculado del catálogo
+// que ya está en memoria; (2) ventas del día por medio de pago, desde la tabla
+// `ventas`; (3) ranking de productos más vendidos, sumando los `items` (jsonb)
+// de las ventas. No escribe nada en ninguna tabla.
+let _repTab = 'reponer';
+function drawReportes(){
+  const sheet = document.getElementById('sheet');
+  sheet.classList.add('sheet-wide');
+  if(!sbSession){
+    sheet.innerHTML = `
+      ${navIconsHtml()}
+      <div class="topbtns"><button class="backbtn" id="stClose">✕ Cerrar</button></div>
+      <h2>📋 Reportes</h2>
+      <div class="scat">Iniciá sesión con tu usuario del panel para poder consultarlos.</div>
+      <div class="label">Usuario</div>
+      <input id="stEmail" class="search" type="text" autocomplete="username">
+      <div class="label">Contraseña</div>
+      <input id="stPass" class="search" type="password" autocomplete="current-password">
+      <button class="addcart" id="stLoginBtn">Ingresar</button>
+      <div class="note" id="stLoginErr"></div>`;
+    wireNavIcons(sheet);
+    document.getElementById('stClose').onclick = ()=> stCerrar(false);
+    document.getElementById('stLoginBtn').onclick = async ()=>{
+      const err = document.getElementById('stLoginErr');
+      const b = document.getElementById('stLoginBtn');
+      b.disabled = true; b.textContent = 'Ingresando…';
+      try{
+        await sbLogin(usuarioAEmail(document.getElementById('stEmail').value),
+                      document.getElementById('stPass').value);
+        drawReportes();
+      }catch(e){ b.disabled=false; b.textContent='Ingresar'; err.textContent = e.message; }
+    };
+    return;
+  }
+  sheet.innerHTML = `
+    ${navIconsHtml()}
+    <div class="topbtns"><button class="backbtn" id="stClose">✕ Cerrar</button></div>
+    <h2>📋 Reportes</h2>
+    <div class="scat">Sesión: ${esc(mostrarUsuario(sbSession.email))} · <a href="#" id="stLogout" style="color:var(--accent)">salir</a></div>
+    <div id="repBox"><div class="note">Verificando permisos…</div></div>`;
+  wireNavIcons(sheet);
+  document.getElementById('stClose').onclick = ()=> stCerrar(false);
+  document.getElementById('stLogout').onclick = (e)=>{ e.preventDefault();
+    sbSession=null; setLS('sb_session', null); miRolCache=null; miLocalAsignadoCache=undefined; actualizarVisibilidadRendimiento(); drawReportes(); };
+  cargarMiRol().then(rol=>{
+    if(rol!=='gerente'){
+      document.getElementById('repBox').innerHTML = `<div class="lista" style="margin-top:10px">
+        <div class="l">Acceso restringido</div>
+        <div class="v" style="font-size:16px">Esta sección es solo para gerentes.</div></div>`;
+      return;
+    }
+    renderReportesTabs();
+  });
+}
+
+function renderReportesTabs(){
+  const box = document.getElementById('repBox');
+  const tab = (id,txt)=> `<button class="fbtn" data-rtab="${id}" style="${_repTab===id?'background:var(--accent); color:#03283a; border-color:var(--accent)':''}">${txt}</button>`;
+  box.innerHTML = `
+    <div style="display:flex; gap:6px; flex-wrap:wrap; margin:10px 0 4px">
+      ${tab('reponer','📦 A reponer')}
+      ${tab('dia','💵 Ventas del día')}
+      ${tab('top','🏆 Más vendidos')}
+      ${tab('tendencia','📈 Tendencia')}
+      ${tab('inventario','🏦 Inventario')}
+      ${tab('margen','💰 Margen')}
+      ${tab('estancados','🐌 Estancados')}
+    </div>
+    <div id="repContenido"><div class="note">Cargando…</div></div>`;
+  [...box.querySelectorAll('[data-rtab]')].forEach(b=> b.onclick=()=>{
+    _repTab = b.dataset.rtab; renderReportesTabs();
+  });
+  if(_repTab==='reponer') repReponer();
+  else if(_repTab==='dia') repVentasDia();
+  else if(_repTab==='top') repTopVendidos();
+  else if(_repTab==='tendencia') repTendencia();
+  else if(_repTab==='inventario') repInventario();
+  else if(_repTab==='margen') repMargen();
+  else repEstancados();
+}
+
+// (1) Productos sin stock o con stock bajo — se calcula del catálogo en memoria.
+function repReponer(){
+  const cont = document.getElementById('repContenido');
+  const UMBRAL = 2; // "stock bajo" = total (ambos locales) <= 2 y > 0
+  const filas = PRODS.map(p=>{
+    const st = stockPorLocal(p);
+    return { p, cam:st.cam, giu:st.giu, total:st.cam+st.giu };
+  });
+  const sin = filas.filter(f=> f.total<=0);
+  const bajo = filas.filter(f=> f.total>0 && f.total<=UMBRAL);
+  const filaHtml = f=> `<div class="lista" style="margin-top:6px; text-align:left">
+      <div style="display:flex; justify-content:space-between; gap:8px">
+        <span class="l"><span style="color:var(--accent); font-weight:700">${esc(f.p.codigo)}</span> · ${esc(f.p.nombre)||'(sin nombre)'}</span>
+        <span class="v" style="font-size:16px; ${f.total<=0?'color:var(--warn)':''}">${f.total}</span>
+      </div>
+      <div class="note" style="margin-top:2px">${esc(f.p.categoria)||'—'} · Camerino ${f.cam} · Giustozzi ${f.giu}</div>
+    </div>`;
+  cont.innerHTML = `
+    <div class="grid" style="grid-template-columns:1fr 1fr; margin-bottom:6px">
+      <div class="box" style="${sin.length?'border-color:var(--warn)':''}"><div class="t">Sin stock</div><div class="p" style="${sin.length?'color:var(--warn)':''}">${sin.length}</div><div class="s">agotados</div></div>
+      <div class="box"><div class="t">Stock bajo (≤${UMBRAL})</div><div class="p">${bajo.length}</div><div class="s">a vigilar</div></div>
+    </div>
+    <input id="repRepFiltro" class="search" placeholder="Filtrar por código, nombre o categoría…" autocomplete="off" style="margin-bottom:8px">
+    <div id="repRepLista"></div>`;
+  const listaEl = document.getElementById('repRepLista');
+  const pintar = (q)=>{
+    const qn = norm(q||'');
+    const match = f=> !qn || norm(f.p.codigo+' '+f.p.nombre+' '+f.p.categoria).includes(qn);
+    const sinF = sin.filter(match), bajoF = bajo.filter(match);
+    let html = '';
+    if(sinF.length) html += `<div class="label" style="margin-top:8px">Sin stock (${sinF.length})</div>` + sinF.slice(0,200).map(filaHtml).join('');
+    if(bajoF.length) html += `<div class="label" style="margin-top:12px">Stock bajo (${bajoF.length})</div>` + bajoF.slice(0,200).map(filaHtml).join('');
+    if(!html) html = '<div class="note">Nada para reponer con ese filtro. 👍</div>';
+    listaEl.innerHTML = html;
+  };
+  pintar('');
+  document.getElementById('repRepFiltro').addEventListener('input', e=> pintar(e.target.value));
+}
+
+// (2) Ventas del día por medio de pago (tabla ventas, filtrada por fecha de hoy).
+async function repVentasDia(){
+  const cont = document.getElementById('repContenido');
+  cont.innerHTML = `
+    <div class="label" style="margin-top:8px">Día</div>
+    <input id="repFecha" class="search" type="date" style="margin-bottom:8px">
+    <div id="repDiaBox"><div class="note">Cargando…</div></div>`;
+  const hoy = new Date(); const iso = hoy.toISOString().slice(0,10);
+  const fechaEl = document.getElementById('repFecha');
+  fechaEl.value = iso;
+  const cargar = async (fecha)=>{
+    const dbox = document.getElementById('repDiaBox');
+    dbox.innerHTML = `<div class="note">Cargando ventas…</div>`;
+    try{
+      const r = await sbAuthed(`/rest/v1/ventas?fecha=eq.${fecha}&order=created_at.desc&select=*&limit=1000`);
+      if(!r.ok) throw new Error('No se pudieron consultar las ventas.');
+      const ventas = await r.json();
+      const suma = campo => ventas.reduce((s,v)=> s+(Number(v[campo])||0), 0);
+      const medios = [
+        ['pago_contado','Efectivo'], ['pago_transferencia','Transferencia'],
+        ['pago_tarjeta_debito','Tarjeta débito'], ['pago_tarjeta_credito','Tarjeta crédito'],
+        ['pago_credito_personal','Crédito personal'], ['pago_credito_financiero','ASOEM']
+      ];
+      const total = suma('total');
+      const pendiente = suma('saldo_pendiente');
+      const porLocal = {};
+      ventas.forEach(v=>{ porLocal[v.local]=(porLocal[v.local]||0)+(Number(v.total)||0); });
+      dbox.innerHTML = `
+        <div class="lista" style="margin-top:6px"><div class="l">Total del día</div><div class="v">${money(total)}</div></div>
+        <div class="grid" style="grid-template-columns:1fr 1fr; margin-top:6px">
+          <div class="box"><div class="t">Cantidad de ventas</div><div class="p">${ventas.length}</div></div>
+          <div class="box" style="${pendiente>0?'border-color:var(--warn)':''}"><div class="t">Saldo pendiente</div><div class="p" style="${pendiente>0?'color:var(--warn)':''}">${money(pendiente)}</div></div>
+        </div>
+        <div class="label" style="margin-top:14px">Por medio de pago</div>
+        ${medios.map(([c,n])=>{ const m=suma(c); if(!m) return ''; return `<div class="lista" style="margin-top:6px; text-align:left"><div style="display:flex; justify-content:space-between"><span class="l">${n}</span><span class="v" style="font-size:18px">${money(m)}</span></div></div>`; }).join('') || '<div class="note">Sin cobros registrados.</div>'}
+        ${Object.keys(porLocal).length>1 ? `<div class="label" style="margin-top:14px">Por local</div>${Object.entries(porLocal).map(([l,m])=>`<div class="lista" style="margin-top:6px; text-align:left"><div style="display:flex; justify-content:space-between"><span class="l">${esc(stLocalNombre(l))}</span><span class="v" style="font-size:18px">${money(m)}</span></div></div>`).join('')}` : ''}`;
+    }catch(e){ dbox.innerHTML = `<div class="note">${esc(e.message||e)}</div>`; }
+  };
+  fechaEl.addEventListener('change', ()=> cargar(fechaEl.value));
+  cargar(iso);
+}
+
+// (3) Ranking de productos más vendidos, sumando los items (jsonb) de las ventas
+// en un rango de días. Cada item cuenta 1 unidad (el modelo guarda un item por
+// prenda escaneada).
+async function repTopVendidos(){
+  const cont = document.getElementById('repContenido');
+  cont.innerHTML = `
+    <div class="label" style="margin-top:8px">Período</div>
+    <select id="repRango" class="search" style="margin-bottom:8px">
+      <option value="7">Últimos 7 días</option>
+      <option value="30" selected>Últimos 30 días</option>
+      <option value="90">Últimos 90 días</option>
+    </select>
+    <div id="repTopBox"><div class="note">Cargando…</div></div>`;
+  const cargar = async (dias)=>{
+    const tbox = document.getElementById('repTopBox');
+    tbox.innerHTML = `<div class="note">Sumando ventas…</div>`;
+    try{
+      const desde = new Date(); desde.setDate(desde.getDate()-Number(dias));
+      const isoDesde = desde.toISOString().slice(0,10);
+      const r = await sbAuthed(`/rest/v1/ventas?fecha=gte.${isoDesde}&select=items&limit=5000`);
+      if(!r.ok) throw new Error('No se pudieron consultar las ventas.');
+      const ventas = await r.json();
+      const conteo = {};
+      ventas.forEach(v=> (v.items||[]).forEach(it=>{
+        const cod = String(it.codigo||'');
+        if(!cod) return;
+        if(!conteo[cod]) conteo[cod] = { cod, nombre: it.nombre||'', unidades:0, monto:0 };
+        conteo[cod].unidades += 1;
+        conteo[cod].monto += Number(it.precio)||0;
+      }));
+      const ranking = Object.values(conteo).sort((a,b)=> b.unidades-a.unidades).slice(0,50);
+      const totalUnidades = Object.values(conteo).reduce((s,x)=> s+x.unidades, 0);
+      if(!ranking.length){ tbox.innerHTML = '<div class="note">No hay ventas en ese período.</div>'; return; }
+      tbox.innerHTML = `
+        <div class="grid" style="grid-template-columns:1fr 1fr; margin-bottom:6px">
+          <div class="box"><div class="t">Unidades vendidas</div><div class="p">${totalUnidades}</div></div>
+          <div class="box"><div class="t">Productos distintos</div><div class="p">${ranking.length>=50?'50+':Object.keys(conteo).length}</div></div>
+        </div>
+        ${ranking.map((x,i)=>`<div class="lista" style="margin-top:6px; text-align:left">
+          <div style="display:flex; justify-content:space-between; gap:8px">
+            <span class="l">${i+1}. <span style="color:var(--accent); font-weight:700">${esc(x.cod)}</span> · ${esc(x.nombre)||'(sin nombre)'}</span>
+            <span class="v" style="font-size:18px">${x.unidades}</span>
+          </div>
+          <div class="note" style="margin-top:2px">${money(x.monto)} facturado</div>
+        </div>`).join('')}`;
+    }catch(e){ tbox.innerHTML = `<div class="note">${esc(e.message||e)}</div>`; }
+  };
+  document.getElementById('repRango').addEventListener('change', e=> cargar(e.target.value));
+  cargar('30');
+}
+
+// (4) Tendencia de ventas por semana — total facturado y cantidad de ventas de
+// las últimas N semanas, con un mini-gráfico de barras para ver de un vistazo si
+// el negocio sube o baja.
+async function repTendencia(){
+  const cont = document.getElementById('repContenido');
+  cont.innerHTML = `
+    <div class="label" style="margin-top:8px">Período</div>
+    <select id="repTendRango" class="search" style="margin-bottom:8px">
+      <option value="8" selected>Últimas 8 semanas</option>
+      <option value="12">Últimas 12 semanas</option>
+      <option value="26">Últimas 26 semanas</option>
+    </select>
+    <div id="repTendBox"><div class="note">Cargando…</div></div>`;
+  const lunesDe = d=>{ const x=new Date(d); const dia=(x.getDay()+6)%7; x.setDate(x.getDate()-dia); x.setHours(0,0,0,0); return x; };
+  const cargar = async (semanas)=>{
+    const tb = document.getElementById('repTendBox');
+    tb.innerHTML = `<div class="note">Sumando ventas…</div>`;
+    try{
+      const desde = lunesDe(new Date()); desde.setDate(desde.getDate()-7*(Number(semanas)-1));
+      const isoDesde = desde.toISOString().slice(0,10);
+      const r = await sbAuthed(`/rest/v1/ventas?fecha=gte.${isoDesde}&select=fecha,total&limit=10000`);
+      if(!r.ok) throw new Error('No se pudieron consultar las ventas.');
+      const ventas = await r.json();
+      // armar buckets semanales
+      const buckets = [];
+      for(let i=0;i<Number(semanas);i++){ const ini=new Date(desde); ini.setDate(ini.getDate()+7*i);
+        buckets.push({ ini, total:0, cant:0 }); }
+      ventas.forEach(v=>{
+        const f = lunesDe(v.fecha+'T00:00:00');
+        const idx = Math.round((f-desde)/(7*86400000));
+        if(idx>=0 && idx<buckets.length){ buckets[idx].total += Number(v.total)||0; buckets[idx].cant += 1; }
+      });
+      const maxTotal = Math.max(1, ...buckets.map(b=>b.total));
+      const totalPeriodo = buckets.reduce((s,b)=>s+b.total,0);
+      const prom = totalPeriodo/buckets.length;
+      // comparar última semana completa vs anterior
+      const ult = buckets[buckets.length-1], ant = buckets[buckets.length-2];
+      let deltaTxt = '';
+      if(ant && ant.total>0){ const d=((ult.total-ant.total)/ant.total*100); deltaTxt = `${d>=0?'▲ +':'▼ '}${d.toFixed(0)}% vs. semana anterior`; }
+      const fmtSem = b=>{ const fin=new Date(b.ini); fin.setDate(fin.getDate()+6);
+        return `${b.ini.getDate()}/${b.ini.getMonth()+1}–${fin.getDate()}/${fin.getMonth()+1}`; };
+      tb.innerHTML = `
+        <div class="grid" style="grid-template-columns:1fr 1fr; margin-bottom:6px">
+          <div class="box"><div class="t">Total del período</div><div class="p">${money(totalPeriodo)}</div></div>
+          <div class="box"><div class="t">Promedio semanal</div><div class="p">${money(prom)}</div>${deltaTxt?`<div class="s" style="${ult.total>=(ant?ant.total:0)?'color:var(--accent2)':'color:var(--warn)'}">${deltaTxt}</div>`:''}</div>
+        </div>
+        ${buckets.map(b=>`<div class="lista" style="margin-top:6px; text-align:left; padding:12px 14px">
+          <div style="display:flex; justify-content:space-between; gap:8px; align-items:baseline">
+            <span class="l">${fmtSem(b)}</span>
+            <span class="v" style="font-size:16px">${money(b.total)}</span>
+          </div>
+          <div style="height:8px; background:var(--card); border-radius:5px; margin-top:6px; overflow:hidden">
+            <div style="height:100%; width:${(b.total/maxTotal*100).toFixed(1)}%; background:var(--accent)"></div>
+          </div>
+          <div class="note" style="margin-top:3px">${b.cant} venta${b.cant!==1?'s':''}</div>
+        </div>`).join('')}`;
+    }catch(e){ tb.innerHTML = `<div class="note">${esc(e.message||e)}</div>`; }
+  };
+  document.getElementById('repTendRango').addEventListener('change', e=> cargar(e.target.value));
+  cargar('8');
+}
+
+// (5) Valor del inventario (capital inmovilizado) — suma, sobre el catálogo en
+// memoria, el stock de cada producto multiplicado por su costo (o, si no hay
+// costo cargado, por el precio de lista, avisando la diferencia).
+function repInventario(){
+  const cont = document.getElementById('repContenido');
+  let valorCosto=0, valorVenta=0, unidades=0, sinCosto=0, prodConStock=0;
+  const porCat = {};
+  const porLocalCosto = { camerino:0, giustozzi:0 };
+  PRODS.forEach(p=>{
+    const st = stockPorLocal(p);
+    const uds = st.cam + st.giu;
+    if(uds<=0) return;
+    prodConStock++; unidades += uds;
+    const costo = (p.costo!=null && p.costo>0) ? p.costo : null;
+    if(costo==null) sinCosto++;
+    const cUnit = costo!=null ? costo : (Number(p.precio_lista)||0);
+    valorCosto += cUnit*uds;
+    valorVenta += (Number(p.precio_lista)||0)*uds;
+    porLocalCosto.camerino += cUnit*st.cam;
+    porLocalCosto.giustozzi += cUnit*st.giu;
+    const cat = p.categoria||'(sin categoría)';
+    porCat[cat] = (porCat[cat]||0) + cUnit*uds;
+  });
+  const cats = Object.entries(porCat).sort((a,b)=>b[1]-a[1]).slice(0,15);
+  const maxCat = Math.max(1, ...cats.map(c=>c[1]));
+  cont.innerHTML = `
+    <div class="lista" style="margin-top:8px"><div class="l">Capital inmovilizado (a costo)</div><div class="v">${money(valorCosto)}</div></div>
+    <div class="grid" style="grid-template-columns:1fr 1fr; margin-top:6px">
+      <div class="box"><div class="t">Valor a precio de venta</div><div class="p">${money(valorVenta)}</div><div class="s">ganancia potencial ${money(valorVenta-valorCosto)}</div></div>
+      <div class="box"><div class="t">Unidades en stock</div><div class="p">${unidades}</div><div class="s">${prodConStock} productos</div></div>
+    </div>
+    ${sinCosto>0?`<div class="note" style="margin-top:8px; color:var(--warn)">⚠ ${sinCosto} producto${sinCosto!==1?'s':''} con stock no tiene${sinCosto!==1?'n':''} costo cargado: para esos se usó el precio de lista, así que el capital a costo está sobreestimado. Cargá el costo desde "editar producto" para afinar el número.</div>`:''}
+    <div class="label" style="margin-top:14px">Por local (a costo)</div>
+    <div class="grid" style="grid-template-columns:1fr 1fr">
+      <div class="box"><div class="t">Camerino</div><div class="p">${money(porLocalCosto.camerino)}</div></div>
+      <div class="box"><div class="t">Giustozzi</div><div class="p">${money(porLocalCosto.giustozzi)}</div></div>
+    </div>
+    <div class="label" style="margin-top:14px">Por categoría (a costo)</div>
+    ${cats.map(([c,v])=>`<div class="lista" style="margin-top:6px; text-align:left; padding:12px 14px">
+      <div style="display:flex; justify-content:space-between; gap:8px"><span class="l">${esc(c)}</span><span class="v" style="font-size:16px">${money(v)}</span></div>
+      <div style="height:6px; background:var(--card); border-radius:4px; margin-top:6px; overflow:hidden"><div style="height:100%; width:${(v/maxCat*100).toFixed(1)}%; background:var(--accent2)"></div></div>
+    </div>`).join('')}`;
+}
+
+// (6) Margen / ganancia por producto — sobre los que tienen costo cargado,
+// calcula la ganancia unitaria y el % de margen sobre el precio de lista.
+// Ordenable por margen % o por ganancia $.
+function repMargen(){
+  const cont = document.getElementById('repContenido');
+  const conCosto = PRODS.filter(p=> p.costo!=null && p.costo>0 && Number(p.precio_lista)>0);
+  const filas = conCosto.map(p=>{
+    const precio = Number(p.precio_lista), costo = Number(p.costo);
+    const gan = precio - costo;
+    const margen = precio>0 ? gan/precio*100 : 0;
+    return { p, precio, costo, gan, margen };
+  });
+  const promMargen = filas.length ? filas.reduce((s,f)=>s+f.margen,0)/filas.length : 0;
+  cont.innerHTML = `
+    ${conCosto.length===0
+      ? `<div class="note" style="margin-top:10px">Todavía no hay productos con costo cargado. Cargá el costo desde "editar producto" y acá vas a ver el margen de cada uno.</div>`
+      : `<div class="grid" style="grid-template-columns:1fr 1fr; margin-top:8px; margin-bottom:6px">
+          <div class="box"><div class="t">Productos con costo</div><div class="p">${filas.length}</div><div class="s">de ${PRODS.length}</div></div>
+          <div class="box"><div class="t">Margen promedio</div><div class="p">${promMargen.toFixed(0)}%</div></div>
+        </div>
+        <div style="display:flex; gap:6px; margin-bottom:8px">
+          <select id="repMargenOrden" class="search" style="flex:1">
+            <option value="margenDesc">Mayor margen %</option>
+            <option value="margenAsc">Menor margen % (revisar)</option>
+            <option value="ganDesc">Mayor ganancia $</option>
+          </select>
+        </div>
+        <input id="repMargenFiltro" class="search" placeholder="Filtrar por código, nombre o categoría…" autocomplete="off" style="margin-bottom:8px">
+        <div id="repMargenLista"></div>`}`;
+  if(conCosto.length===0) return;
+  const listaEl = document.getElementById('repMargenLista');
+  const pintar = ()=>{
+    const orden = document.getElementById('repMargenOrden').value;
+    const qn = norm(document.getElementById('repMargenFiltro').value||'');
+    let arr = qn ? filas.filter(f=> norm(f.p.codigo+' '+f.p.nombre+' '+f.p.categoria).includes(qn)) : filas.slice();
+    arr.sort((a,b)=> orden==='margenAsc' ? a.margen-b.margen : orden==='ganDesc' ? b.gan-a.gan : b.margen-a.margen);
+    arr = arr.slice(0,100);
+    listaEl.innerHTML = arr.length ? arr.map(f=>{
+      const col = f.margen<25 ? 'var(--warn)' : f.margen>=50 ? 'var(--accent2)' : 'var(--text)';
+      return `<div class="lista" style="margin-top:6px; text-align:left">
+        <div style="display:flex; justify-content:space-between; gap:8px">
+          <span class="l"><span style="color:var(--accent); font-weight:700">${esc(f.p.codigo)}</span> · ${esc(f.p.nombre)||'(sin nombre)'}</span>
+          <span class="v" style="font-size:18px; color:${col}">${f.margen.toFixed(0)}%</span>
+        </div>
+        <div class="note" style="margin-top:2px">Costo ${money(f.costo)} · Venta ${money(f.precio)} · Ganás ${money(f.gan)}</div>
+      </div>`;
+    }).join('') : '<div class="note">Sin resultados.</div>';
+  };
+  pintar();
+  document.getElementById('repMargenOrden').addEventListener('change', pintar);
+  document.getElementById('repMargenFiltro').addEventListener('input', pintar);
+}
+
+// (7) Productos estancados — tienen stock pero no se vendieron en el período
+// elegido. Cruza el stock del catálogo con los códigos que aparecen en las
+// ventas recientes; los que tienen stock y no vendieron nada son candidatos a
+// liquidar o mover.
+async function repEstancados(){
+  const cont = document.getElementById('repContenido');
+  cont.innerHTML = `
+    <div class="label" style="margin-top:8px">Sin ventas en</div>
+    <select id="repEstRango" class="search" style="margin-bottom:8px">
+      <option value="30" selected>Últimos 30 días</option>
+      <option value="60">Últimos 60 días</option>
+      <option value="90">Últimos 90 días</option>
+    </select>
+    <div id="repEstBox"><div class="note">Cargando…</div></div>`;
+  const cargar = async (dias)=>{
+    const eb = document.getElementById('repEstBox');
+    eb.innerHTML = `<div class="note">Cruzando stock con ventas…</div>`;
+    try{
+      const desde = new Date(); desde.setDate(desde.getDate()-Number(dias));
+      const isoDesde = desde.toISOString().slice(0,10);
+      const r = await sbAuthed(`/rest/v1/ventas?fecha=gte.${isoDesde}&select=items&limit=10000`);
+      if(!r.ok) throw new Error('No se pudieron consultar las ventas.');
+      const ventas = await r.json();
+      const vendidos = new Set();
+      ventas.forEach(v=> (v.items||[]).forEach(it=>{ if(it.codigo) vendidos.add(String(it.codigo)); }));
+      // productos con stock que NO están en vendidos
+      const estancados = PRODS.map(p=>{ const st=stockPorLocal(p); return {p, uds:st.cam+st.giu, cam:st.cam, giu:st.giu}; })
+        .filter(x=> x.uds>0 && !vendidos.has(String(x.p.codigo)))
+        .sort((a,b)=> b.uds-a.uds);
+      const capital = estancados.reduce((s,x)=> s+((x.p.costo!=null&&x.p.costo>0?x.p.costo:Number(x.p.precio_lista)||0)*x.uds), 0);
+      eb.innerHTML = `
+        <div class="grid" style="grid-template-columns:1fr 1fr; margin-bottom:6px">
+          <div class="box" style="${estancados.length?'border-color:var(--warn)':''}"><div class="t">Productos estancados</div><div class="p" style="${estancados.length?'color:var(--warn)':''}">${estancados.length}</div><div class="s">con stock, sin ventas</div></div>
+          <div class="box"><div class="t">Capital detenido</div><div class="p">${money(capital)}</div><div class="s">aprox.</div></div>
+        </div>
+        <input id="repEstFiltro" class="search" placeholder="Filtrar por código, nombre o categoría…" autocomplete="off" style="margin:4px 0 8px">
+        <div id="repEstLista"></div>`;
+      const listaEl = document.getElementById('repEstLista');
+      const pintar = (q)=>{
+        const qn = norm(q||'');
+        const arr = (qn ? estancados.filter(x=> norm(x.p.codigo+' '+x.p.nombre+' '+x.p.categoria).includes(qn)) : estancados).slice(0,200);
+        listaEl.innerHTML = arr.length ? arr.map(x=>`<div class="lista" style="margin-top:6px; text-align:left">
+          <div style="display:flex; justify-content:space-between; gap:8px">
+            <span class="l"><span style="color:var(--accent); font-weight:700">${esc(x.p.codigo)}</span> · ${esc(x.p.nombre)||'(sin nombre)'}</span>
+            <span class="v" style="font-size:16px">${x.uds} u.</span>
+          </div>
+          <div class="note" style="margin-top:2px">${esc(x.p.categoria)||'—'} · ${money(x.p.precio_lista)} · Camerino ${x.cam} · Giustozzi ${x.giu}</div>
+        </div>`).join('') : '<div class="note">Ningún producto estancado con ese filtro. 👍</div>';
+      };
+      pintar('');
+      document.getElementById('repEstFiltro').addEventListener('input', e=> pintar(e.target.value));
+    }catch(e){ eb.innerHTML = `<div class="note">${esc(e.message||e)}</div>`; }
+  };
+  document.getElementById('repEstRango').addEventListener('change', e=> cargar(e.target.value));
+  cargar('30');
 }
 
 // ===== 📅 Calendario de turnos: plantel de vendedores (por local) + quién
