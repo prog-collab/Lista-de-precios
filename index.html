@@ -1716,10 +1716,7 @@ function transparenciaFiscalTicket(monto){
   const otros = 0;
   const sinImpuestos = Math.round((total - iva - otros) * 100) / 100;
   return `
-    <div class="l" style="font-size:10px">Régimen de Transparencia Fiscal al Consumidor (Ley 27.743)</div>
-    <div class="l" style="display:flex; justify-content:space-between"><span>IVA discriminado</span><span>${money(iva)}</span></div>
-    <div class="l" style="display:flex; justify-content:space-between"><span>Otros imp. nac. indirectos</span><span>${money(otros)}</span></div>
-    <div class="l" style="display:flex; justify-content:space-between"><span>Importe sin impuestos nacionales</span><span>${money(sinImpuestos)}</span></div>`;
+    <div class="l" style="display:flex; justify-content:space-between"><span>Importe sin impuestos nacionales (Ley 27.743)</span><span>${money(sinImpuestos)}</span></div>`;
 }
 function renderTicket(d, localSel){
   const homolog = d.ambiente==='homologacion';
