@@ -43,6 +43,7 @@ create extension if not exists "pgcrypto";
 -- ------------------------------------------------------------
 create table if not exists reservas (
   id                uuid primary key default gen_random_uuid(),
+  numero            bigint,                      -- N° corto secuencial para el recibo/etiqueta (ver seccion al final)
   local             text not null check (local in ('camerino','giustozzi')),
   vendedor          text,                       -- email de quien la tomo (sbSession)
   vendedor_id       uuid,                        -- vendedor del turno, igual que ventas
@@ -571,3 +572,42 @@ begin
   where id = p_sesion_id;
 end $function$;
 grant execute on function public.cerrar_caja_sesion(uuid, numeric, numeric, numeric, numeric, numeric, text) to authenticated;
+
+-- ------------------------------------------------------------
+--  Numero de reserva corto y secuencial (1, 2, 3...) para imprimir GRANDE en
+--  el recibo y anotarlo en la etiqueta de la prenda apartada, asi el talon
+--  del negocio y el del cliente se identifican de un vistazo. El id uuid
+--  sigue siendo la clave real; esto es solo para humanos. Idempotente.
+--  (Se recrea la vista v_reservas para que 'numero' aparezca en el select r.*,
+--  ya que Postgres expande el * al definir la vista.)
+-- ------------------------------------------------------------
+create sequence if not exists reservas_numero_seq;
+alter table reservas add column if not exists numero bigint;
+alter table reservas alter column numero set default nextval('reservas_numero_seq');
+alter sequence reservas_numero_seq owned by reservas.numero;
+
+do $$
+declare rec record;
+begin
+  for rec in select id from reservas where numero is null order by created_at, id loop
+    update reservas set numero = nextval('reservas_numero_seq') where id = rec.id;
+  end loop;
+end $$;
+
+drop view if exists v_reservas;
+create view v_reservas
+with (security_invoker = true) as
+select
+  r.*,
+  c.nombre   as cliente_nombre,
+  c.telefono as cliente_telefono,
+  coalesce((
+    select sum(case when p.tipo = 'reintegro' then -p.monto else p.monto end)
+    from reserva_pagos p where p.reserva_id = r.id
+  ), 0) as pagado,
+  greatest(0, r.total - coalesce((
+    select sum(case when p.tipo = 'reintegro' then -p.monto else p.monto end)
+    from reserva_pagos p where p.reserva_id = r.id
+  ), 0)) as saldo_pendiente
+from reservas r
+join clientes c on c.id = r.cliente_id;

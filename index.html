@@ -3715,9 +3715,13 @@ async function mostrarDetalleReserva(reservaId){
     const wa = rv.cliente_telefono ? `https://wa.me/${String(rv.cliente_telefono).replace(/\D/g,'')}?text=${encodeURIComponent(`Hola ${rv.cliente_nombre||''}! Te aviso por tu reserva en ${stLocalNombre(rv.local)}. Saldo pendiente: ${money(rv.saldo_pendiente)}.`)}` : null;
     box.innerHTML = `
       <div class="lista" style="text-align:left; padding:12px 14px">
-        <div class="l" style="margin:0">${esc(rv.cliente_nombre||'(sin nombre)')} · <span style="text-transform:none">${estadoTxt}</span></div>
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:10px">
+          <div class="l" style="margin:0">${esc(rv.cliente_nombre||'(sin nombre)')} · <span style="text-transform:none">${estadoTxt}</span></div>
+          <div style="text-align:right; flex:none"><div class="l" style="margin:0; font-size:11px">RESERVA N°</div><div class="v" style="margin:0; font-size:26px; line-height:1">${rv.numero!=null?esc(String(rv.numero)):'—'}</div></div>
+        </div>
         <div class="note">${esc(stLocalNombre(rv.local))} · tomada ${esc(rv.fecha)}${rv.vencimiento?` · vence ${esc(rv.vencimiento)}`:''}${rv.facturada?` · 🧾 Fact. ${esc(rv.factura_tipo||'')} ${rv.factura_numero||''}`:''}</div>
       </div>
+      <button class="fbtn" id="rvImprimirBtn" style="width:100%; margin-top:6px">🖨️ Imprimir recibo (talón cliente + negocio)</button>
       <div class="label">Productos apartados</div>
       ${items.map(it=>`<div class="lista" style="text-align:left; margin-top:3px"><div class="l" style="margin:0">${esc(it.nombre||it.codigo||'—')}</div><div class="v" style="font-size:13px">${esc([it.talle,it.color].filter(Boolean).join(' · '))} · ${money(it.precio||0)}</div></div>`).join('')}
       <div class="lista" style="margin-top:8px; text-align:left; padding:10px 14px; display:flex; justify-content:space-between; gap:10px">
@@ -3736,8 +3740,93 @@ async function mostrarDetalleReserva(reservaId){
         </div>
         <div id="rvAccionBox"></div>
         <div class="note" id="rvDetErr"></div>` : ''}`;
+    const impBtn = document.getElementById('rvImprimirBtn');
+    if(impBtn) impBtn.onclick = ()=> imprimirReciboReserva(rv);
     if(rv.estado==='activa') wireAccionesReserva(rv);
   }catch(e){ box.innerHTML = '<div class="note">Error al cargar el detalle.</div>'; }
+}
+
+// Recibo de reserva con talon desprendible: la mitad de arriba para el
+// cliente (comprobante para retirar) y la mitad de abajo para el negocio
+// (se engancha a la prenda apartada). Las dos llevan el N° de reserva bien
+// grande para que coincidan. Imprime en la termica de 80mm igual que el
+// Recibo X de las ventas (ventana nueva + @page en mm).
+function imprimirReciboReserva(rv){
+  const info = LOCAL_INFO[rv.local] || LOCAL_INFO.camerino;
+  const num = rv.numero!=null ? String(rv.numero) : '—';
+  const fecha = new Date(rv.created_at||Date.now()).toLocaleDateString('es-AR');
+  const items = Array.isArray(rv.items) ? rv.items : [];
+  const filas = (conPrecio)=> items.map(it=>{
+    const det = [it.talle, it.color].filter(Boolean).join(' · ');
+    return `<div style="display:flex; justify-content:space-between; gap:8px">
+      <span>${esc(it.nombre||it.codigo||'-')}${det?` (${esc(det)})`:''}</span>
+      ${conPrecio?`<span style="white-space:nowrap">${fmt(it.precio||0)}</span>`:''}</div>`;
+  }).join('');
+  const numeroGrande = `<div style="text-align:center; margin:6px 0">
+      <div style="font-size:11px; letter-spacing:1px">RESERVA N°</div>
+      <div style="font-size:44px; font-weight:800; line-height:1">${esc(num)}</div>
+    </div>`;
+  const linea = '<div style="border-top:1px dashed #000; margin:8px 0"></div>';
+  const datosCliente = `<div style="text-align:left">
+      <div>Cliente: <b>${esc(rv.cliente_nombre||'—')}</b></div>
+      ${rv.cliente_telefono?`<div>Tel: ${esc(rv.cliente_telefono)}</div>`:''}</div>`;
+
+  // Talon para el CLIENTE: comprobante completo para volver a retirar.
+  const talonCliente = `<div style="text-align:center">
+      ${logoTicket(rv.local)}
+      <div style="font-size:14px; font-weight:700">${esc(info.razonSocial)}</div>
+      <div style="font-size:12px">${esc(info.domicilio)}</div>
+      ${linea}
+      <div style="font-weight:700">COMPROBANTE DE RESERVA · sin valor fiscal</div>
+      <div>${esc(fecha)} · ${esc(stLocalNombre(rv.local))}</div>
+      ${numeroGrande}
+      ${linea}
+      ${datosCliente}
+      ${linea}
+      <div style="text-align:left">${filas(true)}</div>
+      ${linea}
+      <div style="display:flex; justify-content:space-between"><span>Total</span><span>${fmt(rv.total)}</span></div>
+      <div style="display:flex; justify-content:space-between"><span>Señado / pagado</span><span>${fmt(rv.pagado)}</span></div>
+      <div style="display:flex; justify-content:space-between; font-size:18px; font-weight:800; margin-top:2px"><span>SALDO</span><span>${fmt(rv.saldo_pendiente)}</span></div>
+      ${rv.vencimiento?`<div style="margin-top:4px">Retirar antes del <b>${esc(rv.vencimiento)}</b></div>`:''}
+      <div style="font-size:11px; margin-top:8px">Presentá este comprobante para retirar tu producto.</div>
+      <div style="font-size:11px">— TALÓN DEL CLIENTE —</div>
+    </div>`;
+
+  // Talon para el NEGOCIO: se engancha a la prenda apartada. Prioriza
+  // identificar la prenda (talle/color) y el saldo/vencimiento.
+  const talonNegocio = `<div style="text-align:center">
+      ${numeroGrande}
+      <div style="font-weight:700">TALÓN DEL NEGOCIO — enganchar a la prenda</div>
+      ${linea}
+      ${datosCliente}
+      ${linea}
+      <div style="text-align:left">${filas(false)}</div>
+      ${linea}
+      <div style="display:flex; justify-content:space-between; font-size:16px; font-weight:800"><span>SALDO</span><span>${fmt(rv.saldo_pendiente)}</span></div>
+      ${rv.vencimiento?`<div>Vence: <b>${esc(rv.vencimiento)}</b></div>`:''}
+      <div>${esc(fecha)} · ${esc(stLocalNombre(rv.local))}</div>
+    </div>`;
+
+  const cortar = `<div style="text-align:center; border-top:2px dashed #000; margin:14px 0 10px; font-size:11px; letter-spacing:1px">✂ - - - - - - - CORTAR - - - - - - - ✂</div>`;
+  const html = `<div style="font-family:'Courier New',monospace">${talonCliente}${cortar}${talonNegocio}</div>`;
+
+  const w = window.open('', '_blank');
+  if(!w){ toast('El navegador bloqueó la ventana de impresión — permitila y probá de nuevo.', 4000); return; }
+  w.document.write(`<html><head><title>Reserva N° ${esc(num)}</title><style>
+    html, body{ margin:0; padding:0 }
+    body{font-family:'Courier New',monospace; width:100%; box-sizing:border-box; font-size:13px; font-weight:600}
+    *{color:#000!important; background:#fff!important; border-color:#000!important}
+  </style></head><body>${html}</body></html>`);
+  w.document.close();
+  w.focus();
+  setTimeout(()=>{
+    const alturaMm = Math.ceil(w.document.body.scrollHeight / 96 * 25.4) + 6;
+    const style = w.document.createElement('style');
+    style.textContent = `@page{ size: 80mm ${alturaMm}mm; margin: 3mm 2mm; }`;
+    w.document.head.appendChild(style);
+    w.print();
+  }, 50);
 }
 
 function wireAccionesReserva(rv){
