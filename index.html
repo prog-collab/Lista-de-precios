@@ -2297,44 +2297,81 @@ function wireVentaCard(){
   card.querySelector('#stCvTransfDescuento').addEventListener('change', recalcSaldoVenta);
   // Verificar transferencia contra la cuenta real de Mercado Pago (solo
   // para los alias que son de verdad cuentas de MP con token configurado
-  // en el servidor) — busca, entre los pagos recibidos desde que se eligió
-  // ese alias, uno aprobado con el mismo monto, en vez de comparar el
-  // saldo total de la cuenta (poco confiable con varias ventas a la vez).
+  // en el servidor) — busca, entre las acreditaciones de la última media
+  // hora, una aprobada por el mismo monto, en vez de comparar el saldo
+  // total de la cuenta (poco confiable con varias ventas a la vez).
+  // Se dispara sola: al elegir un alias de MP con monto cargado, y cada vez
+  // que cambia el monto. Si todavía no aparece, reintenta unas veces sin
+  // que el vendedor tenga que hacer nada.
   const transfAliasSel = card.querySelector('#stCvTransfAlias');
   const transfVerificarBtn = card.querySelector('#stCvTransfVerificar');
   const transfVerificarInfo = card.querySelector('#stCvTransfVerificarInfo');
-  let transfVentanaDesde = null;
-  transfAliasSel.addEventListener('change', ()=>{
-    const esMP = ALIAS_MERCADOPAGO.includes(transfAliasSel.value);
-    transfVerificarBtn.style.display = esMP ? '' : 'none';
-    transfVerificarInfo.textContent = '';
-    if(esMP && !transfVentanaDesde) transfVentanaDesde = new Date().toISOString();
-  });
-  transfVerificarBtn.onclick = async ()=>{
+  const TRANSF_VENTANA_MIN = 30;      // media hora hacia atrás
+  const TRANSF_REINTENTOS = 6;        // 6 x 20s ≈ 2 minutos de espera
+  let transfDebounce = null, transfPoll = null, transfIntentos = 0, transfEnCurso = false;
+  const transfCancelarChequeo = ()=>{
+    clearTimeout(transfDebounce); clearTimeout(transfPoll);
+    transfDebounce = transfPoll = null; transfIntentos = 0;
+  };
+  const transfHora = f => new Date(f).toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'});
+  async function transfVerificar(auto){
+    if(transfEnCurso || !document.body.contains(card)) return;
+    const alias = transfAliasSel.value;
     const monto = montoFinalTransferencia();
-    if(!(monto>0)){ transfVerificarInfo.textContent = 'Cargá el monto de la transferencia primero.'; transfVerificarInfo.style.color='var(--warn)'; return; }
+    if(!ALIAS_MERCADOPAGO.includes(alias)) return;
+    if(!(monto>0)){
+      if(!auto){ transfVerificarInfo.textContent = 'Cargá el monto de la transferencia primero.'; transfVerificarInfo.style.color='var(--warn)'; }
+      return;
+    }
+    transfEnCurso = true;
     transfVerificarBtn.disabled = true; transfVerificarBtn.textContent = 'Verificando…';
-    transfVerificarInfo.textContent = ''; transfVerificarInfo.style.color = '';
+    if(!auto){ transfVerificarInfo.textContent = ''; transfVerificarInfo.style.color = ''; }
     try{
       const token = await sbToken();
       const r = await fetch(API_VERIFICAR_TRANSFERENCIA, { method:'POST',
         headers:{ 'Content-Type':'application/json', Authorization:'Bearer '+token },
-        body: JSON.stringify({ alias: transfAliasSel.value, monto, desde: transfVentanaDesde }) });
+        body: JSON.stringify({ alias, monto, minutos: TRANSF_VENTANA_MIN }) });
       const d = await r.json().catch(()=>({}));
       if(!r.ok) throw new Error(d.error || 'No se pudo verificar.');
       if(d.encontrado){
-        transfVerificarInfo.innerHTML = `✓ Acreditada${d.pagador?' — '+esc(d.pagador):''} · ${new Date(d.fecha).toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'})}`;
+        transfCancelarChequeo();
+        transfVerificarInfo.innerHTML = `✓ Acreditada ${money(d.monto)} · ${transfHora(d.fecha)}`
+          + (d.pagador ? ` · de <b>${esc(d.pagador)}</b>` : ' · (sin datos del ordenante)')
+          + (d.ambiguo ? `<br><span style="color:var(--warn)">⚠ Hay ${d.coincidencias} acreditaciones por el mismo importe en la última media hora — revisá cuál es.</span>` : '');
         transfVerificarInfo.style.color = 'var(--accent2)';
       } else {
-        transfVerificarInfo.textContent = '⏳ Todavía no aparece acreditada — podés reintentar en un rato.';
+        const otras = (d.recientes||[]).slice(0,5);
+        transfVerificarInfo.innerHTML = `⏳ No aparece ninguna acreditación de ${money(monto)} en la última media hora.`
+          + (otras.length ? `<br>Sí entraron: ${otras.map(p=>`${money(p.monto)} (${transfHora(p.fecha)}${p.pagador?' · '+esc(p.pagador):''})`).join(' · ')}` : '');
         transfVerificarInfo.style.color = 'var(--warn)';
+        if(transfIntentos < TRANSF_REINTENTOS){
+          transfIntentos++;
+          transfPoll = setTimeout(()=> transfVerificar(true), 20000);
+        }
       }
     }catch(e){
+      transfCancelarChequeo();
       transfVerificarInfo.textContent = 'No se pudo verificar: '+(e.message||e);
       transfVerificarInfo.style.color = 'var(--warn)';
     }
-    transfVerificarBtn.disabled = false; transfVerificarBtn.textContent = '🔍 Verificar transferencia';
+    transfEnCurso = false;
+    transfVerificarBtn.disabled = false; transfVerificarBtn.textContent = '🔍 Verificar de nuevo';
+  }
+  // Cada cambio de alias/monto/descuento reinicia la búsqueda automática.
+  const transfProgramarChequeo = ()=>{
+    transfCancelarChequeo();
+    const esMP = ALIAS_MERCADOPAGO.includes(transfAliasSel.value);
+    transfVerificarBtn.style.display = esMP ? '' : 'none';
+    if(!esMP){ transfVerificarInfo.textContent = ''; return; }
+    if(!(montoFinalTransferencia()>0)) return;
+    transfVerificarInfo.textContent = 'Buscando la acreditación en Mercado Pago…';
+    transfVerificarInfo.style.color = '';
+    transfDebounce = setTimeout(()=> transfVerificar(true), 800);
   };
+  transfAliasSel.addEventListener('change', transfProgramarChequeo);
+  card.querySelector('#stCvTransf').addEventListener('input', transfProgramarChequeo);
+  card.querySelector('#stCvTransfDescuento').addEventListener('change', transfProgramarChequeo);
+  transfVerificarBtn.onclick = ()=>{ transfCancelarChequeo(); transfVerificar(false); };
   [...card.querySelectorAll('#stCvContadoDescuento [data-desc]')].forEach(b=> b.onclick=()=>{
     [...card.querySelectorAll('#stCvContadoDescuento [data-desc]')].forEach(x=>x.classList.remove('sel'));
     b.classList.add('sel');
