@@ -1714,7 +1714,9 @@ function montarVerificadorMP({ aliasEl, montoFn, btnEl, infoEl, activo }){
       const token = await sbToken();
       const r = await fetch(API_VERIFICAR_TRANSFERENCIA, { method:'POST',
         headers:{ 'Content-Type':'application/json', Authorization:'Bearer '+token },
-        body: JSON.stringify({ alias, monto, minutos: MP_VENTANA_MIN }) });
+        // El local va para poder cruzar el CUIT del que transfirió con el
+        // padrón de AFIP (usa el certificado de ese local).
+        body: JSON.stringify({ alias, monto, minutos: MP_VENTANA_MIN, local: stLocal() }) });
       const d = await r.json().catch(()=>({}));
       if(!r.ok) throw new Error(d.error || 'No se pudo verificar.');
       if(!vivo()){ enCurso = false; return; }
