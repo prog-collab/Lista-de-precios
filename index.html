@@ -1751,6 +1751,39 @@ function transparenciaFiscalTicket(monto){
   return `
     <div class="l" style="display:flex; justify-content:space-between"><span>Importe sin impuestos nacionales (Ley 27.743)</span><span>${money(sinImpuestos)}</span></div>`;
 }
+// ===== Impresión de tickets en la térmica (80mm) =====
+// La tickeadora está configurada con una hoja de 80 x 210 mm: si el ticket
+// mide más, Chrome lo parte en dos hojas (y hay que pegarlas). Por eso, antes
+// de imprimir, se mide el alto real ya renderizado y:
+//   - si entra, se fija @page con ese alto exacto en mm (así la térmica de
+//     rollo continuo no expulsa metros de papel en blanco, ver nota abajo);
+//   - si NO entra, se achica todo el ticket con zoom hasta que entre en los
+//     210mm, con un piso de 55% para que siga siendo legible.
+const TICKET_ANCHO_MM = 80;
+const TICKET_ALTO_MAX_MM = 210;
+const TICKET_ZOOM_MIN = 0.55;
+function imprimirTicketAjustado(w){
+  const doc = w.document;
+  const PX_POR_MM = 96 / 25.4;
+  const MARGEN_MM = 6;                       // 3mm arriba + 3mm abajo del @page
+  const maxPx = (TICKET_ALTO_MAX_MM - MARGEN_MM) * PX_POR_MM;
+  const body = doc.body;
+  body.style.zoom = '';
+  const altoNatural = body.scrollHeight;
+  let zoom = 1;
+  if(altoNatural > maxPx){
+    zoom = Math.max(TICKET_ZOOM_MIN, maxPx / altoNatural);
+    body.style.zoom = String(zoom);
+  }
+  const altoPx = Math.min(altoNatural * zoom, maxPx);
+  const alturaMm = Math.min(TICKET_ALTO_MAX_MM, Math.ceil(altoPx / PX_POR_MM) + MARGEN_MM);
+  const style = doc.createElement('style');
+  style.textContent = `@page{ size: ${TICKET_ANCHO_MM}mm ${alturaMm}mm; margin: 3mm 2mm; }`;
+  doc.head.appendChild(style);
+  w.focus();
+  setTimeout(()=> w.print(), 50);
+}
+
 function renderTicket(d, localSel){
   const homolog = d.ambiente==='homologacion';
   const info = LOCAL_INFO[localSel] || LOCAL_INFO.camerino;
@@ -1927,7 +1960,7 @@ function wireTicketButtons(card, d, localSel, telefono){
   };
   card.querySelector('#stTicketPrint').onclick = ()=>{
     const ticket = card.querySelector('#stTicket');
-    const w = window.open('', '_blank');
+    const w = window.open('', '_blank');   // se imprime con imprimirTicketAjustado()
     // Esta ventana es un documento nuevo y en blanco -- NO hereda el CSS de
     // la app (clases .lista/.l/.v), así que hay que redefinir acá su
     // tipografía a mano; si no, el navegador imprime con su tamaño/peso por
@@ -1955,12 +1988,7 @@ function wireTicketButtons(card, d, localSel, telefono){
     let impreso = false;
     const imprimir = ()=>{
       if(impreso) return; impreso = true;
-      const alturaMm = Math.ceil(w.document.body.scrollHeight / 96 * 25.4) + 6;
-      const style = w.document.createElement('style');
-      style.textContent = `@page{ size: 80mm ${alturaMm}mm; margin: 3mm 2mm; }`;
-      w.document.head.appendChild(style);
-      w.focus();
-      setTimeout(()=> w.print(), 50);
+      imprimirTicketAjustado(w);
     };
     const pendientes = [...w.document.images].filter(img=> !img.complete);
     let restantes = pendientes.length;
@@ -2136,13 +2164,7 @@ function wireReciboXButtons(card, items, total, formaPagoTexto, localSel){
     </style></head><body>${html}</body></html>`);
     w.document.close();
     w.focus();
-    setTimeout(()=>{
-      const alturaMm = Math.ceil(w.document.body.scrollHeight / 96 * 25.4) + 6;
-      const style = w.document.createElement('style');
-      style.textContent = `@page{ size: 80mm ${alturaMm}mm; margin: 3mm 2mm; }`;
-      w.document.head.appendChild(style);
-      w.print();
-    }, 50);
+    setTimeout(()=> imprimirTicketAjustado(w), 50);
   };
 }
 
@@ -3955,11 +3977,14 @@ function imprimirReciboReserva(rv){
       <span>${esc(it.nombre||it.codigo||'-')}${det?` (${esc(det)})`:''}</span>
       ${conPrecio?`<span style="white-space:nowrap">${fmt(it.precio||0)}</span>`:''}</div>`;
   }).join('');
-  const numeroGrande = `<div style="text-align:center; margin:6px 0">
+  // El talón del negocio se engancha a la prenda: ahí el número va grande
+  // para encontrarla de un vistazo. En el del cliente alcanza con menos, así
+  // los dos talones entran juntos en la hoja de 210mm sin achicar el resto.
+  const numeroGrande = (px)=> `<div style="text-align:center; margin:4px 0">
       <div style="font-size:11px; letter-spacing:1px">RESERVA N°</div>
-      <div style="font-size:44px; font-weight:800; line-height:1">${esc(num)}</div>
+      <div style="font-size:${px}px; font-weight:800; line-height:1">${esc(num)}</div>
     </div>`;
-  const linea = '<div style="border-top:1px dashed #000; margin:8px 0"></div>';
+  const linea = '<div style="border-top:1px dashed #000; margin:5px 0"></div>';
   const datosCliente = `<div style="text-align:left">
       <div>Cliente: <b>${esc(rv.cliente_nombre||'—')}</b></div>
       ${rv.cliente_telefono?`<div>Tel: ${esc(rv.cliente_telefono)}</div>`:''}</div>`;
@@ -3972,7 +3997,7 @@ function imprimirReciboReserva(rv){
       ${linea}
       <div style="font-weight:700">COMPROBANTE DE RESERVA · sin valor fiscal</div>
       <div>${esc(fecha)} · ${esc(stLocalNombre(rv.local))}</div>
-      ${numeroGrande}
+      ${numeroGrande(30)}
       ${linea}
       ${datosCliente}
       ${linea}
@@ -3989,7 +4014,7 @@ function imprimirReciboReserva(rv){
   // Talon para el NEGOCIO: se engancha a la prenda apartada. Prioriza
   // identificar la prenda (talle/color) y el saldo/vencimiento.
   const talonNegocio = `<div style="text-align:center">
-      ${numeroGrande}
+      ${numeroGrande(44)}
       <div style="font-weight:700">TALÓN DEL NEGOCIO — enganchar a la prenda</div>
       ${linea}
       ${datosCliente}
@@ -4001,7 +4026,7 @@ function imprimirReciboReserva(rv){
       <div>${esc(fecha)} · ${esc(stLocalNombre(rv.local))}</div>
     </div>`;
 
-  const cortar = `<div style="text-align:center; border-top:2px dashed #000; margin:14px 0 10px; font-size:11px; letter-spacing:1px">✂ - - - - - - - CORTAR - - - - - - - ✂</div>`;
+  const cortar = `<div style="text-align:center; border-top:2px dashed #000; margin:9px 0 7px; font-size:11px; letter-spacing:1px">✂ - - - - - - - CORTAR - - - - - - - ✂</div>`;
   const html = `<div style="font-family:'Courier New',monospace">${talonCliente}${cortar}${talonNegocio}</div>`;
 
   const w = window.open('', '_blank');
@@ -4013,13 +4038,7 @@ function imprimirReciboReserva(rv){
   </style></head><body>${html}</body></html>`);
   w.document.close();
   w.focus();
-  setTimeout(()=>{
-    const alturaMm = Math.ceil(w.document.body.scrollHeight / 96 * 25.4) + 6;
-    const style = w.document.createElement('style');
-    style.textContent = `@page{ size: 80mm ${alturaMm}mm; margin: 3mm 2mm; }`;
-    w.document.head.appendChild(style);
-    w.print();
-  }, 50);
+  setTimeout(()=> imprimirTicketAjustado(w), 50);
 }
 
 function wireAccionesReserva(rv){
