@@ -1696,6 +1696,7 @@ const mpVerificarHtml = (idBtn, idInfo) =>
 // activo: () => si corresponde verificar (ej. el medio elegido es transferencia).
 function montarVerificadorMP({ aliasEl, montoFn, btnEl, infoEl, activo }){
   let debounce = null, poll = null, intentos = 0, enCurso = false;
+  let ultimo = null;   // última acreditación confirmada, para guardarla en la venta
   const vivo = ()=> document.body.contains(infoEl);
   const cancelar = ()=>{ clearTimeout(debounce); clearTimeout(poll); debounce = poll = null; intentos = 0; };
   const corresponde = ()=> (!activo || activo()) && ALIAS_MERCADOPAGO.includes(aliasEl.value);
@@ -1722,8 +1723,19 @@ function montarVerificadorMP({ aliasEl, montoFn, btnEl, infoEl, activo }){
       if(!vivo()){ enCurso = false; return; }
       if(d.encontrado){
         cancelar();
+        // Solo guardamos el ordenante cuando el dato es del emisor de verdad:
+        // en las transferencias desde un banco, MP manda los datos de la
+        // cuenta que recibe (o sea, los nuestros), y no sirven de respaldo.
+        ultimo = {
+          monto: d.monto,
+          pago_id: d.id ? String(d.id) : null,
+          fecha: d.fecha || null,
+          pagador: d.pagadorConfiable ? d.pagador : null,
+          cuit: d.pagadorConfiable ? d.pagadorCuit : null,
+        };
         infoEl.innerHTML = `✓ Acreditada ${money(d.monto)} · ${mpHora(d.fecha)}`
-          + (d.pagador ? ` · de <b>${esc(d.pagador)}</b>` : ' · (sin datos del ordenante)')
+          + (d.pagadorConfiable && d.pagador ? ` · de <b>${esc(d.pagador)}</b>` : '')
+          + (!d.pagadorConfiable ? `<br><span style="color:var(--warn)">Mercado Pago no informa quién la mandó (transferencia desde un banco).</span>` : '')
           + mpOrigenHtml(d)
           + (d.ambiguo ? `<br><span style="color:var(--warn)">⚠ Hay ${d.coincidencias} acreditaciones por el mismo importe en la última media hora — revisá cuál es.</span>` : '');
         infoEl.style.color = 'var(--accent2)';
@@ -1745,6 +1757,7 @@ function montarVerificadorMP({ aliasEl, montoFn, btnEl, infoEl, activo }){
   // Cada cambio de alias/monto/medio reinicia la búsqueda automática.
   const programar = ()=>{
     cancelar();
+    ultimo = null;
     const esMP = corresponde();
     btnEl.style.display = esMP ? '' : 'none';
     if(!esMP){ infoEl.textContent = ''; return; }
@@ -1754,7 +1767,18 @@ function montarVerificadorMP({ aliasEl, montoFn, btnEl, infoEl, activo }){
     debounce = setTimeout(()=> verificar(true), 800);
   };
   btnEl.onclick = ()=>{ cancelar(); verificar(false); };
-  return { programar, cancelar, verificar };
+  // Columnas para guardar el respaldo en la venta, solo si lo verificado
+  // sigue coincidiendo con el importe que se está por cobrar.
+  const columnasVenta = (montoCobrado)=>{
+    if(!ultimo || !(Math.abs(ultimo.monto - montoCobrado) < 1)) return {};
+    return {
+      transferencia_pago_id: ultimo.pago_id,
+      transferencia_verificada_at: ultimo.fecha,
+      transferencia_pagador: ultimo.pagador,
+      transferencia_pagador_cuit: ultimo.cuit,
+    };
+  };
+  return { programar, cancelar, verificar, columnasVenta };
 }
 
 // Tarjeta para emitir la factura electrónica (AFIP/ARCA) por el total acumulado.
@@ -2716,6 +2740,8 @@ function wireVentaCard(){
           pago_contado: pagoContado, contado_descuento_pct: contadoDescPct,
           pago_transferencia: pagoTransf, transferencia_alias: transfAlias,
           transferencia_descuento_pct: transfDescuentoPct,
+          // Respaldo de la acreditación verificada en MP (si se verificó).
+          ...transfVerif.columnasVenta(pagoTransf),
           pago_tarjeta_credito: pagoTCred, pago_tarjeta_debito: pagoTDeb,
           pago_credito_personal: pagoCPer, pago_credito_financiero: pagoCFin, saldo_pendiente: saldoPendiente,
           tarjeta_credito_cuotas: cuotasTCred, tarjeta_credito_recargo_pct: recargoPct,
@@ -6289,10 +6315,20 @@ async function cargarRendimiento(local, desde, hasta){
   }
 }
 
+// Respaldo de la transferencia: quedó guardado en la venta al cobrarla.
+function transferenciaVerificadaTexto(v){
+  if(!v.transferencia_pago_id) return '';
+  const quien = v.transferencia_pagador
+    ? ` de ${esc(v.transferencia_pagador)}${v.transferencia_pagador_cuit && !String(v.transferencia_pagador).includes(v.transferencia_pagador_cuit) ? ` (${esc(v.transferencia_pagador_cuit)})` : ''}`
+    : '';
+  const hora = v.transferencia_verificada_at ? ` ${mpHora(v.transferencia_verificada_at)}` : '';
+  return ` ✓ verificada${hora}${quien}`;
+}
+
 function mediosDePagoVenta(v){
   return [
     v.pago_contado>0 && `Efectivo ${money(v.pago_contado)}${v.contado_descuento_pct>0?` (−${v.contado_descuento_pct}%)`:''}`,
-    v.pago_transferencia>0 && `Transf.${v.transferencia_alias?` (${esc(v.transferencia_alias)})`:''} ${money(v.pago_transferencia)}${v.transferencia_descuento_pct>0?` (−${v.transferencia_descuento_pct}%)`:''}`,
+    v.pago_transferencia>0 && `Transf.${v.transferencia_alias?` (${esc(v.transferencia_alias)})`:''} ${money(v.pago_transferencia)}${v.transferencia_descuento_pct>0?` (−${v.transferencia_descuento_pct}%)`:''}${transferenciaVerificadaTexto(v)}`,
     v.pago_tarjeta_credito>0 && `T.Créd ${money(v.pago_tarjeta_credito)}${v.tarjeta_credito_cuotas>1?` (${v.tarjeta_credito_cuotas} cuotas, +${v.tarjeta_credito_recargo_pct}%)`:''}`,
     v.pago_tarjeta_debito>0 && `T.Déb ${money(v.pago_tarjeta_debito)}`,
     v.pago_credito_personal>0 && `Créd.Pers ${money(v.pago_credito_personal)}${v.clientes&&v.clientes.nombre?` (${esc(v.clientes.nombre)})`:''}`,
