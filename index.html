@@ -252,6 +252,7 @@
       <button id="clientesBtn" class="fbtn" title="Cuenta corriente de clientes">👤</button>
       <button id="traspasosBtn" class="fbtn" title="Traspaso de stock entre locales">🔁</button>
       <button id="devolucionesBtn" class="fbtn" title="Devoluciones de mercadería">↩️</button>
+      <button id="reservasBtn" class="fbtn" title="Reservas / señas">🏷️</button>
       <button id="calendarioBtn" class="fbtn" title="Calendario de turnos">📅</button>
       <button id="dashboardBtn" class="fbtn" title="Dashboard ASOEM (gerente)">📊</button>
       <button id="reportesBtn" class="fbtn" title="Reportes (gerente)">📋</button>
@@ -2707,6 +2708,84 @@ function wireVentaCard(){
     }
   };
 
+  // ===== Dejar en reserva (seña): aparta el carrito para un cliente que
+  // paga una seña ahora y el resto después. Reusa el mismo carrito y el
+  // cliente elegido arriba. No toca la lógica de venta de acá al lado. =====
+  const reservaBox = card.querySelector('#stReservaBox');
+  card.querySelector('#stReservaBtn').onclick = ()=>{
+    if(reservaBox.dataset.open==='1'){ reservaBox.dataset.open=''; reservaBox.innerHTML=''; return; }
+    if(!(stVentaTotal>0)){ toast('⚠ Agregá productos al carrito antes de dejar una reserva.', 3000); return; }
+    if(!clienteCreditoId){ toast('⚠ Elegí un cliente (arriba, junto al total) — hace falta para la reserva.', 3500); return; }
+    reservaBox.dataset.open='1';
+    const venceDef = new Date(); venceDef.setDate(venceDef.getDate()+30);
+    reservaBox.innerHTML = `
+      <div class="lista" style="text-align:left; padding:12px 14px; margin-top:6px">
+        <div class="l" style="margin:0">🏷️ Reserva para ${esc(clienteCreditoNombre||'el cliente')}</div>
+        <div class="note">Total a reservar: <b>${money(stVentaTotal)}</b> — se aparta el stock hasta que se retire.</div>
+        <div class="label" style="margin-top:8px">Seña que deja ahora</div>
+        <div class="inp-igual-wrap">
+          <input id="stRvSena" class="search" type="number" inputmode="decimal" value="0">
+          <button class="inp-igual" type="button" id="stRvSenaTotal" title="Usar el total">＝</button>
+        </div>
+        <div class="label" style="margin-top:6px">¿Con qué paga la seña?</div>
+        <select id="stRvMedio" class="search">
+          <option value="contado">Efectivo (contado)</option>
+          <option value="transferencia">Transferencia</option>
+          <option value="tarjeta_debito">Tarjeta de débito</option>
+          <option value="tarjeta_credito">Tarjeta de crédito</option>
+        </select>
+        <select id="stRvAlias" class="search" style="margin-top:4px; display:none">
+          <option value="">¿A qué alias?</option>
+          <option value="juan01">juan01</option>
+          <option value="giustozzi.mp">giustozzi.mp</option>
+          <option value="flor.barberis.86">flor.barberis.86</option>
+        </select>
+        <div class="label" style="margin-top:6px">Vence el (opcional)</div>
+        <input id="stRvVence" class="search" type="date" value="${isoLocal(venceDef)}">
+        <button class="addcart" id="stRvOk" style="margin-top:10px">Confirmar reserva</button>
+        <div class="note" id="stRvErr"></div>
+      </div>`;
+    reservaBox.querySelector('#stRvSenaTotal').onclick = ()=>{ reservaBox.querySelector('#stRvSena').value = stVentaTotal; };
+    const medioSel = reservaBox.querySelector('#stRvMedio');
+    const aliasSel = reservaBox.querySelector('#stRvAlias');
+    medioSel.onchange = ()=>{ aliasSel.style.display = medioSel.value==='transferencia' ? '' : 'none'; };
+    reservaBox.querySelector('#stRvOk').onclick = async ()=>{
+      const rvErr = reservaBox.querySelector('#stRvErr');
+      const rvOk = reservaBox.querySelector('#stRvOk');
+      const sena = Number(reservaBox.querySelector('#stRvSena').value)||0;
+      const medio = medioSel.value;
+      const alias = medio==='transferencia' ? (aliasSel.value||null) : null;
+      const vence = reservaBox.querySelector('#stRvVence').value || null;
+      const localSel = stLocal();
+      rvErr.style.color='var(--warn)'; rvErr.style.fontWeight='700';
+      if(!(sena>0)){ rvErr.textContent='La seña tiene que ser mayor a 0.'; return; }
+      if(sena>stVentaTotal){ rvErr.textContent='La seña no puede ser mayor que el total.'; return; }
+      if(medio==='transferencia' && !alias){ rvErr.textContent='Elegí a qué alias se transfirió.'; return; }
+      rvErr.textContent=''; rvOk.disabled=true; rvOk.textContent='Verificando caja…';
+      const sesion = await obtenerCajaAbierta(localSel);
+      if(!sesion){ rvOk.disabled=false; rvOk.textContent='Confirmar reserva';
+        rvErr.textContent=`⚠ No hay caja abierta en ${stLocalNombre(localSel)} — abrila antes de tomar la reserva.`; return; }
+      rvOk.textContent='Guardando reserva…';
+      try{
+        const r = await sbAuthed('/rest/v1/rpc/crear_reserva', { method:'POST', body: JSON.stringify({
+          p_local: localSel, p_cliente_id: clienteCreditoId,
+          p_items: stVentaItems.map(it=>({codigo:it.codigo, nombre:it.nombre, talle:it.talle, color:it.color, precio:it.precio, manual: it.manual||false})),
+          p_total: stVentaTotal, p_caja_sesion_id: sesion.id,
+          p_sena_monto: sena, p_sena_medio: medio,
+          p_vendedor: sbSession.email||null, p_vendedor_id: stVendedorSel||null,
+          p_vencimiento: vence, p_sena_alias: alias, p_nota: null,
+        }) });
+        const d = await r.json().catch(()=>null);
+        if(!r.ok) throw new Error((d && (d.message||d.hint)) || 'No se pudo crear la reserva.');
+        toast('✓ Reserva creada — producto apartado.', 3000);
+        stVentaTotal = 0; stVentaItems = []; stVentaDevolucionId = null;
+        setLS('pantalla_actual', 'reservas');
+        drawReservas();
+      }catch(e){ rvOk.disabled=false; rvOk.textContent='Confirmar reserva';
+        rvErr.textContent = e.message || 'No se pudo crear la reserva.'; }
+    };
+  };
+
   // Atajo de teclado: con el carrito cargado y el saldo pendiente en $0, Enter
   // pide confirmar "Guardar venta" y con otro Enter se guarda — para cobrar
   // sin soltar el teclado. Si además se va a facturar, hay una segunda
@@ -2785,6 +2864,13 @@ document.getElementById('devolucionesBtn').onclick = ()=>{
   setLS('pantalla_actual', 'devoluciones');
   drawDevoluciones();
 };
+document.getElementById('reservasBtn').onclick = ()=>{
+  stOpen = true;
+  document.getElementById('ov').classList.add('open','ov-full');
+  history.pushState({detalle:1}, '');
+  setLS('pantalla_actual', 'reservas');
+  drawReservas();
+};
 document.getElementById('dashboardBtn').onclick = ()=>{
   stOpen = true;
   document.getElementById('ov').classList.add('open','ov-full');
@@ -2857,6 +2943,7 @@ function navIconsHtml(){
     <button type="button" class="fbtn" data-nav="clientesBtn" title="Cuenta corriente de clientes">👤</button>
     <button type="button" class="fbtn" data-nav="traspasosBtn" title="Traspaso de stock entre locales">🔁</button>
     <button type="button" class="fbtn" data-nav="devolucionesBtn" title="Devoluciones de mercadería">↩️</button>
+    <button type="button" class="fbtn" data-nav="reservasBtn" title="Reservas / señas">🏷️</button>
     <button type="button" class="fbtn" data-nav="calendarioBtn" title="Calendario de turnos">📅</button>
     <button type="button" class="fbtn" data-nav="dashboardBtn" title="Dashboard ASOEM (gerente)">📊</button>
     <button type="button" class="fbtn" data-nav="reportesBtn" title="Reportes (gerente)">📋</button>
@@ -3204,6 +3291,8 @@ function drawVender(){
           <div class="note">AFIP solo acepta hasta 5 días antes o después de hoy.</div>
         </div>
         <button class="addcart" id="stFcOk" style="margin-top:10px">Guardar venta</button>
+        <button class="fbtn" id="stReservaBtn" style="width:100%; margin-top:6px">🏷️ Dejar en reserva (seña)</button>
+        <div id="stReservaBox"></div>
         <div style="display:flex; align-items:stretch; gap:8px; margin-top:6px; flex-wrap:wrap">
           <button class="fbtn" id="stFcCancel" style="flex:1 1 auto; min-width:120px">Vaciar carrito</button>
           <div id="stFcResultado" style="flex:2 1 200px"></div>
@@ -3489,6 +3578,265 @@ async function aplicarRestriccionLocalSelect(sel){
   sel.value = asignado;
   sel.disabled = true;
   sel.title = `Tu usuario solo puede operar en ${stLocalNombre(asignado)}.`;
+}
+
+// ===== 🏷️ Reservas / señas: apartar productos con seña, cobrar abonos,
+// retirar (con factura opcional) o cancelar (con reintegro) =====
+const RV_MEDIO_LABEL = { contado:'Efectivo', transferencia:'Transferencia', tarjeta_debito:'Tarjeta débito', tarjeta_credito:'Tarjeta crédito' };
+let rvEstadoActual = 'activa';
+
+function drawReservas(){
+  const sheet = document.getElementById('sheet');
+  sheet.classList.add('sheet-wide');
+  if(!sbSession){
+    sheet.innerHTML = `
+      ${navIconsHtml()}
+      <div class="topbtns"><button class="backbtn" id="stClose">✕ Cerrar</button></div>
+      <h2>🏷️ Reservas</h2>
+      <div class="scat">Iniciá sesión con tu usuario del panel para poder verlas.</div>
+      <div class="label">Usuario</div>
+      <input id="stEmail" class="search" type="text" autocomplete="username">
+      <div class="label">Contraseña</div>
+      <input id="stPass" class="search" type="password" autocomplete="current-password">
+      <button class="addcart" id="stLoginBtn">Ingresar</button>
+      <div class="note" id="stLoginErr"></div>`;
+    wireNavIcons(sheet);
+    document.getElementById('stClose').onclick = ()=> stCerrar(false);
+    document.getElementById('stLoginBtn').onclick = async ()=>{
+      const err = document.getElementById('stLoginErr');
+      const b = document.getElementById('stLoginBtn');
+      b.disabled = true; b.textContent = 'Ingresando…';
+      try{
+        await sbLogin(usuarioAEmail(document.getElementById('stEmail').value),
+                      document.getElementById('stPass').value);
+        drawReservas();
+      }catch(e){ b.disabled=false; b.textContent='Ingresar'; err.textContent = e.message; }
+    };
+    return;
+  }
+  sheet.innerHTML = `
+    ${navIconsHtml()}
+    <div class="topbtns"><button class="backbtn" id="stClose">✕ Cerrar</button></div>
+    <h2>🏷️ Reservas / señas</h2>
+    <div class="scat">Sesión: ${esc(mostrarUsuario(sbSession.email))} · <a href="#" id="stLogout" style="color:var(--accent)">salir</a></div>
+    <div class="scat">Productos apartados con seña. Se cargan desde el POS (botón "Dejar en reserva"). Al retirar se cobra el saldo; al cancelar se reintegra la seña y vuelve el stock.</div>
+    <div class="st-grid st-grid-3">
+      <div class="st-col-left">
+        <div class="label">Ver</div>
+        <div class="talles" id="rvFiltros">
+          <button class="talle ${rvEstadoActual==='activa'?'sel':''}" data-estado="activa">Activas</button>
+          <button class="talle ${rvEstadoActual==='retirada'?'sel':''}" data-estado="retirada">Retiradas</button>
+          <button class="talle ${rvEstadoActual==='cerradas'?'sel':''}" data-estado="cerradas">Canceladas/vencidas</button>
+        </div>
+        <div class="label">Buscar por cliente</div>
+        <input id="rvBuscar" class="search" placeholder="Nombre del cliente…" autocomplete="off">
+        <div id="rvLista"></div>
+      </div>
+      <div class="st-col-right" id="rvDetalle">
+        <div class="note">Elegí una reserva de la izquierda para ver el detalle y cobrar, retirar o cancelar.</div>
+      </div>
+      <div class="st-col-dia" id="rvVencidas"></div>
+    </div>`;
+  wireNavIcons(sheet);
+  document.getElementById('stClose').onclick = ()=> stCerrar(false);
+  document.getElementById('stLogout').onclick = (e)=>{ e.preventDefault();
+    sbSession=null; setLS('sb_session', null); miRolCache=null; miLocalAsignadoCache=undefined; actualizarVisibilidadRendimiento(); drawReservas(); };
+  document.querySelectorAll('#rvFiltros [data-estado]').forEach(b=>{
+    b.onclick = ()=>{
+      document.querySelectorAll('#rvFiltros [data-estado]').forEach(x=>x.classList.remove('sel'));
+      b.classList.add('sel'); rvEstadoActual = b.dataset.estado;
+      renderReservasLista(rvEstadoActual, document.getElementById('rvBuscar').value.trim());
+    };
+  });
+  const buscar = document.getElementById('rvBuscar');
+  makeClearable(buscar);
+  let t;
+  buscar.addEventListener('input', ()=>{ clearTimeout(t); t = setTimeout(()=> renderReservasLista(rvEstadoActual, buscar.value.trim()), 300); });
+  renderReservasLista(rvEstadoActual, '');
+  renderReservasVencidas();
+}
+
+async function renderReservasLista(estado, q){
+  const box = document.getElementById('rvLista');
+  if(!box) return;
+  box.innerHTML = '<div class="note">Cargando…</div>';
+  let filtro;
+  if(estado==='cerradas') filtro = 'estado=in.(cancelada,vencida)';
+  else filtro = `estado=eq.${estado}`;
+  const busq = q && q.length>=2 ? `&cliente_nombre=ilike.*${encodeURIComponent(q)}*` : '';
+  try{
+    const r = await sbAuthed(`/rest/v1/v_reservas?${filtro}${busq}&order=created_at.desc&limit=80&select=*`);
+    const rows = r.ok ? await r.json() : [];
+    if(!rows.length){ box.innerHTML = '<div class="note">Sin reservas.</div>'; return; }
+    const hoy = isoLocal(new Date());
+    box.innerHTML = rows.map((rv,i)=>{
+      const vencida = rv.estado==='activa' && rv.vencimiento && rv.vencimiento < hoy;
+      return `<div class="lista" data-i="${i}" style="margin-top:4px; cursor:pointer; text-align:left; ${vencida?'border:1px solid var(--warn)':''}">
+        <div class="l">${esc(rv.cliente_nombre||'(sin nombre)')} ${vencida?'· <span style="color:var(--warn)">vencida</span>':''}</div>
+        <div class="v" style="font-size:13px">${money(rv.total)} · saldo ${money(rv.saldo_pendiente)} · ${esc(stLocalNombre(rv.local))}${rv.vencimiento?` · vence ${esc(rv.vencimiento)}`:''}</div>
+      </div>`;
+    }).join('');
+    [...box.querySelectorAll('[data-i]')].forEach(el=> el.onclick=()=> mostrarDetalleReserva(rows[Number(el.dataset.i)].id));
+  }catch(e){ box.innerHTML = '<div class="note">Error al cargar.</div>'; }
+}
+
+async function renderReservasVencidas(){
+  const box = document.getElementById('rvVencidas');
+  if(!box) return;
+  box.innerHTML = `<div class="label">⏰ Por vencer / vencidas</div><div class="note">Cargando…</div>`;
+  const hoy = isoLocal(new Date());
+  try{
+    const r = await sbAuthed(`/rest/v1/v_reservas?estado=eq.activa&vencimiento=lte.${hoy}&order=vencimiento.asc&limit=30&select=id,cliente_nombre,cliente_telefono,total,saldo_pendiente,vencimiento`);
+    const rows = r.ok ? await r.json() : [];
+    box.innerHTML = `<div class="label">⏰ Vencidas (${rows.length})</div>` + (rows.length
+      ? rows.map((rv,i)=>`<div class="lista" data-i="${i}" style="margin-top:4px; cursor:pointer; text-align:left; border:1px solid var(--warn)">
+          <div class="l">${esc(rv.cliente_nombre||'(sin nombre)')}</div>
+          <div class="v" style="font-size:13px">saldo ${money(rv.saldo_pendiente)} · venció ${esc(rv.vencimiento)}</div>
+        </div>`).join('')
+      : '<div class="note">Ninguna vencida. 👍</div>');
+    [...box.querySelectorAll('[data-i]')].forEach(el=> el.onclick=()=> mostrarDetalleReserva(rows[Number(el.dataset.i)].id));
+  }catch(e){ box.innerHTML = `<div class="label">⏰ Vencidas</div><div class="note">Error al cargar.</div>`; }
+}
+
+async function mostrarDetalleReserva(reservaId){
+  const box = document.getElementById('rvDetalle');
+  if(!box) return;
+  box.innerHTML = '<div class="note">Cargando…</div>';
+  try{
+    const [rr, rp] = await Promise.all([
+      sbAuthed(`/rest/v1/v_reservas?id=eq.${reservaId}&select=*`),
+      sbAuthed(`/rest/v1/reserva_pagos?reserva_id=eq.${reservaId}&order=created_at.asc&select=*`),
+    ]);
+    const rv = (rr.ok ? await rr.json() : [])[0];
+    const pagos = rp.ok ? await rp.json() : [];
+    if(!rv){ box.innerHTML = '<div class="note">No se encontró la reserva.</div>'; return; }
+    const items = Array.isArray(rv.items) ? rv.items : [];
+    const estadoTxt = { activa:'Activa', retirada:'Retirada', cancelada:'Cancelada', vencida:'Vencida' }[rv.estado] || rv.estado;
+    const wa = rv.cliente_telefono ? `https://wa.me/${String(rv.cliente_telefono).replace(/\D/g,'')}?text=${encodeURIComponent(`Hola ${rv.cliente_nombre||''}! Te aviso por tu reserva en ${stLocalNombre(rv.local)}. Saldo pendiente: ${money(rv.saldo_pendiente)}.`)}` : null;
+    box.innerHTML = `
+      <div class="lista" style="text-align:left; padding:12px 14px">
+        <div class="l" style="margin:0">${esc(rv.cliente_nombre||'(sin nombre)')} · <span style="text-transform:none">${estadoTxt}</span></div>
+        <div class="note">${esc(stLocalNombre(rv.local))} · tomada ${esc(rv.fecha)}${rv.vencimiento?` · vence ${esc(rv.vencimiento)}`:''}${rv.facturada?` · 🧾 Fact. ${esc(rv.factura_tipo||'')} ${rv.factura_numero||''}`:''}</div>
+      </div>
+      <div class="label">Productos apartados</div>
+      ${items.map(it=>`<div class="lista" style="text-align:left; margin-top:3px"><div class="l" style="margin:0">${esc(it.nombre||it.codigo||'—')}</div><div class="v" style="font-size:13px">${esc([it.talle,it.color].filter(Boolean).join(' · '))} · ${money(it.precio||0)}</div></div>`).join('')}
+      <div class="lista" style="margin-top:8px; text-align:left; padding:10px 14px; display:flex; justify-content:space-between; gap:10px">
+        <div><div class="l" style="margin:0">Total</div><div class="v" style="margin:0">${money(rv.total)}</div></div>
+        <div><div class="l" style="margin:0">Pagado</div><div class="v" style="margin:0">${money(rv.pagado)}</div></div>
+        <div><div class="l" style="margin:0">Saldo</div><div class="v" style="margin:0; color:${rv.saldo_pendiente>0?'var(--warn)':'var(--accent)'}">${money(rv.saldo_pendiente)}</div></div>
+      </div>
+      <div class="label">Movimientos</div>
+      ${pagos.length ? pagos.map(p=>`<div class="lista" style="text-align:left; margin-top:3px"><div class="l" style="margin:0">${p.tipo==='reintegro'?'↩️ Reintegro':(p.tipo==='sena'?'Seña':'Abono')} · ${money(p.monto)}</div><div class="v" style="font-size:12px">${esc(RV_MEDIO_LABEL[p.medio]||p.medio)} · ${new Date(p.created_at).toLocaleDateString('es-AR')}</div></div>`).join('') : '<div class="note">Sin movimientos.</div>'}
+      ${rv.estado==='activa' ? `
+        <div id="rvAcciones" style="margin-top:10px; display:flex; flex-direction:column; gap:6px">
+          ${rv.saldo_pendiente>0 ? `<button class="fbtn" id="rvCobrarBtn">💵 Cobrar abono</button>` : ''}
+          <button class="addcart" id="rvRetirarBtn">✅ Retirar producto</button>
+          <button class="fbtn" id="rvCancelarBtn">↩️ Cancelar (reintegrar seña)</button>
+          ${wa ? `<a class="fbtn" href="${wa}" target="_blank" style="text-align:center; text-decoration:none">📲 Avisar por WhatsApp</a>` : ''}
+        </div>
+        <div id="rvAccionBox"></div>
+        <div class="note" id="rvDetErr"></div>` : ''}`;
+    if(rv.estado==='activa') wireAccionesReserva(rv);
+  }catch(e){ box.innerHTML = '<div class="note">Error al cargar el detalle.</div>'; }
+}
+
+function wireAccionesReserva(rv){
+  const accionBox = document.getElementById('rvAccionBox');
+  const err = document.getElementById('rvDetErr');
+  const aliasHtml = `<select id="rvAlias" class="search" style="margin-top:4px; display:none">
+      <option value="">¿A qué alias?</option><option value="juan01">juan01</option>
+      <option value="giustozzi.mp">giustozzi.mp</option><option value="flor.barberis.86">flor.barberis.86</option></select>`;
+  const medioHtml = id => `<select id="${id}" class="search" style="margin-top:4px">
+      <option value="contado">Efectivo</option><option value="transferencia">Transferencia</option>
+      <option value="tarjeta_debito">Tarjeta débito</option><option value="tarjeta_credito">Tarjeta crédito</option></select>`;
+  const cobrarBtn = document.getElementById('rvCobrarBtn');
+  if(cobrarBtn) cobrarBtn.onclick = ()=>{
+    accionBox.innerHTML = `<div class="lista" style="text-align:left; padding:12px 14px; margin-top:6px">
+      <div class="label" style="margin:0">Abono (máx ${money(rv.saldo_pendiente)})</div>
+      <div class="inp-igual-wrap"><input id="rvMonto" class="search" type="number" inputmode="decimal" value="0"><button class="inp-igual" type="button" id="rvMontoTotal" title="Usar el saldo">＝</button></div>
+      ${medioHtml('rvMedio')}${aliasHtml}
+      <button class="addcart" id="rvCobrarOk" style="margin-top:8px">Cobrar</button></div>`;
+    const medio = accionBox.querySelector('#rvMedio'), alias = accionBox.querySelector('#rvAlias');
+    medio.onchange = ()=>{ alias.style.display = medio.value==='transferencia' ? '' : 'none'; };
+    accionBox.querySelector('#rvMontoTotal').onclick = ()=>{ accionBox.querySelector('#rvMonto').value = rv.saldo_pendiente; };
+    accionBox.querySelector('#rvCobrarOk').onclick = async ()=>{
+      const monto = Number(accionBox.querySelector('#rvMonto').value)||0;
+      err.textContent='';
+      if(!(monto>0)){ err.textContent='El abono tiene que ser mayor a 0.'; return; }
+      if(monto>rv.saldo_pendiente){ err.textContent='El abono no puede superar el saldo.'; return; }
+      if(medio.value==='transferencia' && !alias.value){ err.textContent='Elegí a qué alias se transfirió.'; return; }
+      const btn = accionBox.querySelector('#rvCobrarOk'); btn.disabled=true; btn.textContent='Cobrando…';
+      const sesion = await obtenerCajaAbierta(rv.local);
+      if(!sesion){ btn.disabled=false; btn.textContent='Cobrar'; err.textContent=`⚠ No hay caja abierta en ${stLocalNombre(rv.local)}.`; return; }
+      try{
+        const r = await sbAuthed('/rest/v1/rpc/registrar_pago_reserva', { method:'POST', body: JSON.stringify({
+          p_reserva_id: rv.id, p_monto: monto, p_medio: medio.value, p_caja_sesion_id: sesion.id,
+          p_alias: medio.value==='transferencia' ? alias.value : null, p_nota: null }) });
+        const d = await r.json().catch(()=>null);
+        if(!r.ok) throw new Error((d && (d.message||d.hint)) || 'No se pudo cobrar.');
+        toast('✓ Abono cobrado.', 2500); mostrarDetalleReserva(rv.id); renderReservasLista(rvEstadoActual, '');
+      }catch(e){ btn.disabled=false; btn.textContent='Cobrar'; err.textContent = e.message; }
+    };
+  };
+  document.getElementById('rvRetirarBtn').onclick = ()=>{
+    accionBox.innerHTML = `<div class="lista" style="text-align:left; padding:12px 14px; margin-top:6px">
+      ${rv.saldo_pendiente>0 ? `<div class="label" style="margin:0">Cobrar saldo: ${money(rv.saldo_pendiente)}</div>${medioHtml('rvRetMedio')}${aliasHtml.replace('rvAlias','rvRetAlias')}` : `<div class="note">Saldo saldado — listo para retirar.</div>`}
+      <label class="note" style="display:flex; align-items:center; gap:6px; margin-top:8px; cursor:pointer"><input id="rvFacturar" type="checkbox" style="margin:0"> Facturar B (consumidor final)</label>
+      <button class="addcart" id="rvRetirarOk" style="margin-top:8px">Confirmar retiro</button></div>`;
+    const medio = accionBox.querySelector('#rvRetMedio'), alias = accionBox.querySelector('#rvRetAlias');
+    if(medio) medio.onchange = ()=>{ alias.style.display = medio.value==='transferencia' ? '' : 'none'; };
+    accionBox.querySelector('#rvRetirarOk').onclick = async ()=>{
+      err.textContent='';
+      const facturar = accionBox.querySelector('#rvFacturar').checked;
+      const btn = accionBox.querySelector('#rvRetirarOk'); btn.disabled=true; btn.textContent='Retirando…';
+      let sesionId = null;
+      if(rv.saldo_pendiente>0){
+        if(medio.value==='transferencia' && !alias.value){ btn.disabled=false; btn.textContent='Confirmar retiro'; err.textContent='Elegí a qué alias se transfirió.'; return; }
+        const sesion = await obtenerCajaAbierta(rv.local);
+        if(!sesion){ btn.disabled=false; btn.textContent='Confirmar retiro'; err.textContent=`⚠ No hay caja abierta en ${stLocalNombre(rv.local)} para cobrar el saldo.`; return; }
+        sesionId = sesion.id;
+      }
+      try{
+        const r = await sbAuthed('/rest/v1/rpc/retirar_reserva', { method:'POST', body: JSON.stringify({
+          p_reserva_id: rv.id, p_caja_sesion_id: sesionId,
+          p_pago_monto: rv.saldo_pendiente>0 ? rv.saldo_pendiente : null,
+          p_pago_medio: rv.saldo_pendiente>0 ? medio.value : null,
+          p_pago_alias: (rv.saldo_pendiente>0 && medio.value==='transferencia') ? alias.value : null }) });
+        const d = await r.json().catch(()=>null);
+        if(!r.ok) throw new Error((d && (d.message||d.hint)) || 'No se pudo retirar.');
+        if(facturar){
+          btn.textContent='Facturando…';
+          try{
+            const token = await sbToken();
+            const rf = await fetch(API_FACTURAR, { method:'POST',
+              headers:{ 'Content-Type':'application/json', Authorization:'Bearer '+token },
+              body: JSON.stringify({ local: rv.local, tipo:'B', montoTotal: rv.total, clienteCuit:'', fecha: isoLocal(new Date()), items: Array.isArray(rv.items)?rv.items:[] }) });
+            const df = await rf.json().catch(()=>({}));
+            if(!rf.ok) throw new Error(df.error || 'No se pudo facturar.');
+            await sbAuthed('/rest/v1/rpc/facturar_reserva', { method:'POST', body: JSON.stringify({
+              p_reserva_id: rv.id, p_tipo: df.tipo, p_pto_vta: df.puntoVenta, p_numero: df.numero, p_cae: df.cae }) });
+            toast('✓ Retirada y facturada.', 3000);
+          }catch(fe){ toast('Retirada, pero la factura falló: '+(fe.message||fe), 4500); }
+        } else { toast('✓ Producto retirado.', 2500); }
+        mostrarDetalleReserva(rv.id); renderReservasLista(rvEstadoActual, '');
+      }catch(e){ btn.disabled=false; btn.textContent='Confirmar retiro'; err.textContent = e.message; }
+    };
+  };
+  document.getElementById('rvCancelarBtn').onclick = async ()=>{
+    if(!confirm(`¿Cancelar la reserva de ${rv.cliente_nombre||'este cliente'}? Se reintegra lo pagado (${money(rv.pagado)}) y el stock vuelve a la venta.`)) return;
+    err.textContent='';
+    let sesionId = null;
+    const sesion = await obtenerCajaAbierta(rv.local);   // hace falta si hubo efectivo
+    if(sesion) sesionId = sesion.id;
+    try{
+      const r = await sbAuthed('/rest/v1/rpc/cancelar_reserva', { method:'POST', body: JSON.stringify({
+        p_reserva_id: rv.id, p_caja_sesion_id: sesionId, p_nota: null }) });
+      const d = await r.json().catch(()=>null);
+      if(!r.ok) throw new Error((d && (d.message||d.hint)) || 'No se pudo cancelar.');
+      toast('✓ Reserva cancelada, seña reintegrada y stock liberado.', 3500);
+      mostrarDetalleReserva(rv.id); renderReservasLista(rvEstadoActual, ''); renderReservasVencidas();
+    }catch(e){ err.textContent = e.message; }
+  };
 }
 
 // ===== 👤 Cuenta corriente de clientes: buscar, ver saldo/historial, cobrar =====
