@@ -2395,12 +2395,55 @@ function wireVentaCard(){
       renderClienteInfo(saldo>0 ? ` — ⚠ ya debe ${money(saldo)}` : ' — sin saldo pendiente');
     }catch(e){ renderClienteInfo(''); }
   }
+  // Alta rápida de cliente desde el POS, sin ir a la pantalla Clientes:
+  // mini-formulario inline (nombre/tel/DNI/CUIT); al crear, lo elige solo
+  // para esta venta. Se abre desde el botón "➕ Agregar cliente nuevo".
+  function abrirFormNuevoCliente(nombrePrefill){
+    const picker = card.querySelector('#stCvClientePicker');
+    picker.innerHTML = `
+      <div class="label" style="margin-top:6px">➕ Nuevo cliente</div>
+      <input id="ncNombre" class="search" placeholder="Nombre y apellido" value="${esc(nombrePrefill||'')}">
+      <input id="ncTel" class="search" placeholder="Teléfono (con código de área)" inputmode="tel" autocomplete="off" style="margin-top:4px">
+      <input id="ncDni" class="search" placeholder="DNI (opcional)" inputmode="numeric" autocomplete="off" style="margin-top:4px">
+      <input id="ncCuit" class="search" placeholder="CUIT (opcional, para Factura A)" inputmode="numeric" autocomplete="off" style="margin-top:4px">
+      <button class="addcart" id="ncOk" style="margin-top:8px">💾 Crear y elegir</button>
+      <button class="fbtn" type="button" id="ncCancel" style="width:100%; margin-top:6px">Cancelar</button>
+      <div class="note" id="ncErr"></div>`;
+    const nombreEl = picker.querySelector('#ncNombre');
+    nombreEl.focus(); nombreEl.setSelectionRange(nombreEl.value.length, nombreEl.value.length);
+    picker.querySelector('#ncCancel').onclick = ()=>{ picker.innerHTML=''; card.querySelector('#stCvClienteBuscar').click(); };
+    picker.querySelector('#ncOk').onclick = async ()=>{
+      const err = picker.querySelector('#ncErr');
+      const ok = picker.querySelector('#ncOk');
+      const nombre = picker.querySelector('#ncNombre').value.trim();
+      if(!nombre){ err.textContent='Falta el nombre.'; return; }
+      const body = {
+        nombre,
+        telefono: picker.querySelector('#ncTel').value.trim()||null,
+        dni: picker.querySelector('#ncDni').value.replace(/\D/g,'')||null,
+        cuit: picker.querySelector('#ncCuit').value.replace(/\D/g,'')||null,
+      };
+      err.textContent=''; ok.disabled=true; ok.textContent='Creando…';
+      try{
+        const rc = await sbAuthed('/rest/v1/clientes', { method:'POST',
+          headers:{ Prefer:'return=representation' }, body: JSON.stringify(body) });
+        const nuevos = await rc.json().catch(()=>null);
+        if(!rc.ok || !nuevos || !nuevos[0]) throw new Error((nuevos && (nuevos.message||nuevos.hint)) || 'No se pudo crear el cliente.');
+        elegirClienteCredito(nuevos[0]);   // lo selecciona y cierra el picker
+      }catch(e){ ok.disabled=false; ok.textContent='💾 Crear y elegir'; err.textContent = e.message||e; }
+    };
+  }
   card.querySelector('#stCvClienteBuscar').onclick = ()=>{
     const picker = card.querySelector('#stCvClientePicker');
     if(picker.innerHTML){ picker.innerHTML=''; return; }
     picker.innerHTML = `
       <input id="stCvClienteBuscarInput" class="search" placeholder="Buscar por nombre, teléfono o DNI…" style="margin-top:6px">
+      <button class="fbtn" type="button" id="stCvClienteNuevo" style="width:100%; margin-top:6px">➕ Agregar cliente nuevo</button>
       <div id="stCvClienteResultados"></div>`;
+    picker.querySelector('#stCvClienteNuevo').onclick = ()=>{
+      const q = picker.querySelector('#stCvClienteBuscarInput').value.trim();
+      abrirFormNuevoCliente(q);
+    };
     const buscarInput = picker.querySelector('#stCvClienteBuscarInput');
     const resultadosEl = picker.querySelector('#stCvClienteResultados');
     makeClearable(buscarInput);
@@ -2423,17 +2466,7 @@ function wireVentaCard(){
              </div>`).join('') : '<div class="note">Sin resultados.</div>')
             + `<button class="fbtn" type="button" id="stCvClienteCrear" style="width:100%; margin-top:6px">➕ Crear cliente "${esc(q)}"</button>`;
           [...resultadosEl.querySelectorAll('[data-i]')].forEach(el=> el.onclick=()=> elegirClienteCredito(rows[Number(el.dataset.i)]));
-          resultadosEl.querySelector('#stCvClienteCrear').onclick = async ()=>{
-            const tel = prompt(`Teléfono de ${q} (opcional, con código de área):`) || null;
-            try{
-              const rc = await sbAuthed('/rest/v1/clientes', { method:'POST',
-                headers:{ Prefer:'return=representation' },
-                body: JSON.stringify({ nombre: q, telefono: tel }) });
-              const nuevos = await rc.json().catch(()=>null);
-              if(!rc.ok || !nuevos || !nuevos[0]) throw new Error('No se pudo crear el cliente.');
-              elegirClienteCredito(nuevos[0]);
-            }catch(e){ resultadosEl.innerHTML = `<div class="note">No se pudo crear: ${esc(e.message||e)}</div>`; }
-          };
+          resultadosEl.querySelector('#stCvClienteCrear').onclick = ()=> abrirFormNuevoCliente(q);
         }catch(e){ resultadosEl.innerHTML = 'Error al buscar.'; }
       }, 300);
     });
