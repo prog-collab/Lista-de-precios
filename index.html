@@ -1679,15 +1679,13 @@ const ALIAS_MERCADOPAGO = ['giustozzi.mp', 'flor.barberis.86'];
 const MP_VENTANA_MIN = 30;   // media hora hacia atrás
 const MP_REINTENTOS = 6;     // 6 x 20s ≈ 2 minutos esperando la acreditación
 const mpHora = f => new Date(f).toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'});
-// Provisorio, mientras probamos: de qué campo de Mercado Pago salió el nombre
-// del ordenante. Los que empiezan con "bank_info" son el dato bancario real
-// del que transfirió; el resto puede ser el titular de la cuenta receptora
-// (o sea, nosotros), así que va marcado como dudoso. Sacar cuando confirmemos
-// con transferencias reales qué manda MP.
-function mpOrigenHtml(origen){
-  if(!origen) return '';
-  const confiable = origen.startsWith('bank_info');
-  return `<br><span style="font-size:11px; opacity:.7">dato: ${esc(origen)}${confiable?'':' — puede no ser el emisor'}</span>`;
+// Provisorio, mientras probamos: de qué campo de Mercado Pago salió el dato
+// del ordenante. El server marca como confiable el bank_info (transferencia
+// bancaria) y el payer de las transferencias entre cuentas de MP; cualquier
+// otra cosa puede no ser el emisor. Sacar cuando esté todo confirmado.
+function mpOrigenHtml(d){
+  if(!d.pagadorOrigen) return '';
+  return `<br><span style="font-size:11px; opacity:.7">dato: ${esc(d.pagadorOrigen)}${d.pagadorConfiable?'':' — puede no ser el emisor'}</span>`;
 }
 // Botón + renglón de resultado, para insertar debajo del select de alias.
 const mpVerificarHtml = (idBtn, idInfo) =>
@@ -1724,7 +1722,7 @@ function montarVerificadorMP({ aliasEl, montoFn, btnEl, infoEl, activo }){
         cancelar();
         infoEl.innerHTML = `✓ Acreditada ${money(d.monto)} · ${mpHora(d.fecha)}`
           + (d.pagador ? ` · de <b>${esc(d.pagador)}</b>` : ' · (sin datos del ordenante)')
-          + mpOrigenHtml(d.pagadorOrigen)
+          + mpOrigenHtml(d)
           + (d.ambiguo ? `<br><span style="color:var(--warn)">⚠ Hay ${d.coincidencias} acreditaciones por el mismo importe en la última media hora — revisá cuál es.</span>` : '');
         infoEl.style.color = 'var(--accent2)';
       } else {
