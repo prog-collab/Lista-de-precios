@@ -2714,6 +2714,7 @@ function wireVentaCard(){
       stVentaTotal = 0; stVentaItems = []; stVentaDevolucionId = null;
       renderCarrito();
       renderResumenDia();
+      renderCajaStatus();   // el "efectivo en caja ahora" tiene que incluir esta venta
       // El formulario queda listo para la próxima venta de una — no hace
       // falta tocar nada para seguir vendiendo aunque el ticket/Recibo X
       // de arriba siga a la vista (compartiéndose o imprimiéndose).
@@ -3442,12 +3443,38 @@ async function renderVendedorSel(){
   }
 }
 
+// Tipos de movimiento de caja. gasto/retiro/adelanto SALEN de la caja,
+// ingreso/cambio ENTRAN. Las categorías son fijas para poder mirar después
+// "cuánto se fue en proveedores este mes" sin depender de cómo lo escribió
+// cada uno; la descripción queda para el detalle ("2 cafés", "flete Cruz").
+const CAJA_MOV_META = {
+  gasto:    { emoji:'🧾', label:'Gasto',    signo:-1, cats:['Proveedor','Delivery / flete','Limpieza','Kiosco / café','Servicios (luz, gas, internet)','Mantenimiento','Papelería / bolsas','Impuestos / tasas','Varios'] },
+  retiro:   { emoji:'💸', label:'Retiro',   signo:-1, cats:['Retiro dueño','Depósito en banco','Traslado al otro local','Varios'] },
+  adelanto: { emoji:'👤', label:'Adelanto', signo:-1, cats:['Adelanto de sueldo','Préstamo a empleado','Varios'] },
+  ingreso:  { emoji:'💰', label:'Ingreso',  signo:1,  cats:['Aporte del dueño','Cobro de seña','Viene del otro local','Varios'] },
+  cambio:   { emoji:'🪙', label:'Cambio',   signo:1,  cats:[] },
+};
+
 async function obtenerCajaAbierta(local){
   try{
     const r = await sbAuthed(`/rest/v1/caja_sesiones?local=eq.${local}&estado=eq.abierta&select=*&limit=1`);
     const rows = r.ok ? await r.json() : [];
     return rows[0] || null;
   }catch(e){ return null; }
+}
+
+// Desglose en vivo del efectivo que debería haber en la caja ahora mismo
+// (fondo + ventas y cobranzas en efectivo + ingresos − devoluciones,
+// gastos, retiros y adelantos). Lo calcula la base, no el navegador.
+async function obtenerEstadoCaja(sesionId){
+  const r = await sbAuthed('/rest/v1/rpc/estado_caja_sesion', { method:'POST', body: JSON.stringify({ p_sesion_id: sesionId }) });
+  if(!r.ok){ const d = await r.json().catch(()=>({})); throw new Error(d.message || 'No se pudo calcular el estado de la caja.'); }
+  return await r.json();
+}
+
+async function obtenerMovimientosCaja(sesionId){
+  const r = await sbAuthed(`/rest/v1/caja_movimientos?sesion_id=eq.${sesionId}&order=created_at.desc&select=*`);
+  return r.ok ? await r.json() : [];
 }
 
 async function renderCajaStatus(){
@@ -3462,12 +3489,33 @@ async function renderCajaStatus(){
     box.innerHTML = `🔒 No hay caja abierta en <b>${esc(stLocalNombre(localSel))}</b> — hay que abrirla para poder vender.
       <button class="fbtn" id="stCajaAbrirBtn" style="margin-left:6px">Abrir caja</button>`;
     document.getElementById('stCajaAbrirBtn').onclick = ()=> armarAbrirCaja(formBox, localSel);
-  } else {
-    const hora = sesion.abierta_at ? new Date(sesion.abierta_at).toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'}) : '';
-    box.innerHTML = `🔓 Caja abierta en <b>${esc(stLocalNombre(localSel))}</b> desde las ${hora} · fondo inicial ${money(sesion.fondo_inicial)}
-      <button class="fbtn" id="stCajaCerrarBtn" style="margin-left:6px">Cerrar caja</button>`;
-    document.getElementById('stCajaCerrarBtn').onclick = ()=> armarCerrarCaja(formBox, sesion, localSel);
+    return;
   }
+  const hora = sesion.abierta_at ? new Date(sesion.abierta_at).toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'}) : '';
+  let est = null;
+  try{ est = await obtenerEstadoCaja(sesion.id); }catch(e){}
+  const salidas = est ? Number(est.gastos)+Number(est.retiros)+Number(est.adelantos) : 0;
+  box.innerHTML = `
+    <div class="lista" style="text-align:left; padding:10px 12px">
+      <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px; flex-wrap:wrap">
+        <div>
+          <div class="l" style="margin:0">🔓 Caja abierta en ${esc(stLocalNombre(localSel))} desde las ${hora}</div>
+          <div class="note" style="margin:2px 0 0">Fondo ${money(sesion.fondo_inicial)}${est?` · efectivo vendido ${money(est.ventas_contado)}${Number(est.pagos_cc_efectivo)>0?` · cobranzas ${money(est.pagos_cc_efectivo)}`:''}${Number(est.reservas_efectivo)!==0?` · reservas ${money(est.reservas_efectivo)}`:''}${salidas>0?` · salidas ${money(salidas)}`:''}`:''}</div>
+        </div>
+        <div style="text-align:right">
+          <div class="note" style="margin:0">Efectivo en caja ahora</div>
+          <div class="v" style="font-size:20px; margin:0">${est ? money(est.efectivo_esperado) : '—'}</div>
+        </div>
+      </div>
+      <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:8px">
+        ${Object.entries(CAJA_MOV_META).map(([t,m])=>`<button class="fbtn" data-mov="${t}">${m.emoji} ${m.label}</button>`).join('')}
+        <button class="fbtn" id="stCajaVerMovs">📋 Movimientos</button>
+        <button class="fbtn" id="stCajaCerrarBtn">🔒 Cerrar caja</button>
+      </div>
+    </div>`;
+  [...box.querySelectorAll('[data-mov]')].forEach(b=> b.onclick = ()=> armarMovimientoCaja(formBox, localSel, b.dataset.mov));
+  document.getElementById('stCajaVerMovs').onclick = ()=> armarListaMovimientos(formBox, sesion, localSel);
+  document.getElementById('stCajaCerrarBtn').onclick = ()=> armarCerrarCaja(formBox, sesion, localSel);
 }
 
 function armarAbrirCaja(formBox, localSel){
@@ -3497,58 +3545,167 @@ function armarAbrirCaja(formBox, localSel){
   };
 }
 
-async function armarCerrarCaja(formBox, sesion, localSel){
-  formBox.innerHTML = `<div class="note" style="margin-top:8px">Calculando ventas de esta caja…</div>`;
-  const r = await sbAuthed(`/rest/v1/ventas?caja_sesion_id=eq.${sesion.id}&select=*`);
-  const ventas = r.ok ? await r.json() : [];
-  const totales = ventas.reduce((acc,v)=>({
-    contado: acc.contado + Number(v.pago_contado||0),
-    total: acc.total + Number(v.total||0),
-    cant: acc.cant + 1,
-  }), {contado:0, total:0, cant:0});
+// Carga de un movimiento en el momento en que pasa (un gasto, un retiro,
+// un adelanto) — antes esto se cargaba todo junto y de memoria recién al
+// cerrar la caja.
+function armarMovimientoCaja(formBox, localSel, tipo){
+  const meta = CAJA_MOV_META[tipo];
   formBox.innerHTML = `
     <div class="lista" style="margin-top:8px; text-align:left">
-      <div class="label" style="margin:0">Cerrar caja de ${esc(stLocalNombre(localSel))}</div>
-      <div class="note" style="margin-top:4px">Ventas de esta caja: ${totales.cant} · efectivo vendido ${money(totales.contado)} · total ${money(totales.total)}</div>
+      <div class="label" style="margin:0">${meta.emoji} Cargar ${meta.label.toLowerCase()} en ${esc(stLocalNombre(localSel))}</div>
+      <div class="note" style="margin-top:4px">${meta.signo<0 ? 'Sale plata de la caja.' : 'Entra plata a la caja.'}</div>
       <div class="grid" style="margin-top:6px">
-        <div><div class="note" style="margin:0 0 4px">Fondo inicial</div><input id="ccFondo" class="search" type="number" value="${sesion.fondo_inicial}" readonly></div>
-        <div><div class="note" style="margin:0 0 4px">Cambio</div><input id="ccCambio" class="search" type="number" value="0"></div>
-        <div><div class="note" style="margin:0 0 4px">Gastos</div><input id="ccGastos" class="search" type="number" value="0"></div>
-        <div><div class="note" style="margin:0 0 4px">Retiros</div><input id="ccRetiros" class="search" type="number" value="0"></div>
-        <div><div class="note" style="margin:0 0 4px">Adelantos</div><input id="ccAdelantos" class="search" type="number" value="0"></div>
-        <div><div class="note" style="margin:0 0 4px">Arqueo (efectivo contado a mano)</div><input id="ccArqueo" class="search" type="number" value="0"></div>
+        <div>
+          <div class="note" style="margin:0 0 4px">Monto</div>
+          <input id="mvMonto" class="search" type="number" inputmode="decimal" placeholder="0">
+        </div>
+        ${meta.cats.length ? `<div>
+          <div class="note" style="margin:0 0 4px">Categoría</div>
+          <select id="mvCat" class="search">${meta.cats.map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join('')}</select>
+        </div>` : ''}
       </div>
-      <input id="ccObs" class="search" placeholder="Observaciones (detalle de gastos, retiros, adelantos)" style="margin-top:6px">
+      <input id="mvDesc" class="search" placeholder="Detalle (opcional): a quién, por qué…" style="margin-top:6px">
+      <button class="addcart" id="mvOk" style="margin-top:8px">${meta.emoji} Guardar ${meta.label.toLowerCase()}</button>
+      <button class="fbtn" id="mvCancel" style="width:100%; margin-top:6px">Cancelar</button>
+      <div class="note" id="mvErr"></div>
+    </div>`;
+  const monto = document.getElementById('mvMonto');
+  monto.focus();
+  document.getElementById('mvCancel').onclick = ()=>{ formBox.innerHTML=''; };
+  const guardar = async ()=>{
+    const err = document.getElementById('mvErr');
+    const ok = document.getElementById('mvOk');
+    const catEl = document.getElementById('mvCat');
+    const val = Number(monto.value)||0;
+    err.textContent='';
+    if(val<=0){ err.textContent='Poné un monto mayor a 0.'; return; }
+    ok.disabled=true; ok.textContent='Guardando…';
+    try{
+      const r = await sbAuthed('/rest/v1/rpc/registrar_movimiento_caja', { method:'POST', body: JSON.stringify({
+        p_local: localSel, p_tipo: tipo, p_monto: val,
+        p_categoria: catEl ? catEl.value : null,
+        p_descripcion: document.getElementById('mvDesc').value || null,
+      }) });
+      if(!r.ok){ const d = await r.json().catch(()=>({})); throw new Error(d.message || 'No se pudo guardar el movimiento.'); }
+      formBox.innerHTML = '';
+      renderCajaStatus();
+    }catch(e){
+      ok.disabled=false; ok.textContent=`${meta.emoji} Guardar ${meta.label.toLowerCase()}`;
+      err.textContent = e.message||e;
+    }
+  };
+  document.getElementById('mvOk').onclick = guardar;
+  monto.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); guardar(); } });
+}
+
+function movLineaHtml(m){
+  const meta = CAJA_MOV_META[m.tipo] || { emoji:'•', label:m.tipo, signo:-1 };
+  const hora = m.created_at ? new Date(m.created_at).toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'}) : '';
+  const signo = meta.signo<0 ? '−' : '+';
+  return `
+    <div class="lista" style="margin-top:6px; text-align:left; ${m.anulado?'opacity:.5':''}">
+      <div style="display:flex; justify-content:space-between; gap:8px; align-items:flex-start">
+        <div>
+          <div class="l" style="margin:0">${hora} · ${meta.emoji} ${esc(meta.label)}${m.categoria?` · ${esc(m.categoria)}`:''}${m.anulado?' · ANULADO':''}</div>
+          <div class="note" style="margin:2px 0 0">${esc(m.descripcion||'')}${m.usuario?` · ${esc(mostrarUsuario(m.usuario))}`:''}</div>
+        </div>
+        <div style="text-align:right; flex:none">
+          <div class="v" style="margin:0; font-size:16px; ${m.anulado?'text-decoration:line-through':''}">${signo} ${money(m.monto)}</div>
+          ${m.anulado ? '' : `<button class="fbtn" data-anular="${m.id}" style="margin-top:4px">Anular</button>`}
+        </div>
+      </div>
+    </div>`;
+}
+
+async function armarListaMovimientos(formBox, sesion, localSel){
+  formBox.innerHTML = `<div class="note" style="margin-top:8px">Cargando movimientos…</div>`;
+  const movs = await obtenerMovimientosCaja(sesion.id);
+  formBox.innerHTML = `
+    <div class="lista" style="margin-top:8px; text-align:left">
+      <div class="label" style="margin:0">📋 Movimientos de esta caja (${movs.filter(m=>!m.anulado).length})</div>
+      <div id="mvLista">${movs.length ? movs.map(movLineaHtml).join('') : '<div class="note">Todavía no se cargó ningún gasto ni retiro en esta caja.</div>'}</div>
+      <button class="fbtn" id="mvListaCerrar" style="width:100%; margin-top:8px">Cerrar</button>
+      <div class="note" id="mvListaErr"></div>
+    </div>`;
+  document.getElementById('mvListaCerrar').onclick = ()=>{ formBox.innerHTML=''; };
+  [...formBox.querySelectorAll('[data-anular]')].forEach(b=> b.onclick = async ()=>{
+    if(!confirm('¿Anular este movimiento? Queda registrado como anulado, no se borra.')) return;
+    const err = document.getElementById('mvListaErr');
+    err.textContent=''; b.disabled=true; b.textContent='Anulando…';
+    try{
+      const motivo = prompt('Motivo (opcional):') || null;
+      const r = await sbAuthed('/rest/v1/rpc/anular_movimiento_caja', { method:'POST', body: JSON.stringify({
+        p_id: b.dataset.anular, p_motivo: motivo,
+      }) });
+      if(!r.ok){ const d = await r.json().catch(()=>({})); throw new Error(d.message || 'No se pudo anular.'); }
+      // renderCajaStatus limpia formBox, así que la lista se rearma después.
+      await renderCajaStatus();
+      await armarListaMovimientos(document.getElementById('stCajaFormBox'), sesion, localSel);
+    }catch(e){
+      b.disabled=false; b.textContent='Anular';
+      err.textContent = e.message||e;
+    }
+  });
+}
+
+// Cierre: ya no se cargan acá los gastos/retiros/adelantos (van durante el
+// día). Solo se cuenta el efectivo y se compara contra lo esperado.
+async function armarCerrarCaja(formBox, sesion, localSel){
+  formBox.innerHTML = `<div class="note" style="margin-top:8px">Calculando el cierre…</div>`;
+  let est;
+  try{ est = await obtenerEstadoCaja(sesion.id); }
+  catch(e){ formBox.innerHTML = `<div class="note" style="margin-top:8px">${esc(e.message||String(e))}</div>`; return; }
+  const fila = (l, v, neg) => `<div style="display:flex; justify-content:space-between; gap:8px"><span>${l}</span><span style="${neg?'color:var(--warn)':''}">${neg?'−':'+'} ${money(v)}</span></div>`;
+  formBox.innerHTML = `
+    <div class="lista" style="margin-top:8px; text-align:left">
+      <div class="label" style="margin:0">🔒 Cerrar caja de ${esc(stLocalNombre(localSel))}</div>
+      <div class="note" style="margin-top:6px">
+        ${fila('Fondo inicial', est.fondo_inicial)}
+        ${fila(`Ventas en efectivo (${est.ventas_cant} ventas)`, est.ventas_contado)}
+        ${Number(est.pagos_cc_efectivo)>0 ? fila('Cobranzas de cuenta corriente', est.pagos_cc_efectivo) : ''}
+        ${Number(est.reservas_efectivo)>0 ? fila('Señas y abonos de reservas', est.reservas_efectivo) : ''}
+        ${Number(est.reservas_efectivo)<0 ? fila('Reintegros de reservas', Math.abs(est.reservas_efectivo), true) : ''}
+        ${Number(est.ingresos)>0 ? fila('Ingresos', est.ingresos) : ''}
+        ${Number(est.cambio)>0 ? fila('Cambio agregado', est.cambio) : ''}
+        ${Number(est.devoluciones_efectivo)>0 ? fila('Devoluciones en efectivo', est.devoluciones_efectivo, true) : ''}
+        ${Number(est.gastos)>0 ? fila('Gastos', est.gastos, true) : ''}
+        ${Number(est.retiros)>0 ? fila('Retiros', est.retiros, true) : ''}
+        ${Number(est.adelantos)>0 ? fila('Adelantos', est.adelantos, true) : ''}
+      </div>
+      <div style="display:flex; justify-content:space-between; gap:8px; margin-top:6px; font-weight:600">
+        <span>Efectivo esperado</span><span>${money(est.efectivo_esperado)}</span>
+      </div>
+      <div class="note" style="margin-top:8px">Arqueo — contá el efectivo de la caja y poné cuánto hay</div>
+      <input id="ccArqueo" class="search" type="number" inputmode="decimal" value="" placeholder="0" style="margin-top:4px">
+      <input id="ccObs" class="search" placeholder="Observaciones (opcional)" style="margin-top:6px">
       <div class="note" id="ccEsperadoInfo" style="margin-top:6px"></div>
       <button class="addcart" id="stCajaCerrarOk" style="margin-top:8px">🔒 Confirmar cierre</button>
       <button class="fbtn" id="stCajaCancelar" style="width:100%; margin-top:6px">Cancelar</button>
       <div class="note" id="stCajaErr"></div>
     </div>`;
+  const arqueoEl = document.getElementById('ccArqueo');
   const recalc = ()=>{
-    const cambio = Number(document.getElementById('ccCambio').value)||0;
-    const gastos = Number(document.getElementById('ccGastos').value)||0;
-    const retiros = Number(document.getElementById('ccRetiros').value)||0;
-    const adelantos = Number(document.getElementById('ccAdelantos').value)||0;
-    const arqueo = Number(document.getElementById('ccArqueo').value)||0;
-    const esperado = Number(sesion.fondo_inicial) + totales.contado + cambio - gastos - retiros - adelantos;
-    const diferencia = arqueo - esperado;
-    document.getElementById('ccEsperadoInfo').innerHTML = `Efectivo esperado: <b>${money(esperado)}</b> · Diferencia: <b style="${diferencia!==0?'color:var(--warn)':''}">${money(diferencia)}</b>`;
+    const arqueo = Number(arqueoEl.value)||0;
+    const diferencia = arqueo - Number(est.efectivo_esperado);
+    document.getElementById('ccEsperadoInfo').innerHTML = arqueoEl.value === ''
+      ? 'Ingresá el arqueo para ver la diferencia.'
+      : `Diferencia: <b style="${diferencia!==0?'color:var(--warn)':''}">${money(diferencia)}</b>${diferencia<0?' (falta plata)':(diferencia>0?' (sobra plata)':' ✓ cuadra')}`;
   };
-  ['ccCambio','ccGastos','ccRetiros','ccAdelantos','ccArqueo'].forEach(id=> document.getElementById(id).addEventListener('input', recalc));
+  arqueoEl.addEventListener('input', recalc);
   recalc();
   document.getElementById('stCajaCancelar').onclick = ()=>{ formBox.innerHTML=''; };
   document.getElementById('stCajaCerrarOk').onclick = async ()=>{
     const err = document.getElementById('stCajaErr');
     const ok = document.getElementById('stCajaCerrarOk');
-    err.textContent=''; ok.disabled=true; ok.textContent='Cerrando…';
+    err.textContent='';
+    if(arqueoEl.value === ''){ err.textContent='Poné cuánto efectivo contaste antes de cerrar.'; return; }
+    const dif = (Number(arqueoEl.value)||0) - Number(est.efectivo_esperado);
+    if(dif !== 0 && !confirm(`La caja no cuadra: ${dif<0?'faltan':'sobran'} ${money(Math.abs(dif))}.\n¿Cerrar igual? Queda registrada la diferencia.`)) return;
+    ok.disabled=true; ok.textContent='Cerrando…';
     try{
       const rc = await sbAuthed('/rest/v1/rpc/cerrar_caja_sesion', { method:'POST', body: JSON.stringify({
         p_sesion_id: sesion.id,
-        p_gastos: Number(document.getElementById('ccGastos').value)||0,
-        p_retiros: Number(document.getElementById('ccRetiros').value)||0,
-        p_adelantos: Number(document.getElementById('ccAdelantos').value)||0,
-        p_cambio: Number(document.getElementById('ccCambio').value)||0,
-        p_arqueo: Number(document.getElementById('ccArqueo').value)||0,
+        p_arqueo: Number(arqueoEl.value)||0,
         p_observaciones: document.getElementById('ccObs').value||null,
       }) });
       if(!rc.ok){ const d = await rc.json().catch(()=>({})); throw new Error(d.message || 'No se pudo cerrar la caja.'); }
