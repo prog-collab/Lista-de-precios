@@ -1672,6 +1672,80 @@ const API_VERIFICAR_TRANSFERENCIA = 'https://www.camerino.com.ar/api/verificar-t
 // transferencia bancaria común, no se puede verificar automáticamente.
 const ALIAS_MERCADOPAGO = ['giustozzi.mp', 'flor.barberis.86'];
 
+// --- Verificación automática de transferencias a cuentas de Mercado Pago ---
+// Busca, entre las acreditaciones de la última media hora de esa cuenta, una
+// aprobada por el mismo importe, y muestra la hora y quién la mandó. Se usa
+// en el POS, en el cobro de cuenta corriente y en reservas (abono y retiro).
+const MP_VENTANA_MIN = 30;   // media hora hacia atrás
+const MP_REINTENTOS = 6;     // 6 x 20s ≈ 2 minutos esperando la acreditación
+const mpHora = f => new Date(f).toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'});
+// Botón + renglón de resultado, para insertar debajo del select de alias.
+const mpVerificarHtml = (idBtn, idInfo) =>
+  `<button class="fbtn" type="button" id="${idBtn}" style="width:100%; margin-top:4px; display:none">🔍 Verificar transferencia</button>`
+  + `<div class="note" id="${idInfo}" style="margin-top:2px"></div>`;
+
+// aliasEl: <select> de alias · montoFn: () => importe a buscar ·
+// activo: () => si corresponde verificar (ej. el medio elegido es transferencia).
+function montarVerificadorMP({ aliasEl, montoFn, btnEl, infoEl, activo }){
+  let debounce = null, poll = null, intentos = 0, enCurso = false;
+  const vivo = ()=> document.body.contains(infoEl);
+  const cancelar = ()=>{ clearTimeout(debounce); clearTimeout(poll); debounce = poll = null; intentos = 0; };
+  const corresponde = ()=> (!activo || activo()) && ALIAS_MERCADOPAGO.includes(aliasEl.value);
+
+  async function verificar(auto){
+    if(enCurso || !vivo()) return;
+    const alias = aliasEl.value, monto = montoFn();
+    if(!corresponde()) return;
+    if(!(monto>0)){
+      if(!auto){ infoEl.textContent = 'Cargá el monto de la transferencia primero.'; infoEl.style.color='var(--warn)'; }
+      return;
+    }
+    enCurso = true;
+    btnEl.disabled = true; btnEl.textContent = 'Verificando…';
+    try{
+      const token = await sbToken();
+      const r = await fetch(API_VERIFICAR_TRANSFERENCIA, { method:'POST',
+        headers:{ 'Content-Type':'application/json', Authorization:'Bearer '+token },
+        body: JSON.stringify({ alias, monto, minutos: MP_VENTANA_MIN }) });
+      const d = await r.json().catch(()=>({}));
+      if(!r.ok) throw new Error(d.error || 'No se pudo verificar.');
+      if(!vivo()){ enCurso = false; return; }
+      if(d.encontrado){
+        cancelar();
+        infoEl.innerHTML = `✓ Acreditada ${money(d.monto)} · ${mpHora(d.fecha)}`
+          + (d.pagador ? ` · de <b>${esc(d.pagador)}</b>` : ' · (sin datos del ordenante)')
+          + (d.ambiguo ? `<br><span style="color:var(--warn)">⚠ Hay ${d.coincidencias} acreditaciones por el mismo importe en la última media hora — revisá cuál es.</span>` : '');
+        infoEl.style.color = 'var(--accent2)';
+      } else {
+        const otras = (d.recientes||[]).slice(0,5);
+        infoEl.innerHTML = `⏳ No aparece ninguna acreditación de ${money(monto)} en la última media hora.`
+          + (otras.length ? `<br>Sí entraron: ${otras.map(p=>`${money(p.monto)} (${mpHora(p.fecha)}${p.pagador?' · '+esc(p.pagador):''})`).join(' · ')}` : '');
+        infoEl.style.color = 'var(--warn)';
+        if(intentos < MP_REINTENTOS){ intentos++; poll = setTimeout(()=> verificar(true), 20000); }
+      }
+    }catch(e){
+      cancelar();
+      if(vivo()){ infoEl.textContent = 'No se pudo verificar: '+(e.message||e); infoEl.style.color = 'var(--warn)'; }
+    }
+    enCurso = false;
+    if(vivo()){ btnEl.disabled = false; btnEl.textContent = '🔍 Verificar de nuevo'; }
+  }
+
+  // Cada cambio de alias/monto/medio reinicia la búsqueda automática.
+  const programar = ()=>{
+    cancelar();
+    const esMP = corresponde();
+    btnEl.style.display = esMP ? '' : 'none';
+    if(!esMP){ infoEl.textContent = ''; return; }
+    if(!(montoFn()>0)) return;
+    infoEl.textContent = 'Buscando la acreditación en Mercado Pago…';
+    infoEl.style.color = '';
+    debounce = setTimeout(()=> verificar(true), 800);
+  };
+  btnEl.onclick = ()=>{ cancelar(); verificar(false); };
+  return { programar, cancelar, verificar };
+}
+
 // Tarjeta para emitir la factura electrónica (AFIP/ARCA) por el total acumulado.
 const isoLocal = d => { const p=n=>String(n).padStart(2,'0'); return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`; };
 
@@ -2295,83 +2369,18 @@ function wireVentaCard(){
   card.querySelector('#stCvTCredCuotas').addEventListener('change', recalcSaldoVenta);
   card.querySelector('#stCvCFinCuotas').addEventListener('change', recalcSaldoVenta);
   card.querySelector('#stCvTransfDescuento').addEventListener('change', recalcSaldoVenta);
-  // Verificar transferencia contra la cuenta real de Mercado Pago (solo
-  // para los alias que son de verdad cuentas de MP con token configurado
-  // en el servidor) — busca, entre las acreditaciones de la última media
-  // hora, una aprobada por el mismo monto, en vez de comparar el saldo
-  // total de la cuenta (poco confiable con varias ventas a la vez).
-  // Se dispara sola: al elegir un alias de MP con monto cargado, y cada vez
-  // que cambia el monto. Si todavía no aparece, reintenta unas veces sin
-  // que el vendedor tenga que hacer nada.
+  // Verificación automática de la transferencia contra la cuenta real de
+  // Mercado Pago (solo para los alias que son de verdad cuentas de MP).
   const transfAliasSel = card.querySelector('#stCvTransfAlias');
-  const transfVerificarBtn = card.querySelector('#stCvTransfVerificar');
-  const transfVerificarInfo = card.querySelector('#stCvTransfVerificarInfo');
-  const TRANSF_VENTANA_MIN = 30;      // media hora hacia atrás
-  const TRANSF_REINTENTOS = 6;        // 6 x 20s ≈ 2 minutos de espera
-  let transfDebounce = null, transfPoll = null, transfIntentos = 0, transfEnCurso = false;
-  const transfCancelarChequeo = ()=>{
-    clearTimeout(transfDebounce); clearTimeout(transfPoll);
-    transfDebounce = transfPoll = null; transfIntentos = 0;
-  };
-  const transfHora = f => new Date(f).toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'});
-  async function transfVerificar(auto){
-    if(transfEnCurso || !document.body.contains(card)) return;
-    const alias = transfAliasSel.value;
-    const monto = montoFinalTransferencia();
-    if(!ALIAS_MERCADOPAGO.includes(alias)) return;
-    if(!(monto>0)){
-      if(!auto){ transfVerificarInfo.textContent = 'Cargá el monto de la transferencia primero.'; transfVerificarInfo.style.color='var(--warn)'; }
-      return;
-    }
-    transfEnCurso = true;
-    transfVerificarBtn.disabled = true; transfVerificarBtn.textContent = 'Verificando…';
-    if(!auto){ transfVerificarInfo.textContent = ''; transfVerificarInfo.style.color = ''; }
-    try{
-      const token = await sbToken();
-      const r = await fetch(API_VERIFICAR_TRANSFERENCIA, { method:'POST',
-        headers:{ 'Content-Type':'application/json', Authorization:'Bearer '+token },
-        body: JSON.stringify({ alias, monto, minutos: TRANSF_VENTANA_MIN }) });
-      const d = await r.json().catch(()=>({}));
-      if(!r.ok) throw new Error(d.error || 'No se pudo verificar.');
-      if(d.encontrado){
-        transfCancelarChequeo();
-        transfVerificarInfo.innerHTML = `✓ Acreditada ${money(d.monto)} · ${transfHora(d.fecha)}`
-          + (d.pagador ? ` · de <b>${esc(d.pagador)}</b>` : ' · (sin datos del ordenante)')
-          + (d.ambiguo ? `<br><span style="color:var(--warn)">⚠ Hay ${d.coincidencias} acreditaciones por el mismo importe en la última media hora — revisá cuál es.</span>` : '');
-        transfVerificarInfo.style.color = 'var(--accent2)';
-      } else {
-        const otras = (d.recientes||[]).slice(0,5);
-        transfVerificarInfo.innerHTML = `⏳ No aparece ninguna acreditación de ${money(monto)} en la última media hora.`
-          + (otras.length ? `<br>Sí entraron: ${otras.map(p=>`${money(p.monto)} (${transfHora(p.fecha)}${p.pagador?' · '+esc(p.pagador):''})`).join(' · ')}` : '');
-        transfVerificarInfo.style.color = 'var(--warn)';
-        if(transfIntentos < TRANSF_REINTENTOS){
-          transfIntentos++;
-          transfPoll = setTimeout(()=> transfVerificar(true), 20000);
-        }
-      }
-    }catch(e){
-      transfCancelarChequeo();
-      transfVerificarInfo.textContent = 'No se pudo verificar: '+(e.message||e);
-      transfVerificarInfo.style.color = 'var(--warn)';
-    }
-    transfEnCurso = false;
-    transfVerificarBtn.disabled = false; transfVerificarBtn.textContent = '🔍 Verificar de nuevo';
-  }
-  // Cada cambio de alias/monto/descuento reinicia la búsqueda automática.
-  const transfProgramarChequeo = ()=>{
-    transfCancelarChequeo();
-    const esMP = ALIAS_MERCADOPAGO.includes(transfAliasSel.value);
-    transfVerificarBtn.style.display = esMP ? '' : 'none';
-    if(!esMP){ transfVerificarInfo.textContent = ''; return; }
-    if(!(montoFinalTransferencia()>0)) return;
-    transfVerificarInfo.textContent = 'Buscando la acreditación en Mercado Pago…';
-    transfVerificarInfo.style.color = '';
-    transfDebounce = setTimeout(()=> transfVerificar(true), 800);
-  };
-  transfAliasSel.addEventListener('change', transfProgramarChequeo);
-  card.querySelector('#stCvTransf').addEventListener('input', transfProgramarChequeo);
-  card.querySelector('#stCvTransfDescuento').addEventListener('change', transfProgramarChequeo);
-  transfVerificarBtn.onclick = ()=>{ transfCancelarChequeo(); transfVerificar(false); };
+  const transfVerif = montarVerificadorMP({
+    aliasEl: transfAliasSel,
+    montoFn: montoFinalTransferencia,
+    btnEl: card.querySelector('#stCvTransfVerificar'),
+    infoEl: card.querySelector('#stCvTransfVerificarInfo'),
+  });
+  transfAliasSel.addEventListener('change', transfVerif.programar);
+  card.querySelector('#stCvTransf').addEventListener('input', transfVerif.programar);
+  card.querySelector('#stCvTransfDescuento').addEventListener('change', transfVerif.programar);
   [...card.querySelectorAll('#stCvContadoDescuento [data-desc]')].forEach(b=> b.onclick=()=>{
     [...card.querySelectorAll('#stCvContadoDescuento [data-desc]')].forEach(x=>x.classList.remove('sel'));
     b.classList.add('sel');
@@ -2402,7 +2411,7 @@ function wireVentaCard(){
     card.querySelector('#stCvNota').value = '';
     card.querySelector('#stCvTransfVerificar').style.display = 'none';
     card.querySelector('#stCvTransfVerificarInfo').textContent = '';
-    transfVentanaDesde = null;
+    transfVerif.cancelar();
     clienteCreditoId = null; clienteCreditoNombre = null; clienteTelefono = null;
     card.querySelector('#stCvClienteInfo').innerHTML = '';
     card.querySelector('#stCvClientePicker').innerHTML = '';
@@ -4093,10 +4102,23 @@ function wireAccionesReserva(rv){
       <div class="label" style="margin:0">Abono (máx ${money(rv.saldo_pendiente)})</div>
       <div class="inp-igual-wrap"><input id="rvMonto" class="search" type="number" inputmode="decimal" value="0"><button class="inp-igual" type="button" id="rvMontoTotal" title="Usar el saldo">＝</button></div>
       ${medioHtml('rvMedio')}${aliasHtml}
+      ${mpVerificarHtml('rvVerif','rvVerifInfo')}
       <button class="addcart" id="rvCobrarOk" style="margin-top:8px">Cobrar</button></div>`;
     const medio = accionBox.querySelector('#rvMedio'), alias = accionBox.querySelector('#rvAlias');
-    medio.onchange = ()=>{ alias.style.display = medio.value==='transferencia' ? '' : 'none'; };
-    accionBox.querySelector('#rvMontoTotal').onclick = ()=>{ accionBox.querySelector('#rvMonto').value = rv.saldo_pendiente; };
+    const montoEl = accionBox.querySelector('#rvMonto');
+    // Si el abono es por transferencia a una cuenta de MP, buscamos sola la
+    // acreditación de ese importe en la última media hora.
+    const rvVerif = montarVerificadorMP({
+      aliasEl: alias,
+      montoFn: ()=> Number(montoEl.value)||0,
+      btnEl: accionBox.querySelector('#rvVerif'),
+      infoEl: accionBox.querySelector('#rvVerifInfo'),
+      activo: ()=> medio.value==='transferencia',
+    });
+    medio.onchange = ()=>{ alias.style.display = medio.value==='transferencia' ? '' : 'none'; rvVerif.programar(); };
+    alias.onchange = rvVerif.programar;
+    montoEl.addEventListener('input', rvVerif.programar);
+    accionBox.querySelector('#rvMontoTotal').onclick = ()=>{ montoEl.value = rv.saldo_pendiente; rvVerif.programar(); };
     accionBox.querySelector('#rvCobrarOk').onclick = async ()=>{
       const monto = Number(accionBox.querySelector('#rvMonto').value)||0;
       err.textContent='';
@@ -4118,11 +4140,20 @@ function wireAccionesReserva(rv){
   };
   document.getElementById('rvRetirarBtn').onclick = ()=>{
     accionBox.innerHTML = `<div class="lista" style="text-align:left; padding:12px 14px; margin-top:6px">
-      ${rv.saldo_pendiente>0 ? `<div class="label" style="margin:0">Cobrar saldo: ${money(rv.saldo_pendiente)}</div>${medioHtml('rvRetMedio')}${aliasHtml.replace('rvAlias','rvRetAlias')}` : `<div class="note">Saldo saldado — listo para retirar.</div>`}
+      ${rv.saldo_pendiente>0 ? `<div class="label" style="margin:0">Cobrar saldo: ${money(rv.saldo_pendiente)}</div>${medioHtml('rvRetMedio')}${aliasHtml.replace('rvAlias','rvRetAlias')}${mpVerificarHtml('rvRetVerif','rvRetVerifInfo')}` : `<div class="note">Saldo saldado — listo para retirar.</div>`}
       <label class="note" style="display:flex; align-items:center; gap:6px; margin-top:8px; cursor:pointer"><input id="rvFacturar" type="checkbox" style="margin:0"> Facturar B (consumidor final)</label>
       <button class="addcart" id="rvRetirarOk" style="margin-top:8px">Confirmar retiro</button></div>`;
     const medio = accionBox.querySelector('#rvRetMedio'), alias = accionBox.querySelector('#rvRetAlias');
-    if(medio) medio.onchange = ()=>{ alias.style.display = medio.value==='transferencia' ? '' : 'none'; };
+    // El saldo a cobrar es fijo, así que alcanza con mirar el medio y el alias.
+    const rvRetVerif = medio ? montarVerificadorMP({
+      aliasEl: alias,
+      montoFn: ()=> rv.saldo_pendiente,
+      btnEl: accionBox.querySelector('#rvRetVerif'),
+      infoEl: accionBox.querySelector('#rvRetVerifInfo'),
+      activo: ()=> medio.value==='transferencia',
+    }) : null;
+    if(medio) medio.onchange = ()=>{ alias.style.display = medio.value==='transferencia' ? '' : 'none'; rvRetVerif.programar(); };
+    if(alias) alias.onchange = rvRetVerif.programar;
     accionBox.querySelector('#rvRetirarOk').onclick = async ()=>{
       err.textContent='';
       const facturar = accionBox.querySelector('#rvFacturar').checked;
@@ -4508,7 +4539,8 @@ async function mostrarDetalleCliente(clienteParcial){
             <option value="juan01">juan01</option>
             <option value="giustozzi.mp">giustozzi.mp</option>
             <option value="flor.barberis.86">flor.barberis.86</option>
-          </select></div>
+          </select>
+          ${mpVerificarHtml('ccPgTransfVerificar','ccPgTransfVerificarInfo')}</div>
         <div><div class="note" style="margin:0 0 4px">Tarjeta de débito</div>
           <div style="display:flex; gap:4px">
             <input id="ccPgTDeb" class="search" type="number" inputmode="decimal" value="0" style="flex:1">
@@ -4586,10 +4618,26 @@ async function mostrarDetalleCliente(clienteParcial){
     CC_CAMPOS_PAGO.forEach(id=>{ const el=document.getElementById(id); if(el) el.addEventListener('input', ccRecalcInfo); });
     const ccCuotasEl = document.getElementById('ccPgTCredCuotas');
     if(ccCuotasEl) ccCuotasEl.addEventListener('change', ccRecalcInfo);
+    // Si el pago de la cuenta corriente entra por transferencia a una cuenta
+    // de MP, buscamos sola la acreditación en la última media hora.
+    const ccTransfEl = document.getElementById('ccPgTransf');
+    const ccAliasEl = document.getElementById('ccPgTransfAlias');
+    let ccVerif = null;
+    if(ccTransfEl && ccAliasEl){
+      ccVerif = montarVerificadorMP({
+        aliasEl: ccAliasEl,
+        montoFn: ()=> Number(ccTransfEl.value)||0,
+        btnEl: document.getElementById('ccPgTransfVerificar'),
+        infoEl: document.getElementById('ccPgTransfVerificarInfo'),
+      });
+      ccAliasEl.addEventListener('change', ccVerif.programar);
+      ccTransfEl.addEventListener('input', ccVerif.programar);
+    }
     [...document.querySelectorAll('[data-cc-usar-total]')].forEach(b=> b.onclick=()=>{
       const campo = b.dataset.ccUsarTotal;
       CC_CAMPOS_PAGO.forEach(id=>{ const el=document.getElementById(id); if(el) el.value = id===campo ? saldo : 0; });
       ccRecalcInfo();
+      if(ccVerif) ccVerif.programar();
     });
     const pagoOk = document.getElementById('ccPagoOk');
     if(pagoOk) pagoOk.onclick = async ()=>{
