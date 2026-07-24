@@ -1778,7 +1778,19 @@ function montarVerificadorMP({ aliasEl, montoFn, btnEl, infoEl, activo }){
       transferencia_pagador_cuit: ultimo.cuit,
     };
   };
-  return { programar, cancelar, verificar, columnasVenta };
+  // Lo mismo, con los nombres de parámetro que esperan las RPC de cuenta
+  // corriente y de reservas.
+  const paramsRpc = (montoCobrado)=>{
+    const c = columnasVenta(montoCobrado);
+    if(!c.transferencia_pago_id) return {};
+    return {
+      p_transferencia_pago_id: c.transferencia_pago_id,
+      p_transferencia_pagador: c.transferencia_pagador,
+      p_transferencia_pagador_cuit: c.transferencia_pagador_cuit,
+      p_transferencia_verificada_at: c.transferencia_verificada_at,
+    };
+  };
+  return { programar, cancelar, verificar, columnasVenta, paramsRpc };
 }
 
 // Tarjeta para emitir la factura electrónica (AFIP/ARCA) por el total acumulado.
@@ -4028,7 +4040,7 @@ async function mostrarDetalleReserva(reservaId){
         <div><div class="l" style="margin:0">Saldo</div><div class="v" style="margin:0; color:${rv.saldo_pendiente>0?'var(--warn)':'var(--accent)'}">${money(rv.saldo_pendiente)}</div></div>
       </div>
       <div class="label">Movimientos</div>
-      ${pagos.length ? pagos.map(p=>`<div class="lista" style="text-align:left; margin-top:3px"><div class="l" style="margin:0">${p.tipo==='reintegro'?'↩️ Reintegro':(p.tipo==='sena'?'Seña':'Abono')} · ${money(p.monto)}</div><div class="v" style="font-size:12px">${esc(RV_MEDIO_LABEL[p.medio]||p.medio)} · ${new Date(p.created_at).toLocaleDateString('es-AR')}</div></div>`).join('') : '<div class="note">Sin movimientos.</div>'}
+      ${pagos.length ? pagos.map(p=>`<div class="lista" style="text-align:left; margin-top:3px"><div class="l" style="margin:0">${p.tipo==='reintegro'?'↩️ Reintegro':(p.tipo==='sena'?'Seña':'Abono')} · ${money(p.monto)}</div><div class="v" style="font-size:12px">${esc(RV_MEDIO_LABEL[p.medio]||p.medio)} · ${new Date(p.created_at).toLocaleDateString('es-AR')}${transferenciaVerificadaTexto(p)}</div></div>`).join('') : '<div class="note">Sin movimientos.</div>'}
       ${rv.estado==='activa' ? `
         <div id="rvAcciones" style="margin-top:10px; display:flex; flex-direction:column; gap:6px">
           ${rv.saldo_pendiente>0 ? `<button class="fbtn" id="rvCobrarBtn">💵 Cobrar abono</button>` : ''}
@@ -4168,7 +4180,8 @@ function wireAccionesReserva(rv){
       try{
         const r = await sbAuthed('/rest/v1/rpc/registrar_pago_reserva', { method:'POST', body: JSON.stringify({
           p_reserva_id: rv.id, p_monto: monto, p_medio: medio.value, p_caja_sesion_id: sesion.id,
-          p_alias: medio.value==='transferencia' ? alias.value : null, p_nota: null }) });
+          p_alias: medio.value==='transferencia' ? alias.value : null, p_nota: null,
+          ...(medio.value==='transferencia' ? rvVerif.paramsRpc(monto) : {}) }) });
         const d = await r.json().catch(()=>null);
         if(!r.ok) throw new Error((d && (d.message||d.hint)) || 'No se pudo cobrar.');
         toast('✓ Abono cobrado.', 2500); mostrarDetalleReserva(rv.id); renderReservasLista(rvEstadoActual, '');
@@ -4207,7 +4220,8 @@ function wireAccionesReserva(rv){
           p_reserva_id: rv.id, p_caja_sesion_id: sesionId,
           p_pago_monto: rv.saldo_pendiente>0 ? rv.saldo_pendiente : null,
           p_pago_medio: rv.saldo_pendiente>0 ? medio.value : null,
-          p_pago_alias: (rv.saldo_pendiente>0 && medio.value==='transferencia') ? alias.value : null }) });
+          p_pago_alias: (rv.saldo_pendiente>0 && medio.value==='transferencia') ? alias.value : null,
+          ...((rv.saldo_pendiente>0 && medio.value==='transferencia') ? rvRetVerif.paramsRpc(rv.saldo_pendiente) : {}) }) });
         const d = await r.json().catch(()=>null);
         if(!r.ok) throw new Error((d && (d.message||d.hint)) || 'No se pudo retirar.');
         if(facturar){
@@ -4615,7 +4629,7 @@ async function mostrarDetalleCliente(clienteParcial){
           </div>
           ${m.tipo==='pago' && (m.pago_contado||m.pago_transferencia||m.pago_tarjeta_debito||m.pago_tarjeta_credito) ? `<div class="note" style="margin-top:2px">${[
               m.pago_contado>0 && `Efectivo ${money(m.pago_contado)}`,
-              m.pago_transferencia>0 && `Transf.${m.transferencia_alias?` (${esc(m.transferencia_alias)})`:''} ${money(m.pago_transferencia)}`,
+              m.pago_transferencia>0 && `Transf.${m.transferencia_alias?` (${esc(m.transferencia_alias)})`:''} ${money(m.pago_transferencia)}${transferenciaVerificadaTexto(m)}`,
               m.pago_tarjeta_debito>0 && `Débito ${money(m.pago_tarjeta_debito)}`,
               m.pago_tarjeta_credito>0 && `Crédito ${money(m.pago_tarjeta_credito)}${m.tarjeta_credito_cuotas>1?` (${m.tarjeta_credito_cuotas} cuotas)`:''}`,
             ].filter(Boolean).join(' · ')}</div>` : ''}
@@ -4698,6 +4712,8 @@ async function mostrarDetalleCliente(clienteParcial){
           p_pago_tarjeta_debito: pagoTDeb, p_pago_tarjeta_credito: pagoTCred,
           p_tarjeta_credito_cuotas: cuotasTCred>1?cuotasTCred:null, p_tarjeta_credito_recargo_pct: recargoPct||null,
           p_nota: nota,
+          // Respaldo de la acreditación verificada en MP (si se verificó).
+          ...(ccVerif ? ccVerif.paramsRpc(pagoTransf) : {}),
         }) });
         if(!r.ok){ const d = await r.json().catch(()=>({})); throw new Error(d.message || 'No se pudo registrar el pago.'); }
         mostrarDetalleCliente(cliente);
