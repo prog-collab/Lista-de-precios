@@ -1545,7 +1545,11 @@ let stVendedorSel = null; // vendedor (persona) elegido para las ventas de este 
 let stVentaDevolucionId=null;   // si esta venta viene de cobrar la diferencia de un cambio, id de la devolución que la originó
 let stSeccion='carga';   // 'carga' (cargar stock, descuenta al toque) o 'venta' (carrito, descuenta al Guardar venta)
 let stCoolCode='', stCoolUntil=0;
-let MAPS = {color:{}, talle:{}};   // código de barras → nombre (compartido, tabla barcode_maps)
+// código de barras → nombre (compartido, tabla barcode_maps). 'articulo' son
+// los prefijos de 5 dígitos que asignamos nosotros al imprimir una etiqueta
+// (ver "Etiquetas con código de barras"); ahí el "nombre" es el código del
+// artículo en el catálogo.
+let MAPS = {color:{}, talle:{}, articulo:{}};
 
 // Los vendedores entran con un usuario corto (sin @), no con su email real.
 // Si no trae "@" le agregamos un dominio interno fijo, que Supabase Auth usa
@@ -1643,7 +1647,7 @@ async function cargarMaps(){
     const r = await fetch(`${SB_URL}/rest/v1/barcode_maps?select=tipo,codigo,nombre`,
       { headers:{ apikey:SB_KEY, Authorization:'Bearer '+SB_KEY }, cache:'no-store' });
     const rows = r.ok ? await r.json() : [];
-    MAPS = {color:{}, talle:{}};
+    MAPS = {color:{}, talle:{}, articulo:{}};
     rows.forEach(m=>{ if(MAPS[m.tipo]) MAPS[m.tipo][m.codigo]=m.nombre; });
   }catch(e){}
 }
@@ -1730,7 +1734,7 @@ const ALIAS_MERCADOPAGO = ['giustozzi.mp', 'flor.barberis.86'];
 // --- Verificación automática de transferencias a cuentas de Mercado Pago ---
 // Busca, entre las acreditaciones de la última media hora de esa cuenta, una
 // aprobada por el mismo importe, y muestra la hora y quién la mandó. Se usa
-// en el POS, en el cobro de cuenta corriente y en reservas (abono y retiro).
+// en el POS, en el cobro de cuenta corriente y en reservas (entrega y retiro).
 const MP_VENTANA_MIN = 30;   // media hora hacia atrás
 const MP_REINTENTOS = 6;     // 6 x 20s ≈ 2 minutos esperando la acreditación
 const mpHora = f => new Date(f).toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'});
@@ -1927,6 +1931,213 @@ function transparenciaFiscalTicket(monto){
   return `
     <div class="l" style="display:flex; justify-content:space-between"><span>Importe sin impuestos nacionales (Ley 27.743)</span><span>${money(sinImpuestos)}</span></div>`;
 }
+// ===== 🏷️ Etiquetas con código de barras para colgar de la prenda =====
+// Al cargar stock se puede imprimir una etiqueta por prenda (rotuladora de
+// 50x25mm por defecto, el tamaño se puede cambiar y queda guardado): nombre
+// del artículo, talle, color y el código de barras que después lee el POS.
+//
+// El código impreso son 11 dígitos con el MISMO formato que traen los códigos
+// de los proveedores — artículo(5) + color(3) + talle(3) — así lo entiende
+// tal cual el flujo de escaneo que ya existía, sin tocarlo:
+//   · artículo: un prefijo propio de 5 dígitos (rango 90000-99999, salteando
+//     los prefijos que ya usa algún código real) mapeado al código del
+//     artículo en barcode_maps (tipo 'articulo'). Hace falta porque muchos
+//     códigos del catálogo no son numéricos ("STYLE 61", los slugs de la web,
+//     etc.) y no entrarían en un código de barras de dígitos.
+//   · color y talle: los 3 dígitos que ya estaban mapeados en barcode_maps
+//     (tipos 'color' y 'talle'); si no había ninguno se asigna uno del rango
+//     900-999 derivado del nombre — mismo nombre da siempre el mismo número
+//     en todos los celulares, así dos personas etiquetando a la vez no se
+//     pisan aunque no se vean los mapeos del otro todavía.
+//
+// El símbolo se dibuja acá adentro (Code 128, la tabla estándar de 107
+// patrones de 11 módulos) en vez de bajar una librería de un CDN, para poder
+// seguir imprimiendo etiquetas aunque el local se quede sin internet.
+const C128_BARRAS = [
+  11011001100,11001101100,11001100110,10010011000,10010001100,10001001100,10011001000,10011000100,
+  10001100100,11001001000,11001000100,11000100100,10110011100,10011011100,10011001110,10111001100,
+  10011101100,10011100110,11001110010,11001011100,11001001110,11011100100,11001110100,11101101110,
+  11101001100,11100101100,11100100110,11101100100,11100110100,11100110010,11011011000,11011000110,
+  11000110110,10100011000,10001011000,10001000110,10110001000,10001101000,10001100010,11010001000,
+  11000101000,11000100010,10110111000,10110001110,10001101110,10111011000,10111000110,10001110110,
+  11101110110,11010001110,11000101110,11011101000,11011100010,11011101110,11101011000,11101000110,
+  11100010110,11101101000,11101100010,11100011010,11101111010,11001000010,11110001010,10100110000,
+  10100001100,10010110000,10010000110,10000101100,10000100110,10110010000,10110000100,10011010000,
+  10011000010,10000110100,10000110010,11000010010,11001010000,11110111010,11000010100,10001111010,
+  10100111100,10010111100,10010011110,10111100100,10011110100,10011110010,11110100100,11110010100,
+  11110010010,11011011110,11011110110,11110110110,10101111000,10100011110,10001011110,10111101000,
+  10111100010,11110101000,11110100010,10111011110,10111101110,11101011110,11110101110,11010000100,
+  11010010000,11010011100,1100011101011,
+].map(String);
+// Code 128 con cambio automático de subconjunto: arranca en C (dos dígitos por
+// símbolo, la mitad de barras) y si al final sobra un dígito suelto pasa a A.
+// Para nuestros 11 dígitos son 112 módulos: en una etiqueta de 50mm entran a
+// ~0,35mm por módulo, bien por encima del mínimo que lee cualquier lector.
+function code128(txt){
+  txt = String(txt);
+  const vals = [];
+  let i = 0;
+  if(/^\d\d/.test(txt)){
+    vals.push(105);                                   // Start C
+    while(txt.length-i>=2 && /^\d\d$/.test(txt.slice(i,i+2))){ vals.push(Number(txt.slice(i,i+2))); i+=2; }
+    if(i<txt.length) vals.push(101);                  // Code A (para lo que sobre)
+  } else {
+    vals.push(104);                                   // Start B
+  }
+  for(; i<txt.length; i++) vals.push(txt.charCodeAt(i)-32);
+  let suma = vals[0];
+  for(let k=1;k<vals.length;k++) suma += vals[k]*k;
+  vals.push(suma%103);                                // dígito verificador
+  vals.push(106);                                     // Stop
+  return vals.map(v=>C128_BARRAS[v]).join('');
+}
+// Dibuja el símbolo como SVG. El viewBox va en módulos y el ancho es 100%,
+// así el navegador lo estira al ancho real de la etiqueta al imprimir.
+function barrasSvg(texto, alturaMm){
+  const bits = code128(texto);
+  const quiet = 10;                                   // zona muda obligatoria a cada lado
+  const total = bits.length + quiet*2;
+  let rects = '';
+  for(let i=0; i<bits.length; ){
+    if(bits[i]==='1'){
+      let j=i; while(j<bits.length && bits[j]==='1') j++;
+      rects += `<rect x="${quiet+i}" y="0" width="${j-i}" height="100" fill="#000"/>`;
+      i = j;
+    } else i++;
+  }
+  return `<svg viewBox="0 0 ${total} 100" preserveAspectRatio="none" width="100%" height="${alturaMm}mm"
+    shape-rendering="crispEdges" xmlns="http://www.w3.org/2000/svg"
+    ><rect x="0" y="0" width="${total}" height="100" fill="#fff"/>${rects}</svg>`;
+}
+
+// Número derivado del nombre: el mismo texto da siempre el mismo número, así
+// dos celulares que etiquetan al mismo tiempo eligen el mismo código.
+function hashNombre(s, rango){
+  let h = 0;
+  s = norm(s||'');
+  for(let i=0;i<s.length;i++) h = (h*31 + s.charCodeAt(i)) % rango;
+  return h;
+}
+// Prefijos de 5 dígitos que ya usa algún código real del catálogo — los
+// nuestros tienen que esquivarlos para no robarle el escaneo a un artículo
+// que ya viene con código de barras del proveedor.
+function prefijos5DelCatalogo(){
+  const s = new Set();
+  CATALOG.forEach(a=>{ const c = String(a.codigo||''); if(/^\d{5}/.test(c)) s.add(c.slice(0,5)); });
+  return s;
+}
+// Devuelve (asignando y guardando la primera vez) el código de barras de N
+// dígitos para un nombre dentro de un tipo de barcode_maps.
+function codigoBarraDe(tipo, nombre, base, rango, largo, ocupados){
+  const mapa = MAPS[tipo] || (MAPS[tipo] = {});
+  const ya = Object.keys(mapa).find(c => c.length===largo && mapa[c]===nombre);
+  if(ya) return ya;
+  const h = hashNombre(nombre, rango);
+  for(let i=0;i<rango;i++){
+    const cod = String(base + ((h+i) % rango)).padStart(largo,'0');
+    if(mapa[cod]) continue;
+    if(ocupados && ocupados.has(cod)) continue;
+    guardarMap(tipo, cod, nombre);
+    return cod;
+  }
+  return null;
+}
+// Los 11 dígitos que van impresos en la etiqueta de una prenda concreta.
+function digitosEtiqueta(p, talle, color){
+  const art = codigoBarraDe('articulo', p.codigo, 90000, 10000, 5, prefijos5DelCatalogo());
+  const col = codigoBarraDe('color', color||'Único', 900, 100, 3);
+  const tal = codigoBarraDe('talle', talle, 900, 100, 3);
+  if(!art || !col || !tal) return null;
+  return art+col+tal;
+}
+
+// Medidas de la etiqueta (rotuladora de 50x25mm por defecto) — quedan
+// guardadas en el celular/PC que imprime, cada uno puede tener otra máquina.
+const ETIQUETA_DEF = { ancho:50, alto:25, copias:1 };
+function etiquetaCfg(){ return Object.assign({}, ETIQUETA_DEF, getLS('etiqueta_cfg', {}) || {}); }
+function etiquetaHtml(p, talle, color, digits, cfg){
+  const altoBarras = Math.max(5, Number(cfg.alto) - 13);
+  const detalle = [talle, color].filter(Boolean).join(' · ');
+  return `<div class="etq">
+      <div class="etq-nom">${esc(p.nombre||p.codigo||'')}</div>
+      ${detalle ? `<div class="etq-det">${esc(detalle)}</div>` : ''}
+      <div class="etq-bar">${barrasSvg(digits, altoBarras)}</div>
+      <div class="etq-cod">${esc(digits)}</div>
+    </div>`;
+}
+// `paraImprimir` agrega el @page y el reset del body: eso solo va en la
+// ventana de impresión — inyectado en la app pisaría el fondo de la pantalla.
+function etiquetaCss(cfg, paraImprimir){
+  return `${paraImprimir ? `@page{ size: ${cfg.ancho}mm ${cfg.alto}mm; margin: 0 }
+    html, body{ margin:0; padding:0; background:#fff }` : ''}
+    .etq{ width:${cfg.ancho}mm; height:${cfg.alto}mm; box-sizing:border-box; padding:1.2mm 2mm;
+      display:flex; flex-direction:column; justify-content:space-between; align-items:stretch;
+      font-family:Arial,Helvetica,sans-serif; color:#000; background:#fff; overflow:hidden;
+      text-align:center; page-break-after:always; break-after:page }
+    .etq:last-child{ page-break-after:auto; break-after:auto }
+    .etq-nom{ font-size:2.7mm; font-weight:700; line-height:1.05; text-transform:uppercase;
+      overflow:hidden; max-height:5.8mm }
+    .etq-det{ font-size:2.5mm; font-weight:600; line-height:1.1 }
+    .etq-bar{ line-height:0 }
+    .etq-cod{ font-size:2.2mm; font-family:'Courier New',monospace; letter-spacing:.25mm }`;
+}
+function imprimirEtiquetas(p, talle, color, digits, cfg){
+  const copias = Math.max(1, Math.min(50, Number(cfg.copias)||1));
+  const html = new Array(copias).fill(etiquetaHtml(p, talle, color, digits, cfg)).join('');
+  const w = window.open('', '_blank');
+  if(!w){ toast('El navegador bloqueó la ventana de impresión — permitila y probá de nuevo.', 4000); return; }
+  w.document.write(`<html><head><title>Etiqueta ${esc(digits)}</title>
+    <style>${etiquetaCss(cfg, true)}</style></head><body>${html}</body></html>`);
+  w.document.close();
+  w.focus();
+  setTimeout(()=>{ try{ w.print(); }catch(e){} }, 120);
+}
+// Popup con la etiqueta ya dibujada a tamaño real, el tamaño de la etiqueta y
+// cuántas copias imprimir.
+function abrirEtiquetaPopup(p, talle, color){
+  const digits = digitosEtiqueta(p, talle, color);
+  if(!digits){ toast('No se pudo armar el código de barras de esta prenda.', 3500); return; }
+  const cfg = etiquetaCfg();
+  abrirPopup(`
+    <div style="display:flex; justify-content:space-between; align-items:center; gap:8px">
+      <div class="label" style="margin:0">🏷️ Etiqueta de la prenda</div>
+      <button class="fbtn" id="ppCerrar">✕</button>
+    </div>
+    <div class="note">${esc(p.nombre||'')} · ${esc(p.codigo||'')}${talle?` · talle ${esc(talle)}`:''}${color?` · ${esc(color)}`:''}</div>
+    <div style="display:flex; justify-content:center; margin-top:10px">
+      <div id="etqPreview" style="background:#fff; border-radius:4px; box-shadow:0 0 0 1px rgba(0,0,0,.25)"></div>
+    </div>
+    <div class="grid" style="margin-top:10px">
+      <div><div class="note" style="margin:0 0 4px">Ancho (mm)</div>
+        <input id="etqAncho" class="search" type="number" inputmode="numeric" min="25" max="120" value="${cfg.ancho}"></div>
+      <div><div class="note" style="margin:0 0 4px">Alto (mm)</div>
+        <input id="etqAlto" class="search" type="number" inputmode="numeric" min="15" max="120" value="${cfg.alto}"></div>
+      <div><div class="note" style="margin:0 0 4px">Cuántas imprimir</div>
+        <input id="etqCopias" class="search" type="number" inputmode="numeric" min="1" max="50" value="${cfg.copias}"></div>
+    </div>
+    <div class="note">Las medidas quedan guardadas en este equipo para la próxima etiqueta.</div>
+    <button class="addcart" id="etqPrint" style="margin-top:10px">🖨️ Imprimir etiqueta</button>`);
+  const pop = document.getElementById('sheetPopup');
+  const leerCfg = ()=>({
+    ancho: Math.max(25, Math.min(120, Number(pop.querySelector('#etqAncho').value)||ETIQUETA_DEF.ancho)),
+    alto:  Math.max(15, Math.min(120, Number(pop.querySelector('#etqAlto').value)||ETIQUETA_DEF.alto)),
+    copias: Math.max(1, Math.min(50, Number(pop.querySelector('#etqCopias').value)||1)),
+  });
+  const refrescar = ()=>{
+    const c = leerCfg();
+    pop.querySelector('#etqPreview').innerHTML =
+      `<style>${etiquetaCss(c)}</style>${etiquetaHtml(p, talle, color, digits, c)}`;
+  };
+  ['#etqAncho','#etqAlto','#etqCopias'].forEach(sel=> pop.querySelector(sel).addEventListener('input', refrescar));
+  refrescar();
+  pop.querySelector('#ppCerrar').onclick = cerrarPopup;
+  pop.querySelector('#etqPrint').onclick = ()=>{
+    const c = leerCfg();
+    setLS('etiqueta_cfg', c);
+    imprimirEtiquetas(p, talle, color, digits, c);
+  };
+}
+
 // ===== Impresión de tickets en la térmica (80mm) =====
 // La tickeadora está configurada con una hoja de 80 x 210 mm: si el ticket
 // mide más, Chrome lo parte en dos hojas (y hay que pegarlas). Por eso, antes
@@ -2902,13 +3113,14 @@ function wireVentaCard(){
       }
       stVentaTotal = 0; stVentaItems = []; stVentaDevolucionId = null;
       renderCarrito();
+      stVentasFecha = null;   // si estaba mirando un día viejo, vuelve a hoy para ver esta venta
       renderResumenDia();
       renderCajaStatus();   // el "efectivo en caja ahora" tiene que incluir esta venta
       // El formulario queda listo para la próxima venta de una — no hace
       // falta tocar nada para seguir vendiendo aunque el ticket/Recibo X
       // de arriba siga a la vista (compartiéndose o imprimiéndose).
       resetFormularioVenta();
-      card.querySelector('#stFcCancel').textContent='✕ Cerrar recibo';
+      card.querySelector('#stFcCancel').textContent='✕ Ocultar recibo/factura';
       card.querySelector('#stFcCancel').onclick = ()=>{
         resultadoEl.innerHTML=''; resultadoEl.style.flex='';
         card.querySelector('#stFcCancel').textContent='Cancelar';
@@ -3026,10 +3238,14 @@ function wireVentaCard(){
     if(!btn || btn.disabled || btn.style.display==='none') return;
     if(!(stVentaTotal>0)) return;
     const total = totalConRecargo();
-    const pagado = ['stCvContado','stCvTDeb','stCvCPer','stCvCFin']
-      .reduce((acc,id)=>{ const el=card.querySelector('#'+id); return acc + (el ? Number(el.value)||0 : 0); }, 0)
-      + montoFinalTarjeta() + montoFinalTransferencia();
-    if(Math.max(0, total-pagado) > 0) return; // todavía falta cargar medios de pago
+    const saldo = Math.max(0, total - pagadoVenta());
+    if(saldo > 0){
+      // Antes no pasaba nada y parecía que Enter no andaba: ahora avisa qué
+      // falta (el importe cargado todavía no cubre el total).
+      recalcSaldoVenta();
+      toast(`Falta cobrar ${money(saldo)} para poder guardar la venta.`, 2500);
+      return;
+    }
     e.preventDefault();
     const upsell = stVentaItems.length===1
       ? '\n\n🛍️ Es una sola prenda — ¿le ofreciste al cliente algún producto nuevo o alguna promoción para ampliar la compra?'
@@ -3042,10 +3258,15 @@ function wireVentaCard(){
 const stMapTalles = ret => ret.map(t=>({ talle:t.talle, precio:Number(t.precio),
   stock: Array.isArray(t.stock) ? t.stock : [] }));
 
-// Busca el artículo por el código de barras, de lo más específico a lo más
-// general: completo → 8 díg (artículo+color) → 5 díg + 'XXX' → 5 díg.
+// Busca el artículo por el código de barras. Primero mira si los 5 dígitos de
+// adelante son un prefijo nuestro (etiqueta impresa por nosotros, ver
+// "Etiquetas con código de barras"): eso es exacto y no admite ambigüedad.
+// Si no, va de lo más específico a lo más general con el formato de los
+// proveedores: completo → 8 díg (artículo+color) → 5 díg + 'XXX' → 5 díg.
 function buscarArticuloBarcode(digits){
   const art5 = digits.slice(0,5);
+  const propio = MAPS.articulo && MAPS.articulo[art5];
+  if(propio && BYCOD[propio]) return BYCOD[propio];
   const tries = [...new Set([digits, digits.slice(0,8), art5+'XXX', art5])].filter(Boolean);
   for(const c of tries){ if(BYCOD[c]) return BYCOD[c]; }
   return null;
@@ -3298,7 +3519,7 @@ async function renderHistorialCarga(){
     const rows = r.ok ? await r.json() : [];
     box.innerHTML = `
       <div class="label">🕒 Últimos cargados — ${esc(stLocalNombre(localSel))}</div>
-      ${rows.length ? rows.map(m=>{
+      ${rows.length ? rows.map((m,i)=>{
         const hora = m.created_at ? new Date(m.created_at).toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'}) : '';
         return `
         <div class="lista" style="margin-top:6px; text-align:left">
@@ -3308,8 +3529,15 @@ async function renderHistorialCarga(){
           </div>
           <div class="note" style="margin-top:2px">${esc(m.codigo)} · ${esc(m.talle)}${m.color?' · '+esc(m.color):''}</div>
           ${m.usuario ? `<div class="note" style="margin-top:1px">${esc(mostrarUsuario(m.usuario))}</div>` : ''}
+          ${BYCOD[m.codigo] ? `<button class="fbtn" data-etq="${i}" style="width:100%; margin-top:4px">🏷️ Etiqueta</button>` : ''}
         </div>`;
       }).join('') : '<div class="note">Todavía no cargaste stock en este local.</div>'}`;
+    // Reimprimir la etiqueta de algo que ya se cargó (se rompió, se despegó,
+    // o entraron varias unidades iguales de una).
+    [...box.querySelectorAll('[data-etq]')].forEach(b=>{
+      const m = rows[Number(b.dataset.etq)];
+      b.onclick = ()=> abrirEtiquetaPopup(BYCOD[m.codigo], m.talle, m.color);
+    });
   }catch(e){ box.innerHTML = `<div class="note">No se pudo cargar el historial.</div>`; }
 }
 
@@ -3357,7 +3585,7 @@ function drawVender(){
       <div class="pos-pasos">
         <button type="button" class="pos-paso on" data-paso="1"><span class="pnum">1</span> 🛒 Carrito</button>
         <button type="button" class="pos-paso" data-paso="2"><span class="pnum">2</span> 💳 Cobro</button>
-        <button type="button" class="fbtn pos-hoy" id="stBtnHoy" title="Resumen del día">📊 Hoy</button>
+        <button type="button" class="fbtn pos-hoy" id="stBtnHoy" title="Ventas del día y de hasta 2 meses atrás">📊 Ventas</button>
       </div>
       <div class="pos-totbar">
         <div><div class="l">Total</div><div class="v total" id="stCvTotalDisplay">${money(stVentaTotal)}</div></div>
@@ -3550,7 +3778,7 @@ function drawVender(){
     <div id="stResumenDrawer" class="pos-drawer">
       <div class="pos-drawer-panel">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px">
-          <div class="label" style="margin:0">📊 Resumen del día</div>
+          <div class="label" style="margin:0">📊 Ventas</div>
           <button class="fbtn" id="stCerrarHoy">✕</button>
         </div>
         <div class="st-col-dia" id="stResumenDia"></div>
@@ -3573,7 +3801,12 @@ function drawVender(){
   const resultadosBox = document.getElementById('stManualResultados');
   const go=()=>{ if(man.value.trim()){ stProcesar(man.value); man.value=''; resultadosBox.innerHTML=''; } };
   document.getElementById('stManualGo').onclick = go;
-  man.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); go(); } });
+  // Con texto, Enter procesa el código; vacío, lo deja pasar para que el atajo
+  // general del POS avance de paso (ver wireTecladoPOS).
+  man.addEventListener('keydown', e=>{
+    if(e.key!=='Enter' || !man.value.trim()) return;
+    e.preventDefault(); go();
+  });
   man.addEventListener('input', ()=>{
     const q = norm(man.value.trim());
     if(q.length<2){ resultadosBox.innerHTML=''; return; }
@@ -3605,6 +3838,7 @@ function drawVender(){
   armarProductoManual();
   renderCarrito();
   wireVentaCard();
+  wireTecladoPOS();
   wirePasosVenta();
   renderResumenDia();
   renderCajaStatus();
@@ -3898,7 +4132,7 @@ async function armarCerrarCaja(formBox, sesion, localSel){
         ${fila('Fondo inicial', est.fondo_inicial)}
         ${fila(`Ventas en efectivo (${est.ventas_cant} ventas)`, est.ventas_contado)}
         ${Number(est.pagos_cc_efectivo)>0 ? fila('Cobranzas de cuenta corriente', est.pagos_cc_efectivo) : ''}
-        ${Number(est.reservas_efectivo)>0 ? fila('Señas y abonos de reservas', est.reservas_efectivo) : ''}
+        ${Number(est.reservas_efectivo)>0 ? fila('Señas y entregas de reservas', est.reservas_efectivo) : ''}
         ${Number(est.reservas_efectivo)<0 ? fila('Reintegros de reservas', Math.abs(est.reservas_efectivo), true) : ''}
         ${Number(est.ingresos)>0 ? fila('Ingresos', est.ingresos) : ''}
         ${Number(est.cambio)>0 ? fila('Cambio agregado', est.cambio) : ''}
@@ -4008,7 +4242,7 @@ async function aplicarRestriccionLocalSelect(sel){
   sel.title = `Tu usuario solo puede operar en ${stLocalNombre(asignado)}.`;
 }
 
-// ===== 🏷️ Reservas / señas: apartar productos con seña, cobrar abonos,
+// ===== 🏷️ Reservas / señas: apartar productos con seña, cobrar entregas,
 // retirar (con factura opcional) o cancelar (con reintegro) =====
 const RV_MEDIO_LABEL = { contado:'Efectivo', transferencia:'Transferencia', tarjeta_debito:'Tarjeta débito', tarjeta_credito:'Tarjeta crédito' };
 let rvEstadoActual = 'activa';
@@ -4158,10 +4392,10 @@ async function mostrarDetalleReserva(reservaId){
         <div><div class="l" style="margin:0">Saldo</div><div class="v" style="margin:0; color:${rv.saldo_pendiente>0?'var(--warn)':'var(--accent)'}">${money(rv.saldo_pendiente)}</div></div>
       </div>
       <div class="label">Movimientos</div>
-      ${pagos.length ? pagos.map(p=>`<div class="lista" style="text-align:left; margin-top:3px"><div class="l" style="margin:0">${p.tipo==='reintegro'?'↩️ Reintegro':(p.tipo==='sena'?'Seña':'Abono')} · ${money(p.monto)}</div><div class="v" style="font-size:12px">${esc(RV_MEDIO_LABEL[p.medio]||p.medio)} · ${new Date(p.created_at).toLocaleDateString('es-AR')}${transferenciaVerificadaTexto(p)}</div></div>`).join('') : '<div class="note">Sin movimientos.</div>'}
+      ${pagos.length ? pagos.map(p=>`<div class="lista" style="text-align:left; margin-top:3px"><div class="l" style="margin:0">${p.tipo==='reintegro'?'↩️ Reintegro':(p.tipo==='sena'?'Seña':'Entrega')} · ${money(p.monto)}</div><div class="v" style="font-size:12px">${esc(RV_MEDIO_LABEL[p.medio]||p.medio)} · ${new Date(p.created_at).toLocaleDateString('es-AR')}${transferenciaVerificadaTexto(p)}</div></div>`).join('') : '<div class="note">Sin movimientos.</div>'}
       ${rv.estado==='activa' ? `
         <div id="rvAcciones" style="margin-top:10px; display:flex; flex-direction:column; gap:6px">
-          ${rv.saldo_pendiente>0 ? `<button class="fbtn" id="rvCobrarBtn">💵 Cobrar abono</button>` : ''}
+          ${rv.saldo_pendiente>0 ? `<button class="fbtn" id="rvCobrarBtn">💵 Cobrar entrega</button>` : ''}
           <button class="addcart" id="rvRetirarBtn">✅ Retirar producto</button>
           <button class="fbtn" id="rvCancelarBtn">↩️ Cancelar (reintegrar seña)</button>
           ${wa ? `<a class="fbtn" href="${wa}" target="_blank" style="text-align:center; text-decoration:none">📲 Avisar por WhatsApp</a>` : ''}
@@ -4266,14 +4500,14 @@ function wireAccionesReserva(rv){
   const cobrarBtn = document.getElementById('rvCobrarBtn');
   if(cobrarBtn) cobrarBtn.onclick = ()=>{
     accionBox.innerHTML = `<div class="lista" style="text-align:left; padding:12px 14px; margin-top:6px">
-      <div class="label" style="margin:0">Abono (máx ${money(rv.saldo_pendiente)})</div>
+      <div class="label" style="margin:0">Entrega (máx ${money(rv.saldo_pendiente)})</div>
       <div class="inp-igual-wrap"><input id="rvMonto" class="search" type="number" inputmode="decimal" value="0"><button class="inp-igual" type="button" id="rvMontoTotal" title="Usar el saldo">＝</button></div>
       ${medioHtml('rvMedio')}${aliasHtml}
       ${mpVerificarHtml('rvVerif','rvVerifInfo')}
       <button class="addcart" id="rvCobrarOk" style="margin-top:8px">Cobrar</button></div>`;
     const medio = accionBox.querySelector('#rvMedio'), alias = accionBox.querySelector('#rvAlias');
     const montoEl = accionBox.querySelector('#rvMonto');
-    // Si el abono es por transferencia a una cuenta de MP, buscamos sola la
+    // Si la entrega es por transferencia a una cuenta de MP, buscamos sola la
     // acreditación de ese importe en la última media hora.
     const rvVerif = montarVerificadorMP({
       aliasEl: alias,
@@ -4289,8 +4523,8 @@ function wireAccionesReserva(rv){
     accionBox.querySelector('#rvCobrarOk').onclick = async ()=>{
       const monto = Number(accionBox.querySelector('#rvMonto').value)||0;
       err.textContent='';
-      if(!(monto>0)){ err.textContent='El abono tiene que ser mayor a 0.'; return; }
-      if(monto>rv.saldo_pendiente){ err.textContent='El abono no puede superar el saldo.'; return; }
+      if(!(monto>0)){ err.textContent='La entrega tiene que ser mayor a 0.'; return; }
+      if(monto>rv.saldo_pendiente){ err.textContent='La entrega no puede superar el saldo.'; return; }
       if(medio.value==='transferencia' && !alias.value){ err.textContent='Elegí a qué alias se transfirió.'; return; }
       const btn = accionBox.querySelector('#rvCobrarOk'); btn.disabled=true; btn.textContent='Cobrando…';
       const sesion = await obtenerCajaAbierta(rv.local);
@@ -4302,7 +4536,7 @@ function wireAccionesReserva(rv){
           ...(medio.value==='transferencia' ? rvVerif.paramsRpc(monto) : {}) }) });
         const d = await r.json().catch(()=>null);
         if(!r.ok) throw new Error((d && (d.message||d.hint)) || 'No se pudo cobrar.');
-        toast('✓ Abono cobrado.', 2500); mostrarDetalleReserva(rv.id); renderReservasLista(rvEstadoActual, '');
+        toast('✓ Entrega cobrada.', 2500); mostrarDetalleReserva(rv.id); renderReservasLista(rvEstadoActual, '');
       }catch(e){ btn.disabled=false; btn.textContent='Cobrar'; err.textContent = e.message; }
     };
   };
@@ -6572,27 +6806,47 @@ function mediosDePagoVenta(v){
 }
 
 // Visión general del día — reemplaza la planilla de papel: todas las ventas
-// de hoy en este local, con sus productos, medios de pago y si se facturaron.
-// Cada venta se puede tocar para desplegar el detalle con acciones (facturar
-// si no está facturada; editar, solo si el usuario es gerente).
+// de un día en este local, con sus productos, medios de pago y si se
+// facturaron. Cada venta se puede tocar para desplegar el detalle con
+// acciones (facturar si no está facturada; editar, solo si es gerente).
+// Arranca en hoy, pero se puede retroceder hasta 2 meses: si el cliente
+// vuelve otro día a pedir la factura, el vendedor la encuentra y la emite sin
+// depender del gerente.
+const VENTAS_DIAS_ATRAS = 60;
+let stVentasFecha = null;   // null = hoy; si no, ISO del día que se está mirando
+function ventasFechaMin(){ const d = new Date(); d.setDate(d.getDate()-VENTAS_DIAS_ATRAS); return isoLocal(d); }
 async function renderResumenDia(){
   const box = document.getElementById('stResumenDia');
   if(!box) return;
-  box.innerHTML = `<div class="label">📋 Ventas de hoy — ${esc(stLocalNombre(stLocal()))}</div><div class="note">Cargando…</div>`;
+  const hoyIso = isoLocal(new Date());
+  const minIso = ventasFechaMin();
+  // Si quedó guardada una fecha que ya se pasó de los 2 meses (la pestaña
+  // estuvo abierta varios días), vuelve sola a hoy.
+  if(stVentasFecha && (stVentasFecha > hoyIso || stVentasFecha < minIso)) stVentasFecha = null;
+  const fechaIso = stVentasFecha || hoyIso;
+  const esHoy = fechaIso === hoyIso;
+  const titulo = esHoy ? 'Ventas de hoy' : `Ventas del ${fechaIso.split('-').reverse().join('/')}`;
+  box.innerHTML = `<div class="label">📋 ${titulo} — ${esc(stLocalNombre(stLocal()))}</div><div class="note">Cargando…</div>`;
   try{
-    const hoyIso = isoLocal(new Date());
     const localSel = stLocal();
     const [rol, r] = await Promise.all([
       cargarMiRol(),
-      sbAuthed(`/rest/v1/ventas?local=eq.${localSel}&fecha=eq.${hoyIso}&order=created_at.desc&select=*,clientes(nombre)`),
+      sbAuthed(`/rest/v1/ventas?local=eq.${localSel}&fecha=eq.${fechaIso}&order=created_at.desc&select=*,clientes(nombre)`),
     ]);
     const rows = r.ok ? await r.json() : [];
     const totalDia = rows.reduce((a,v)=> a + Number(v.total||0), 0);
     box.innerHTML = `
       <div class="label" style="display:flex; justify-content:space-between; align-items:center">
-        <span>📋 Ventas de hoy — ${esc(stLocalNombre(localSel))} (${rows.length})</span>
+        <span>📋 ${titulo} — ${esc(stLocalNombre(localSel))} (${rows.length})</span>
         <span style="text-transform:none; font-weight:700; color:var(--text)">${money(totalDia)}</span>
       </div>
+      <div style="display:flex; gap:6px; align-items:center; margin-bottom:6px">
+        <button class="fbtn" id="stVentasAnt" style="flex:none" title="Día anterior">‹</button>
+        <input id="stVentasFecha" class="search" type="date" value="${fechaIso}" min="${minIso}" max="${hoyIso}" style="flex:1; min-width:0">
+        <button class="fbtn" id="stVentasSig" style="flex:none" title="Día siguiente" ${esHoy?'disabled':''}>›</button>
+        ${esHoy ? '' : '<button class="fbtn" id="stVentasHoy" style="flex:none">Hoy</button>'}
+      </div>
+      ${esHoy ? '' : '<div class="note" style="margin-bottom:6px">Estás mirando un día anterior. Podés facturar cualquiera de estas ventas — el comprobante sale con fecha de hoy, que es lo que acepta AFIP.</div>'}
       ${rows.length ? rows.map(v=>{
         const hora = v.created_at ? new Date(v.created_at).toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'}) : '';
         const items = (v.items||[]).map(it=> `${esc(it.codigo)} ${esc(it.nombre)}${it.talle?` (${esc(it.talle)}${it.color?' · '+esc(it.color):''})`:''}`).join(', ');
@@ -6607,7 +6861,16 @@ async function renderResumenDia(){
           ${v.nota ? `<div class="note" style="margin-top:2px">📝 ${esc(v.nota)}</div>` : ''}
           <div class="ventaDetalle" style="display:none; margin-top:8px; padding-top:8px; border-top:1px solid var(--border)"></div>
         </div>`;
-      }).join('') : '<div class="note">Todavía no hay ventas registradas hoy en este local.</div>'}`;
+      }).join('') : `<div class="note">${esHoy?'Todavía no hay ventas registradas hoy en este local.':'No hubo ventas ese día en este local.'}</div>`}`;
+    // Navegación por día (nunca más allá de hoy ni más atrás de 2 meses).
+    const irA = iso => { stVentasFecha = (iso===hoyIso) ? null : iso; renderResumenDia(); };
+    const correr = dias => { const d = new Date(fechaIso+'T12:00:00'); d.setDate(d.getDate()+dias);
+      const iso = isoLocal(d); if(iso>=minIso && iso<=hoyIso) irA(iso); };
+    box.querySelector('#stVentasAnt').onclick = ()=> correr(-1);
+    box.querySelector('#stVentasSig').onclick = ()=> correr(1);
+    const btnHoy = box.querySelector('#stVentasHoy');
+    if(btnHoy) btnHoy.onclick = ()=> irA(hoyIso);
+    box.querySelector('#stVentasFecha').onchange = e=>{ if(e.target.value) irA(e.target.value); };
     [...box.querySelectorAll('.ventaFila')].forEach(fila=>{
       fila.addEventListener('click', (e)=>{
         if(e.target.closest('.ventaDetalle')) return; // no recolapsar al tocar algo adentro del detalle
@@ -6624,7 +6887,7 @@ async function renderResumenDia(){
     });
   }catch(e){
     console.error('renderResumenDia:', e);
-    box.innerHTML = `<div class="note">No se pudo cargar el resumen del día: ${esc(String((e&&e.message)||e))}</div>`;
+    box.innerHTML = `<div class="note">No se pudieron cargar las ventas: ${esc(String((e&&e.message)||e))}</div>`;
   }
 }
 
@@ -6708,13 +6971,18 @@ async function armarTicketVentaExistente(box, v){
 }
 
 // Facturar una venta ya guardada (no facturada todavía) — mismo flujo de
-// AFIP que al guardar, pero disparado después, desde "Ventas de hoy".
+// AFIP que al guardar, pero disparado después, desde el panel de ventas.
+// Sirve también para ventas de días anteriores (hasta 2 meses): la venta es
+// vieja, pero el comprobante se emite con fecha de ahora, que es lo único
+// que acepta AFIP (±5 días).
 function armarFacturarVentaExistente(box, v, localSel){
   const hoy = new Date();
   const fMin = new Date(hoy); fMin.setDate(fMin.getDate()-5);
   const fMax = new Date(hoy); fMax.setDate(fMax.getDate()+5);
+  const ventaVieja = v.fecha && v.fecha !== isoLocal(hoy);
   let tipo = 'B';
   box.innerHTML = `
+    ${ventaVieja ? `<div class="note">Venta del ${esc(String(v.fecha).split('-').reverse().join('/'))} — la factura se emite con la fecha de abajo.</div>` : ''}
     <div class="label">Tipo de factura</div>
     <div class="talles">
       <button class="talle sel" data-t="B">Factura B (consumidor final)</button>
@@ -6752,13 +7020,28 @@ function armarFacturarVentaExistente(box, v, localSel){
       });
       const d = await r.json().catch(()=>({}));
       if(!r.ok) throw new Error(d.error || 'No se pudo facturar.');
-      await sbAuthed(`/rest/v1/ventas?id=eq.${v.id}`, { method:'PATCH', body: JSON.stringify({
-        facturada: true, factura_tipo: d.tipo, factura_pto_vta: d.puntoVenta,
-        factura_numero: d.numero, factura_cae: d.cae,
-      }) });
+      // Vía RPC y no PATCH directo: un vendedor solo puede tocar por RLS su
+      // propia venta del día, y acá también se factura de días anteriores.
+      const rm = await sbAuthed('/rest/v1/rpc/marcar_venta_facturada', { method:'POST', body: JSON.stringify({
+        p_venta_id: v.id, p_tipo: d.tipo, p_pto_vta: d.puntoVenta, p_numero: d.numero, p_cae: d.cae }) });
+      if(!rm.ok){
+        const dm = await rm.json().catch(()=>null);
+        // La factura ante AFIP ya salió: no se puede "deshacer", así que se
+        // avisa con el CAE a la vista para poder registrarlo a mano.
+        toast(`⚠ La factura se emitió (CAE ${d.cae}) pero no se pudo marcar la venta como facturada: ${(dm&&(dm.message||dm.hint))||'error'}`, 8000);
+      }
+      Object.assign(v, { facturada:true, factura_tipo:d.tipo, factura_pto_vta:d.puntoVenta,
+        factura_numero:d.numero, factura_cae:d.cae });
       box.innerHTML = renderTicket(d, localSel);
       wireTicketButtons(box, d, localSel, null);
-      renderResumenDia();
+      // No se re-renderiza la lista entera: eso borraría el ticket recién
+      // emitido (que hay que compartir o imprimir). Alcanza con marcar en la
+      // fila que esa venta ya quedó facturada.
+      const fila = box.closest('.ventaFila');
+      const cabecera = fila && fila.querySelector('.l');
+      if(cabecera && !/Factura/.test(cabecera.innerHTML)){
+        cabecera.innerHTML += ` <span class="v" style="font-size:11px; color:var(--accent2)">· Factura ${esc(d.tipo)} N° ${esc(String(d.numero))}</span>`;
+      }
     }catch(e){
       ok.disabled=false; ok.textContent='Emitir factura';
       err.textContent = e.message || 'No se pudo facturar.';
@@ -6902,6 +7185,9 @@ function stIrPaso(n){
   document.querySelectorAll('.pos-paso[data-paso]').forEach(t=> t.classList.toggle('on', Number(t.dataset.paso)===n));
   const ov = document.querySelector('.overlay.ov-full');
   (ov || window).scrollTo({top:0, behavior:'smooth'});
+  // El teclado sigue al paso: en Carrito manda el buscador (ahí también
+  // "escribe" el lector de mano) y en Cobro, el primer medio de pago.
+  setTimeout(()=> n===2 ? focoPrimerPagoPOS() : focoBuscadorPOS(), 60);
 }
 // Muestra/oculta el bloque de un medio de pago; al ocultarlo lo pone en $0
 // para que no siga sumando al total cobrado.
@@ -6929,6 +7215,90 @@ function renderChipsPago(){
     recalcSaldoVenta();
   });
 }
+// ===== Flujo con el teclado (Enter) en el POS =====
+// Un vendedor que viene de un sistema de facturación tradicional trabaja sin
+// soltar el teclado, y un lector de mano hace exactamente eso: "tipea" el
+// código y manda un Enter. La regla es una sola: Enter siempre avanza un paso
+//   buscar/escanear → confirmar color y talle → ir a cobrar → guardar
+// y Escape vuelve atrás. Lo de Cobro (Enter guarda cuando el saldo quedó en
+// $0) ya vivía en wireVentaCard(); acá se completa el paso del Carrito.
+function inputEnfocado(){
+  const a = document.activeElement;
+  return !!(a && (a.tagName==='INPUT' || a.tagName==='TEXTAREA' || a.tagName==='SELECT' || a.isContentEditable));
+}
+function pasoActualPOS(){
+  const p2 = document.getElementById('stPaso2');
+  return (p2 && p2.style.display!=='none') ? 2 : 1;
+}
+// Mover el foco solo tiene sentido si hay un teclado de verdad: en el celular
+// abriría el teclado en pantalla encima de todo cada vez que se cambia de
+// paso. Se toma como que lo hay si el puntero es fino (mouse/trackpad) o si
+// ya se tecleó algo en esta pantalla — eso cubre la tablet con lector de mano.
+let posTecladoUsado = false;
+function posConTeclado(){
+  return posTecladoUsado || !!(window.matchMedia && window.matchMedia('(pointer: fine)').matches);
+}
+function focoBuscadorPOS(){
+  const man = document.getElementById('stManual');
+  if(!man || pasoActualPOS()!==1 || !posConTeclado()) return;
+  man.focus(); man.select();
+}
+// Primer campo de importe visible del paso de Cobro (por defecto, Efectivo):
+// se deja listo para tipear el monto sin borrar el 0 a mano.
+function focoPrimerPagoPOS(){
+  if(!posConTeclado()) return;
+  const bloque = [...document.querySelectorAll('.pago-block')].find(b=> b.style.display!=='none');
+  const inp = bloque && bloque.querySelector('input[type="number"]');
+  if(!inp) return;
+  inp.focus();
+  if(inp.value==='0') inp.value='';
+  inp.select();
+}
+function wireTecladoPOS(){
+  const sheet = document.getElementById('sheet');
+  // #sheet no se destruye entre pantallas (solo se le reescribe el contenido),
+  // así que el listener se engancha una sola vez o cada Enter se duplicaría.
+  if(!sheet || sheet.dataset.tecladoPos) return;
+  sheet.dataset.tecladoPos = '1';
+  sheet.addEventListener('keydown', e=>{
+    // Cargar stock comparte los ids #stManual/#stCard con el POS: ahí Enter no
+    // tiene que sumar stock solo, así que este atajo es únicamente de Vender
+    // (y solo con la pantalla de venta armada, no en el login ni en otra).
+    if(stSeccion!=='venta' || !document.getElementById('stPaso1')) return;
+    posTecladoUsado = true;
+    if(pasoActualPOS()===2){
+      // El Enter de Cobro lo maneja wireVentaCard(); acá solo el volver.
+      if(e.key==='Escape' && !inputEnfocado()){ e.preventDefault(); stIrPaso(1); }
+      return;
+    }
+    const card = document.getElementById('stCard');
+    const btnOk = card && card.querySelector('#stOk');       // tarjeta de color/talle abierta
+    if(e.key==='Escape'){
+      const cancelar = card && card.querySelector('#stCancel');
+      if(cancelar){ e.preventDefault(); cancelar.click(); focoBuscadorPOS(); }
+      return;
+    }
+    // Lector de mano (o alguien que empieza a tipear) con el foco en ningún
+    // lado: se lo manda al buscador y el carácter cae ahí, sin cancelar nada.
+    if(e.key.length===1 && !inputEnfocado() && !e.ctrlKey && !e.altKey && !e.metaKey){
+      focoBuscadorPOS();
+      return;
+    }
+    if(e.key!=='Enter' || e.defaultPrevented) return;   // el buscador ya tiene su propio Enter
+    // Producto sin stock (nombre/precio/cantidad a mano): Enter lo agrega.
+    const manualBox = document.getElementById('stProductoManualBox');
+    if(manualBox && manualBox.contains(e.target)){
+      const mpOk = manualBox.querySelector('#mpOk');
+      if(mpOk){ e.preventDefault(); mpOk.click(); }
+      return;
+    }
+    if(inputEnfocado() && e.target.id!=='stManual') return;   // otros campos manejan su Enter
+    // Con la tarjeta abierta, Enter confirma el color y talle elegidos.
+    if(btnOk){ e.preventDefault(); btnOk.click(); return; }
+    // Sin nada abierto y con el carrito cargado, Enter pasa a cobrar.
+    if(stVentaItems.length){ e.preventDefault(); stIrPaso(2); }
+  });
+}
 function wirePasosVenta(){
   [...document.querySelectorAll('.pos-paso[data-paso]')].forEach(t=> t.onclick = ()=> stIrPaso(Number(t.dataset.paso)));
   const cobrar = document.getElementById('stIrCobrar');
@@ -6951,6 +7321,14 @@ function wirePasosVenta(){
     drawer.onclick = e=>{ if(e.target===drawer) drawer.classList.remove('open'); };
   }
   stIrPaso(1);
+}
+// Total ya cobrado con los medios de pago cargados. Ojo: efectivo, tarjeta,
+// transferencia y ASOEM van por su monto FINAL (con descuento o recargo
+// aplicado), no por lo tipeado — es el mismo número que valida el guardado.
+function pagadoVenta(){
+  return ['stCvTDeb','stCvCPer']
+    .reduce((acc,id)=>{ const el=document.getElementById(id); return acc + (el ? Number(el.value)||0 : 0); }, 0)
+    + montoFinalTarjeta() + montoFinalTransferencia() + montoFinalContado() + montoFinalCFin();
 }
 function recalcSaldoVenta(){
   const saldoEl = document.getElementById('stCvSaldo');
@@ -6989,10 +7367,7 @@ function recalcSaldoVenta(){
   }
   const autorizacionBox = document.getElementById('stCvCFinAutorizacionBox');
   if(autorizacionBox) autorizacionBox.style.display = montoBaseCFin()>0 ? '' : 'none';
-  const pagado = ['stCvTDeb','stCvCPer']
-    .reduce((acc,id)=>{ const el=document.getElementById(id); return acc + (el ? Number(el.value)||0 : 0); }, 0)
-    + montoFinalTarjeta() + montoFinalTransferencia() + montoFinalContado() + montoFinalCFin();
-  const saldo = Math.max(0, total-pagado);
+  const saldo = Math.max(0, total-pagadoVenta());
   saldoEl.textContent = money(saldo);
   saldoEl.style.color = saldo>0 ? 'var(--warn)' : '';
   const saldoBox = saldoEl.closest('.lista');
@@ -7106,6 +7481,9 @@ function ventaCardConfirm(p, digits){
   let colorSel = colorSug || 'Único';
   const colores = [...new Set(['Único'].concat(coloresDeCategoria(p.categoria),
     ...p.talles.map(t=>(t.stock||[]).map(s=>s.color))))].filter(Boolean).sort((a,b)=> a==='Único'?-1 : b==='Único'?1 : a.localeCompare(b));
+  // El color puede venir de una etiqueta nuestra y todavía no tener stock en
+  // esta categoría — si no está en la lista, igual tiene que aparecer elegido.
+  if(colorSel && !colores.some(c=> norm(c)===norm(colorSel))) colores.push(colorSel);
   const card = document.getElementById('stCard');
   card.innerHTML = `
     <div class="lista" style="margin-top:10px">
@@ -7177,6 +7555,7 @@ function ventaCardConfirm(p, digits){
     card.innerHTML=''; stBusy=false;
     renderCarrito();
     actualizarTotalVenta();
+    focoBuscadorPOS();   // listo para escanear/tipear la próxima prenda
   };
 }
 
@@ -7342,6 +7721,7 @@ function stCardConfirm(p, digits){
   let colorSel = colorSug || 'Único';
   let colores = [...new Set(['Único'].concat(coloresDeCategoria(p.categoria),
     ...p.talles.map(t=>(t.stock||[]).map(s=>s.color))))].filter(Boolean).sort((a,b)=> a==='Único'?-1 : b==='Único'?1 : a.localeCompare(b));
+  if(colorSel && !colores.some(c=> norm(c)===norm(colorSel))) colores.push(colorSel);
   const card = document.getElementById('stCard');
   card.innerHTML = `
     <div class="lista" style="margin-top:10px">
@@ -7491,7 +7871,19 @@ function stCardConfirm(p, digits){
       const nEl=document.getElementById('stN'); if(nEl) nEl.textContent=stCount;
       const u=document.getElementById('stUndo'); if(u) u.style.display='';
       toast(`✓ ${delta>0?'+1':'−1'} ${p.nombre} · ${colorSel} · ${talle}`);
-      card.innerHTML=''; stBusy=false;
+      // En vez de vaciar la tarjeta, queda el aviso de que se cargó con el
+      // botón para imprimirle la etiqueta con código de barras. La cámara ya
+      // vuelve a escanear (stBusy=false): la próxima prenda pisa esta tarjeta.
+      stBusy=false;
+      card.innerHTML = `
+        <div class="lista" style="margin-top:10px; text-align:left">
+          <div class="l" style="margin:0">✓ Cargada al stock de ${esc(stLocalNombre(localSel))}</div>
+          <div class="v" style="font-size:15px">${esc(p.nombre||p.codigo)} · ${esc(colorSel)} · ${esc(talle)}</div>
+        </div>
+        <button class="addcart" id="stEtiquetaBtn" style="margin-top:8px">🏷️ Imprimir etiqueta</button>
+        <button class="fbtn" id="stSeguirCargando" style="width:100%; margin-top:6px">Escanear la próxima ›</button>`;
+      card.querySelector('#stEtiquetaBtn').onclick = ()=> abrirEtiquetaPopup(p, talle, colorSel);
+      card.querySelector('#stSeguirCargando').onclick = ()=>{ card.innerHTML=''; };
       renderHistorialCarga();
     }catch(e){
       if(String(e.message)==='login'){ card.innerHTML=''; drawStock(); return; }
