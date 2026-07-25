@@ -3619,6 +3619,9 @@ async function renderCajaStatus(){
     return;
   }
   const hora = sesion.abierta_at ? new Date(sesion.abierta_at).toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'}) : '';
+  const fechaApertura = sesion.abierta_at
+    ? ' del '+new Date(sesion.abierta_at).toLocaleDateString('es-AR',{weekday:'long',day:'numeric',month:'long'}).replace(',','')
+    : '';
   let est = null;
   try{ est = await obtenerEstadoCaja(sesion.id); }catch(e){}
   const salidas = est ? Number(est.gastos)+Number(est.retiros)+Number(est.adelantos) : 0;
@@ -3626,7 +3629,7 @@ async function renderCajaStatus(){
     <div class="lista" style="text-align:left; padding:10px 12px">
       <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px; flex-wrap:wrap">
         <div>
-          <div class="l" style="margin:0">🔓 Caja abierta en ${esc(stLocalNombre(localSel))} desde las ${hora}</div>
+          <div class="l" style="margin:0">🔓 Caja abierta en ${esc(stLocalNombre(localSel))} desde las ${hora}${fechaApertura}</div>
           <div class="note" style="margin:2px 0 0">Fondo ${money(sesion.fondo_inicial)}${est?` · efectivo vendido ${money(est.ventas_contado)}${Number(est.pagos_cc_efectivo)>0?` · cobranzas ${money(est.pagos_cc_efectivo)}`:''}${Number(est.reservas_efectivo)!==0?` · reservas ${money(est.reservas_efectivo)}`:''}${salidas>0?` · salidas ${money(salidas)}`:''}`:''}</div>
         </div>
         <div style="text-align:right">
