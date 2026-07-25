@@ -189,6 +189,41 @@
     .pos-saldo-b{flex:1 1 50%; margin-top:0; padding-top:0; border-top:none;
       border-left:1px solid var(--line); padding-left:12px}
   }
+  /* ===== Vender (POS) en 2 pasos: pestañas Carrito/Cobro + barra de totales
+     fija + chips de medios de pago. Reemplaza el layout de 3 columnas para que
+     no haya que scrolear (ni en celular ni en PC). ===== */
+  .pos-steps{position:sticky; top:0; z-index:15; background:var(--bg);
+    padding:8px 0 10px; margin-bottom:12px; border-bottom:1px solid var(--line)}
+  .pos-pasos{display:flex; gap:8px; align-items:stretch}
+  .pos-paso{flex:1; display:flex; align-items:center; justify-content:center; gap:7px;
+    padding:11px 8px; border:1px solid var(--line); background:var(--card); color:var(--muted);
+    border-radius:12px; cursor:pointer; font-weight:700; font-size:14px}
+  .pos-paso .pnum{width:22px; height:22px; border-radius:50%; background:var(--card2); color:var(--muted);
+    display:flex; align-items:center; justify-content:center; font-size:12px; flex:none; font-weight:800}
+  .pos-paso.on{color:var(--text); border-color:var(--accent); background:var(--card2)}
+  .pos-paso.on .pnum{background:var(--accent); color:#03283a}
+  .pos-paso.done .pnum{background:var(--accent2); color:#04270f}
+  .pos-hoy{flex:none}
+  .pos-totbar{display:flex; gap:1px; background:var(--line); border:1px solid var(--line);
+    border-radius:12px; overflow:hidden; margin-top:10px}
+  .pos-totbar > div{flex:1; background:var(--card); padding:8px 10px; text-align:center; min-width:0}
+  .pos-totbar .l{font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px}
+  .pos-totbar .v{font-size:20px; font-weight:800; margin-top:2px; font-variant-numeric:tabular-nums}
+  .pos-totbar .v.total{color:var(--accent2)}
+  .chips-pago{display:flex; flex-wrap:wrap; gap:8px; margin-bottom:6px}
+  .chip-pago{padding:9px 14px; border-radius:999px; border:1px solid var(--line); background:var(--card);
+    color:var(--text); font-size:14px; font-weight:600; cursor:pointer}
+  .chip-pago.on{background:var(--accent); color:#03283a; border-color:var(--accent); font-weight:800}
+  .pos-drawer{position:fixed; inset:0; background:rgba(0,0,0,.55); display:none; z-index:60;
+    align-items:flex-start; justify-content:center; overflow-y:auto}
+  .pos-drawer.open{display:flex}
+  .pos-drawer-panel{background:var(--bg); width:100%; max-width:440px; margin:56px 12px;
+    border:1px solid var(--line); border-radius:16px; padding:18px}
+  @media (min-width:900px){
+    /* En PC también van pestañas (una sola columna angosta), no 3 columnas */
+    .sheet.sheet-wide .pos-steps,
+    .sheet.sheet-wide .pos-panel{max-width:720px; margin-left:auto; margin-right:auto}
+  }
   .box{background:var(--card); border:1px solid var(--line); border-radius:12px; padding:12px}
   .box .t{font-size:12px; color:var(--muted)}
   .box .p{font-size:20px; font-weight:800; margin-top:3px}
@@ -2489,6 +2524,7 @@ function wireVentaCard(){
     ok.style.display = ''; ok.disabled = false; ok.textContent = 'Guardar venta';
     const err = card.querySelector('#stFcErr');
     if(err){ err.textContent=''; err.style.color=''; err.style.fontWeight=''; }
+    if(window.stResetChipsPago) window.stResetChipsPago();
     recalcSaldoVenta();
   }
   const clienteInfoEl = card.querySelector('#stCvClienteInfo');
@@ -3291,7 +3327,19 @@ function drawVender(){
     <div class="scat">Sesión: ${esc(mostrarUsuario(sbSession.email))} · <a href="#" id="stLogout" style="color:var(--accent)">salir</a></div>
     <div id="stCajaStatus" class="note" style="margin-top:6px">Verificando estado de caja…</div>
     <div id="stCajaFormBox"></div>
-    <div class="st-grid st-grid-3">
+    <div class="pos-steps">
+      <div class="pos-pasos">
+        <button type="button" class="pos-paso on" data-paso="1"><span class="pnum">1</span> 🛒 Carrito</button>
+        <button type="button" class="pos-paso" data-paso="2"><span class="pnum">2</span> 💳 Cobro</button>
+        <button type="button" class="fbtn pos-hoy" id="stBtnHoy" title="Resumen del día">📊 Hoy</button>
+      </div>
+      <div class="pos-totbar">
+        <div><div class="l">Total</div><div class="v total" id="stCvTotalDisplay">${money(stVentaTotal)}</div></div>
+        <div><div class="l">Prendas</div><div class="v" id="stCvPrendasDisplay">0</div></div>
+        <div><div class="l">Saldo</div><div class="v" id="stCvSaldo">${money(0)}</div></div>
+      </div>
+    </div>
+    <div id="stPaso1" class="pos-panel">
       <div class="st-col-left">
         <div class="label">Local y vendedor</div>
         <div style="display:flex; gap:8px">
@@ -3315,26 +3363,21 @@ function drawVender(){
         <div id="stCard"></div>
         <div class="label">Carrito de esta venta</div>
         <div id="stCarrito"></div>
+        <button class="addcart" id="stIrCobrar" disabled>Cobrar →</button>
       </div>
+    </div>
+    <div id="stPaso2" class="pos-panel" style="display:none">
       <div class="st-col-right" id="stVentaCard">
-        <div class="lista" style="display:flex; align-items:center; justify-content:space-between; gap:10px; text-align:left; padding:14px 16px">
-          <div>
-            <div class="l">Total del carrito</div>
-            <div class="v" id="stCvTotalDisplay" style="font-size:28px">${money(stVentaTotal)}</div>
-          </div>
-          <div style="text-align:right; flex:none">
-            <div class="l">Prendas</div>
-            <div class="v" id="stCvPrendasDisplay" style="font-size:22px">0</div>
-          </div>
-        </div>
+        <button class="fbtn" id="stVolverCarrito" style="width:100%; margin-bottom:12px">‹ Volver al carrito</button>
         <div class="label">Cliente de esta venta (opcional)</div>
         <div class="note">Elegilo para que la compra quede en su historial, tenga o no crédito personal.</div>
         <button class="fbtn" type="button" id="stCvClienteBuscar" style="width:100%; margin-top:4px">👤 Elegir cliente</button>
         <div id="stCvClientePicker"></div>
         <div class="note" id="stCvClienteInfo" style="margin-top:2px"></div>
-        <div class="label">Medios de pago</div>
+        <div class="label">Medios de pago — tocá los que uses</div>
+        <div class="chips-pago" id="stChipsPago"></div>
         <div class="grid pos-pagos">
-          <div><div class="note" style="margin:0 0 4px">Efectivo (contado)</div>
+          <div class="pago-block" data-pago="stCvContado"><div class="note" style="margin:0 0 4px">Efectivo (contado)</div>
             <div style="display:flex; gap:4px">
               <div class="inp-igual-wrap">
                 <input id="stCvContado" class="search" type="number" inputmode="decimal" value="0">
@@ -3348,7 +3391,7 @@ function drawVender(){
             </div>
             <div class="note" id="stCvContadoDescuentoInfo" style="margin-top:2px"></div>
           </div>
-          <div><div class="note" style="margin:0 0 4px">Transferencia</div>
+          <div class="pago-block" data-pago="stCvTransf"><div class="note" style="margin:0 0 4px">Transferencia</div>
             <div style="display:flex; gap:4px">
               <div class="inp-igual-wrap">
                 <input id="stCvTransf" class="search" type="number" inputmode="decimal" value="0">
@@ -3369,7 +3412,7 @@ function drawVender(){
             <button class="fbtn" type="button" id="stCvTransfVerificar" style="width:100%; margin-top:4px; display:none">🔍 Verificar transferencia</button>
             <div class="note" id="stCvTransfVerificarInfo" style="margin-top:2px"></div>
           </div>
-          <div><div class="note" style="margin:0 0 4px">Tarjeta de crédito</div>
+          <div class="pago-block" data-pago="stCvTCred"><div class="note" style="margin:0 0 4px">Tarjeta de crédito</div>
             <div style="display:flex; gap:4px">
               <div class="inp-igual-wrap">
                 <input id="stCvTCred" class="search" type="number" inputmode="decimal" value="0">
@@ -3383,14 +3426,14 @@ function drawVender(){
             </select>
             <div class="note" id="stCvRecargoInfo" style="margin-top:2px"></div>
           </div>
-          <div><div class="note" style="margin:0 0 4px">Tarjeta de débito</div>
+          <div class="pago-block" data-pago="stCvTDeb"><div class="note" style="margin:0 0 4px">Tarjeta de débito</div>
             <div style="display:flex; gap:4px">
               <div class="inp-igual-wrap">
                 <input id="stCvTDeb" class="search" type="number" inputmode="decimal" value="0">
                 <button class="inp-igual" type="button" data-usar-total="stCvTDeb" title="Usar el total del carrito">＝</button>
               </div>
             </div></div>
-          <div><div class="note" style="margin:0 0 4px">Crédito personal</div>
+          <div class="pago-block" data-pago="stCvCPer"><div class="note" style="margin:0 0 4px">Crédito personal</div>
             <div style="display:flex; gap:4px">
               <div class="inp-igual-wrap">
                 <input id="stCvCPer" class="search" type="number" inputmode="decimal" value="0">
@@ -3399,7 +3442,7 @@ function drawVender(){
             </div>
             <div class="note">Elegí el cliente arriba, junto al total.</div>
           </div>
-          <div><div class="note" style="margin:0 0 4px">Crédito financiero (ASOEM)</div>
+          <div class="pago-block" data-pago="stCvCFin"><div class="note" style="margin:0 0 4px">Crédito financiero (ASOEM)</div>
             <div style="display:flex; gap:4px">
               <div class="inp-igual-wrap">
                 <input id="stCvCFin" class="search" type="number" inputmode="decimal" value="0">
@@ -3419,15 +3462,9 @@ function drawVender(){
           </div>
         </div>
         <div class="note">Tocá "＝" al lado de un medio de pago para cargarle el total del carrito de una — pone el resto en $0.</div>
-        <div class="lista pos-saldo" style="margin-top:8px; text-align:left; padding:10px 14px">
-          <div class="pos-saldo-a">
-            <div class="l" style="margin:0">Saldo pendiente</div>
-            <div class="v" id="stCvSaldo" style="font-size:20px; margin:0">${money(0)}</div>
-          </div>
-          <div class="pos-saldo-b">
-            <div class="l" style="margin:0">Observación</div>
-            <input id="stCvNota" class="search" placeholder="Opcional" maxlength="140" autocomplete="off" style="margin-top:4px; font-size:14px; padding:8px 10px">
-          </div>
+        <div class="lista" style="margin-top:8px; text-align:left; padding:10px 14px">
+          <div class="l" style="margin:0">Observación</div>
+          <input id="stCvNota" class="search" placeholder="Opcional" maxlength="140" autocomplete="off" style="margin-top:4px; font-size:14px; padding:8px 10px">
         </div>
         <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-top:6px">
           <div class="label" style="margin:0">¿Facturar?</div>
@@ -3463,7 +3500,15 @@ function drawVender(){
         </div>
         <div class="note" id="stFcErr"></div>
       </div>
-      <div class="st-col-dia" id="stResumenDia"></div>
+    </div>
+    <div id="stResumenDrawer" class="pos-drawer">
+      <div class="pos-drawer-panel">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px">
+          <div class="label" style="margin:0">📊 Resumen del día</div>
+          <button class="fbtn" id="stCerrarHoy">✕</button>
+        </div>
+        <div class="st-col-dia" id="stResumenDia"></div>
+      </div>
     </div>`;
   wireNavIcons(sheet);
   document.getElementById('stClose').onclick = ()=> stCerrar(false);
@@ -3514,6 +3559,7 @@ function drawVender(){
   armarProductoManual();
   renderCarrito();
   wireVentaCard();
+  wirePasosVenta();
   renderResumenDia();
   renderCajaStatus();
   // La cámara arranca cerrada (se abre a mano con el botón 📷) para que se
@@ -6761,6 +6807,77 @@ function totalConRecargo(){
 function actualizarTotalVenta(){
   recalcSaldoVenta();
 }
+
+// ===== Vender (POS) en 2 pasos: Carrito → Cobro =====
+// Cambiar de paso solo reorganiza qué se ve; NO toca la lógica de venta
+// (medios de pago, cliente, facturar, guardar) que sigue viviendo intacta
+// dentro de #stVentaCard, enganchada por wireVentaCard().
+const MEDIOS_PAGO_POS = [
+  {id:'stCvContado', label:'💵 Efectivo'},
+  {id:'stCvTransf',  label:'🏦 Transferencia'},
+  {id:'stCvTCred',   label:'💳 T. crédito'},
+  {id:'stCvTDeb',    label:'💳 T. débito'},
+  {id:'stCvCPer',    label:'🤝 Créd. personal'},
+  {id:'stCvCFin',    label:'🏛️ ASOEM'},
+];
+function stIrPaso(n){
+  const p1 = document.getElementById('stPaso1'), p2 = document.getElementById('stPaso2');
+  if(!p1 || !p2) return;
+  p1.style.display = n===2 ? 'none' : '';
+  p2.style.display = n===2 ? '' : 'none';
+  document.querySelectorAll('.pos-paso[data-paso]').forEach(t=> t.classList.toggle('on', Number(t.dataset.paso)===n));
+  const ov = document.querySelector('.overlay.ov-full');
+  (ov || window).scrollTo({top:0, behavior:'smooth'});
+}
+// Muestra/oculta el bloque de un medio de pago; al ocultarlo lo pone en $0
+// para que no siga sumando al total cobrado.
+function stSetPagoVisible(id, vis){
+  const block = document.querySelector(`.pago-block[data-pago="${id}"]`);
+  if(!block) return;
+  block.style.display = vis ? '' : 'none';
+  if(!vis){ const inp = document.getElementById(id); if(inp) inp.value = '0'; }
+}
+function renderChipsPago(){
+  const box = document.getElementById('stChipsPago');
+  if(!box) return;
+  box.innerHTML = MEDIOS_PAGO_POS.map(m=>{
+    const block = document.querySelector(`.pago-block[data-pago="${m.id}"]`);
+    const on = block && block.style.display !== 'none';
+    return `<button type="button" class="chip-pago ${on?'on':''}" data-chip="${m.id}">${m.label}</button>`;
+  }).join('');
+  [...box.querySelectorAll('[data-chip]')].forEach(b=> b.onclick = ()=>{
+    const id = b.dataset.chip;
+    const block = document.querySelector(`.pago-block[data-pago="${id}"]`);
+    const mostrar = block.style.display === 'none';
+    stSetPagoVisible(id, mostrar);
+    renderChipsPago();
+    if(mostrar){ const inp = document.getElementById(id); if(inp){ inp.focus(); if(inp.value==='0') inp.value=''; } }
+    recalcSaldoVenta();
+  });
+}
+function wirePasosVenta(){
+  [...document.querySelectorAll('.pos-paso[data-paso]')].forEach(t=> t.onclick = ()=> stIrPaso(Number(t.dataset.paso)));
+  const cobrar = document.getElementById('stIrCobrar');
+  if(cobrar) cobrar.onclick = ()=>{ if(stVentaItems.length) stIrPaso(2); };
+  const volver = document.getElementById('stVolverCarrito');
+  if(volver) volver.onclick = ()=> stIrPaso(1);
+  // Chips de medios de pago: por defecto solo Efectivo desplegado.
+  window.stResetChipsPago = ()=>{
+    MEDIOS_PAGO_POS.forEach((m,i)=> stSetPagoVisible(m.id, i===0));
+    renderChipsPago();
+  };
+  window.stResetChipsPago();
+  // Resumen del día fuera del flujo, en un panel a un toque.
+  const btnHoy = document.getElementById('stBtnHoy');
+  const drawer = document.getElementById('stResumenDrawer');
+  if(btnHoy && drawer){
+    btnHoy.onclick = ()=>{ drawer.classList.add('open'); renderResumenDia(); };
+    const cerrar = document.getElementById('stCerrarHoy');
+    if(cerrar) cerrar.onclick = ()=> drawer.classList.remove('open');
+    drawer.onclick = e=>{ if(e.target===drawer) drawer.classList.remove('open'); };
+  }
+  stIrPaso(1);
+}
 function recalcSaldoVenta(){
   const saldoEl = document.getElementById('stCvSaldo');
   if(!saldoEl) return;
@@ -6869,6 +6986,11 @@ function renderCarrito(){
   if(!box) return;
   const prendasEl = document.getElementById('stCvPrendasDisplay');
   if(prendasEl) prendasEl.textContent = totalPrendasCarrito();
+  const hayItems = stVentaItems.length > 0;
+  const cobrarBtn = document.getElementById('stIrCobrar');
+  if(cobrarBtn) cobrarBtn.disabled = !hayItems;
+  const tab1 = document.querySelector('.pos-paso[data-paso="1"]');
+  if(tab1) tab1.classList.toggle('done', hayItems);
   box.innerHTML = stVentaItems.length ? stVentaItems.map((it,i)=>`
     <div class="lista" style="margin-top:6px; display:flex; justify-content:space-between; align-items:center; gap:8px; text-align:left">
       <div>
