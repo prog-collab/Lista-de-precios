@@ -225,6 +225,11 @@
        En el celular .pos-cols es un bloque normal → se apila (vertical). */
     .pos-cols{display:grid; grid-template-columns:1fr 1fr; gap:24px; align-items:start}
     .pos-cols > .pos-c{min-width:0}
+    /* Paso 1 (Carrito) va en 3 columnas: escaneo | colores y talles | carrito */
+    #stPaso1 .pos-cols{grid-template-columns:1fr 1.1fr 1fr}
+    /* La columna de colores/talles scrollea sola cuando hay muchos, sin
+       estirar la pantalla ni empujar al carrito. */
+    #stPaso1 .pos-c-card{max-height:calc(100vh - 210px); overflow:auto}
     /* stVentaCard reusa la clase .st-col-right (sticky en otras pantallas);
        en el POS de 2 pasos no la queremos pegajosa. */
     .sheet.sheet-wide #stPaso2 .st-col-right{position:static; top:auto}
@@ -3366,7 +3371,10 @@ function drawVender(){
         </div>
         <div id="stManualResultados"></div>
         <div id="stProductoManualBox"></div>
-        <div id="stCard"></div>
+        </div>
+        <div class="pos-c pos-c-card">
+        <div class="label">Colores y talles</div>
+        <div id="stCard"><div class="note">Escaneá o buscá un producto para ver sus colores y talles acá.</div></div>
         </div>
         <div class="pos-c">
         <div class="label">Carrito de esta venta</div>
@@ -3665,6 +3673,9 @@ async function obtenerMovimientosCaja(sesionId){
   return r.ok ? await r.json() : [];
 }
 
+// La barra de caja (estado + botones de gasto/retiro/movimientos/cerrar)
+// arranca colapsada para no comerse alto de pantalla; se abre con el ▾.
+let cajaColapsada = true;
 async function renderCajaStatus(){
   const box = document.getElementById('stCajaStatus');
   const formBox = document.getElementById('stCajaFormBox');
@@ -3693,17 +3704,27 @@ async function renderCajaStatus(){
           <div class="l" style="margin:0">🔓 Caja abierta en ${esc(stLocalNombre(localSel))} desde las ${hora}${fechaApertura}</div>
           <div class="note" style="margin:2px 0 0">Fondo ${money(sesion.fondo_inicial)}${est?` · efectivo vendido ${money(est.ventas_contado)}${Number(est.pagos_cc_efectivo)>0?` · cobranzas ${money(est.pagos_cc_efectivo)}`:''}${Number(est.reservas_efectivo)!==0?` · reservas ${money(est.reservas_efectivo)}`:''}${salidas>0?` · salidas ${money(salidas)}`:''}`:''}</div>
         </div>
-        <div style="text-align:right">
-          <div class="note" style="margin:0">Efectivo en caja ahora</div>
-          <div class="v" style="font-size:20px; margin:0">${est ? money(est.efectivo_esperado) : '—'}</div>
+        <div style="display:flex; align-items:flex-start; gap:10px">
+          <div style="text-align:right">
+            <div class="note" style="margin:0">Efectivo en caja ahora</div>
+            <div class="v" style="font-size:20px; margin:0">${est ? money(est.efectivo_esperado) : '—'}</div>
+          </div>
+          <button class="fbtn" id="stCajaToggle" title="Mostrar/ocultar acciones de caja" style="flex:none">${cajaColapsada?'▾':'▴'}</button>
         </div>
       </div>
-      <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:8px">
+      <div id="stCajaAcciones" style="gap:6px; flex-wrap:wrap; margin-top:8px; ${cajaColapsada?'display:none':'display:flex'}">
         ${Object.entries(CAJA_MOV_META).map(([t,m])=>`<button class="fbtn" data-mov="${t}">${m.emoji} ${m.label}</button>`).join('')}
         <button class="fbtn" id="stCajaVerMovs">📋 Movimientos</button>
         <button class="fbtn" id="stCajaCerrarBtn">🔒 Cerrar caja</button>
       </div>
     </div>`;
+  document.getElementById('stCajaToggle').onclick = ()=>{
+    cajaColapsada = !cajaColapsada;
+    const acc = document.getElementById('stCajaAcciones');
+    if(acc) acc.style.display = cajaColapsada ? 'none' : 'flex';
+    document.getElementById('stCajaToggle').textContent = cajaColapsada ? '▾' : '▴';
+    if(cajaColapsada) formBox.innerHTML = '';
+  };
   [...box.querySelectorAll('[data-mov]')].forEach(b=> b.onclick = ()=> armarMovimientoCaja(formBox, localSel, b.dataset.mov));
   document.getElementById('stCajaVerMovs').onclick = ()=> armarListaMovimientos(formBox, sesion, localSel);
   document.getElementById('stCajaCerrarBtn').onclick = ()=> armarCerrarCaja(formBox, sesion, localSel);
