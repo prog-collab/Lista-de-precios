@@ -2887,7 +2887,7 @@ function wireVentaCard(){
         // esta venta (hay que armarlo ANTES de vaciar stVentaItems).
         resultadoEl.style.flex = '1 1 100%';
         const formaPagoTexto = mediosDePagoVenta({
-          pago_contado: pagoContado, contado_descuento_pct: contadoDescPct,
+          pago_contado: pagoContado, contado_descuento_pct: contadoDescPct, redondeo_contado: redondeoCont,
           pago_transferencia: pagoTransf, transferencia_alias: transfAlias, transferencia_descuento_pct: transfDescuentoPct,
           pago_tarjeta_credito: pagoTCred, tarjeta_credito_cuotas: cuotasTCred, tarjeta_credito_recargo_pct: recargoPct,
           pago_tarjeta_debito: pagoTDeb,
@@ -6562,7 +6562,7 @@ function transferenciaVerificadaTexto(v){
 
 function mediosDePagoVenta(v){
   return [
-    v.pago_contado>0 && `Efectivo ${money(v.pago_contado)}${v.contado_descuento_pct>0?` (−${v.contado_descuento_pct}%)`:''}`,
+    v.pago_contado>0 && `Efectivo ${money(v.pago_contado)}${v.contado_descuento_pct>0?` (−${v.contado_descuento_pct}%)`:''}${Number(v.redondeo_contado)?` (redondeo ${Number(v.redondeo_contado)>0?'+':'−'}${money(Math.abs(Number(v.redondeo_contado)))})`:''}`,
     v.pago_transferencia>0 && `Transf.${v.transferencia_alias?` (${esc(v.transferencia_alias)})`:''} ${money(v.pago_transferencia)}${v.transferencia_descuento_pct>0?` (−${v.transferencia_descuento_pct}%)`:''}${transferenciaVerificadaTexto(v)}`,
     v.pago_tarjeta_credito>0 && `T.Créd ${money(v.pago_tarjeta_credito)}${v.tarjeta_credito_cuotas>1?` (${v.tarjeta_credito_cuotas} cuotas, +${v.tarjeta_credito_recargo_pct}%)`:''}`,
     v.pago_tarjeta_debito>0 && `T.Déb ${money(v.pago_tarjeta_debito)}`,
