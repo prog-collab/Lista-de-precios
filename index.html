@@ -115,6 +115,16 @@
   .cal-turno{font-size:10px; text-align:left; background:none; border:1px solid var(--line); border-radius:4px;
     padding:2px 4px; cursor:pointer; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
   .cal-turno:hover{border-color:var(--accent)}
+  /* Vista semanal: una fila de 7 días con más aire para ver nombres completos */
+  .cal-grid-sem{display:grid; grid-template-columns:repeat(7,1fr); gap:6px}
+  .cal-celda-sem{min-height:120px}
+  .cal-celda-sem .cal-dia{font-size:12px}
+  .cal-turno-sem{font-size:11px; white-space:normal; line-height:1.35; padding:5px 6px; margin-top:2px}
+  @media (max-width:640px){
+    .cal-grid-sem{grid-template-columns:1fr; gap:8px}
+    .cal-celda-sem{min-height:0}
+    .cal-turno-sem{font-size:13px}
+  }
   .sheet h2{margin:0 0 2px; font-size:20px; padding-right:8px}
   .sheet .scod{color:var(--accent); font-weight:700; font-size:14px}
   .sheet .scat{color:var(--muted); font-size:13px; margin-bottom:14px}
@@ -5910,6 +5920,8 @@ async function repEstancados(){
 // adelante armar un reporte de rendimiento por vendedor.
 let calLocal = 'camerino';
 let calAnio, calMes; // mes visible del calendario (calMes: 0-11)
+let calVista = 'mes';         // 'mes' | 'semana'
+let calSemanaLunes = null;    // Date (lunes) de la semana visible en vista semanal
 let calPuedeEditar = false;   // solo gerente
 let calLocalForzado = null;   // vendedor: local_asignado (solo ve/opera el suyo)
 const DIAS_SEMANA = ['Lun','Mar','Mié','Jue','Vie','Sáb','Dom'];
@@ -5978,15 +5990,31 @@ function renderCalendario(){
         ${bloqGiu?'style="opacity:.5; cursor:not-allowed"':''}>Giustozzi</button>
     </div>
     ${!calPuedeEditar ? '<div class="note" style="margin-top:4px">Podés asignar los turnos de hoy en adelante de tu local — los días pasados, el plantel y los feriados los administra el gerente.</div>' : ''}
+    <div class="label" style="margin-top:12px">Vista</div>
+    <div class="talles">
+      <button class="talle ${calVista==='mes'?'sel':''}" data-vista="mes">🗓️ Mensual</button>
+      <button class="talle ${calVista==='semana'?'sel':''}" data-vista="semana">📆 Semanal</button>
+    </div>
     <div id="calMesBox" style="margin-top:12px"><div class="note">Cargando calendario…</div></div>
     <div class="st-grid" style="margin-top:20px">
       <div id="calPlantel"><div class="note">Cargando plantel…</div></div>
       <div id="calFeriados"><div class="note">Cargando feriados…</div></div>
     </div>`;
   [...box.querySelectorAll('[data-local]')].forEach(b=> b.onclick = ()=>{ if(b.disabled) return; calLocal = b.dataset.local; renderCalendario(); });
+  [...box.querySelectorAll('[data-vista]')].forEach(b=> b.onclick = ()=>{ if(calVista===b.dataset.vista) return; calVista = b.dataset.vista; renderCalendario(); });
   renderPlantel();
-  renderMesCalendario();
+  renderVistaCalendario();
   renderFeriados();
+}
+
+// Despacha a la vista mensual o semanal según el toggle elegido.
+function renderVistaCalendario(){
+  if(calVista==='semana'){
+    if(!calSemanaLunes) calSemanaLunes = lunesDeSemana(new Date());
+    renderSemanaCalendario();
+  } else {
+    renderMesCalendario();
+  }
 }
 
 // ---- Plantel de vendedores (por local) ----
@@ -6052,6 +6080,46 @@ async function renderPlantel(){
 }
 
 // ---- Calendario mensual: quién trabaja cada turno, por día ----
+// ---- Helpers compartidos entre la vista mensual y la semanal ----
+
+// Lunes (a medianoche local) de la semana que contiene a `d`.
+function lunesDeSemana(d){
+  const x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const offset = (x.getDay()+6)%7; // Lun=0 … Dom=6
+  x.setDate(x.getDate()-offset);
+  return x;
+}
+
+// Trae vendedores activos + turnos + feriados de un rango [desde, hasta] (ISO)
+// y arma los mapas por fecha que usan las dos vistas.
+async function calCargarDatosRango(fechaDesde, fechaHasta){
+  const [vendedores, turnosRes, feriadosRes] = await Promise.all([
+    cargarVendedores(calLocal, true),
+    sbAuthed(`/rest/v1/turnos?local=eq.${calLocal}&fecha=gte.${fechaDesde}&fecha=lte.${fechaHasta}&select=*,vendedores(nombre)`),
+    sbAuthed(`/rest/v1/feriados?fecha=gte.${fechaDesde}&fecha=lte.${fechaHasta}&select=*`),
+  ]);
+  const turnos = turnosRes.ok ? await turnosRes.json() : [];
+  const feriados = feriadosRes.ok ? await feriadosRes.json() : [];
+  const feriadoPorFecha = {}; feriados.forEach(f=> feriadoPorFecha[f.fecha]=f.nombre);
+  const turnosPorFecha = {};
+  turnos.forEach(t=>{
+    turnosPorFecha[t.fecha] = turnosPorFecha[t.fecha] || {manana:[], tarde:[]};
+    turnosPorFecha[t.fecha][t.turno].push({id:t.id, vendedorId:t.vendedor_id, nombre:(t.vendedores&&t.vendedores.nombre)||'—'});
+  });
+  return {vendedores, turnosPorFecha, feriadoPorFecha};
+}
+
+// Conecta los botones de turno (mañana/tarde) de la grilla ya renderizada
+// para que abran el popup de asignación de vendedores.
+function calWireTurnos(box, vendedores, turnosPorFecha){
+  [...box.querySelectorAll('.cal-turno')].forEach(b=>{
+    if(b.disabled) return;
+    const fecha = b.closest('[data-fecha]').dataset.fecha;
+    const turno = b.dataset.turno;
+    b.onclick = ()=> abrirAsignarTurno(fecha, turno, vendedores, (turnosPorFecha[fecha]||{manana:[],tarde:[]})[turno]);
+  });
+}
+
 async function renderMesCalendario(){
   const box = document.getElementById('calMesBox');
   if(!box) return;
@@ -6061,29 +6129,17 @@ async function renderMesCalendario(){
   const fechaDesde = isoFecha(calAnio, calMes, 1);
   const fechaHasta = isoFecha(calAnio, calMes, totalDias);
   try{
-    const [vendedores, turnosRes, feriadosRes] = await Promise.all([
-      cargarVendedores(calLocal, true),
-      sbAuthed(`/rest/v1/turnos?local=eq.${calLocal}&fecha=gte.${fechaDesde}&fecha=lte.${fechaHasta}&select=*,vendedores(nombre)`),
-      sbAuthed(`/rest/v1/feriados?fecha=gte.${fechaDesde}&fecha=lte.${fechaHasta}&select=*`),
-    ]);
-    const turnos = turnosRes.ok ? await turnosRes.json() : [];
-    const feriados = feriadosRes.ok ? await feriadosRes.json() : [];
-    const feriadoPorFecha = {}; feriados.forEach(f=> feriadoPorFecha[f.fecha]=f.nombre);
-    const turnosPorFecha = {};
-    turnos.forEach(t=>{
-      turnosPorFecha[t.fecha] = turnosPorFecha[t.fecha] || {manana:[], tarde:[]};
-      turnosPorFecha[t.fecha][t.turno].push({id:t.id, vendedorId:t.vendedor_id, nombre:(t.vendedores&&t.vendedores.nombre)||'—'});
-    });
+    const {vendedores, turnosPorFecha, feriadoPorFecha} = await calCargarDatosRango(fechaDesde, fechaHasta);
     // getDay(): Domingo=0 … Sábado=6 — lo paso a Lunes=0 … Domingo=6.
     const offset = (primerDia.getDay()+6)%7;
     const hoyIso = isoLocal(new Date());
+    const nombreCorto = n => (n||'').split(' ')[0];
     let celdas = '';
     for(let i=0;i<offset;i++) celdas += `<div class="cal-celda cal-vacia"></div>`;
     for(let d=1; d<=totalDias; d++){
       const fecha = isoFecha(calAnio, calMes, d);
       const feriado = feriadoPorFecha[fecha];
       const t = turnosPorFecha[fecha] || {manana:[], tarde:[]};
-      const nombreCorto = n => (n||'').split(' ')[0];
       // El gerente edita cualquier fecha; un vendedor solo hoy en adelante.
       const editable = calPuedeEditar || fecha>=hoyIso;
       const soloLectura = editable ? '' : 'disabled style="cursor:default"';
@@ -6107,14 +6163,61 @@ async function renderMesCalendario(){
       ${!vendedores.length ? '<div class="note" style="margin-top:8px">Todavía no hay vendedores cargados en el plantel de este local.</div>' : ''}`;
     document.getElementById('calMesAnterior').onclick = ()=>{ calMes--; if(calMes<0){calMes=11; calAnio--;} renderMesCalendario(); };
     document.getElementById('calMesSiguiente').onclick = ()=>{ calMes++; if(calMes>11){calMes=0; calAnio++;} renderMesCalendario(); };
-    [...box.querySelectorAll('.cal-turno')].forEach(b=>{
-      if(b.disabled) return;
-      const fecha = b.closest('[data-fecha]').dataset.fecha;
-      const turno = b.dataset.turno;
-      b.onclick = ()=> abrirAsignarTurno(fecha, turno, vendedores, (turnosPorFecha[fecha]||{manana:[],tarde:[]})[turno]);
-    });
+    calWireTurnos(box, vendedores, turnosPorFecha);
   }catch(e){
     box.innerHTML = `<div class="note">No se pudo cargar el calendario.</div>`;
+  }
+}
+
+// ---- Vista semanal: una sola semana (Lun-Dom), con celdas más grandes que
+// muestran el nombre completo de cada vendedor por turno (hay más lugar). ----
+async function renderSemanaCalendario(){
+  const box = document.getElementById('calMesBox');
+  if(!box) return;
+  box.innerHTML = `<div class="note">Cargando…</div>`;
+  const lunes = calSemanaLunes;
+  const domingo = new Date(lunes); domingo.setDate(lunes.getDate()+6);
+  const fechaDesde = isoLocal(lunes);
+  const fechaHasta = isoLocal(domingo);
+  try{
+    const {vendedores, turnosPorFecha, feriadoPorFecha} = await calCargarDatosRango(fechaDesde, fechaHasta);
+    const hoyIso = isoLocal(new Date());
+    const listaNombres = arr => arr.length
+      ? arr.map(x=>esc(x.nombre)).join(', ')
+      : '<span style="color:var(--muted)">— sin asignar —</span>';
+    let celdas = '';
+    for(let i=0; i<7; i++){
+      const dia = new Date(lunes); dia.setDate(lunes.getDate()+i);
+      const fecha = isoLocal(dia);
+      const feriado = feriadoPorFecha[fecha];
+      const t = turnosPorFecha[fecha] || {manana:[], tarde:[]};
+      const editable = calPuedeEditar || fecha>=hoyIso;
+      const soloLectura = editable ? '' : 'disabled style="cursor:default"';
+      const esHoy = fecha===hoyIso;
+      celdas += `
+        <div class="cal-celda cal-celda-sem ${feriado?'cal-feriado':''} ${esHoy?'cal-hoy':''}" data-fecha="${fecha}">
+          <div class="cal-dia">${esHoy?'📍 ':''}${DIAS_SEMANA[i]} ${dia.getDate()}/${dia.getMonth()+1}</div>
+          ${feriado ? `<div class="cal-feriado-nombre" title="${esc(feriado)}">🎌 ${esc(feriado)}</div>` : ''}
+          <button type="button" class="cal-turno cal-turno-sem" data-turno="manana" title="Turno mañana" ${soloLectura}>☀️ Mañana: ${listaNombres(t.manana)}</button>
+          <button type="button" class="cal-turno cal-turno-sem" data-turno="tarde" title="Turno tarde" ${soloLectura}>🌆 Tarde: ${listaNombres(t.tarde)}</button>
+        </div>`;
+    }
+    const fmtDM = d => `${d.getDate()}/${d.getMonth()+1}`;
+    box.innerHTML = `
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px">
+        <button class="fbtn" id="calSemAnterior">‹ Anterior</button>
+        <div class="label" style="margin:0; text-align:center">Semana ${fmtDM(lunes)} – ${fmtDM(domingo)}<br><span style="text-transform:none; font-weight:400">${lunes.getFullYear()}</span></div>
+        <button class="fbtn" id="calSemSiguiente">Siguiente ›</button>
+      </div>
+      <button class="fbtn" id="calSemHoy" style="width:100%; margin-bottom:10px">Ir a esta semana</button>
+      <div class="cal-grid-sem">${celdas}</div>
+      ${!vendedores.length ? '<div class="note" style="margin-top:8px">Todavía no hay vendedores cargados en el plantel de este local.</div>' : ''}`;
+    document.getElementById('calSemAnterior').onclick = ()=>{ calSemanaLunes = new Date(lunes); calSemanaLunes.setDate(lunes.getDate()-7); renderSemanaCalendario(); };
+    document.getElementById('calSemSiguiente').onclick = ()=>{ calSemanaLunes = new Date(lunes); calSemanaLunes.setDate(lunes.getDate()+7); renderSemanaCalendario(); };
+    document.getElementById('calSemHoy').onclick = ()=>{ calSemanaLunes = lunesDeSemana(new Date()); renderSemanaCalendario(); };
+    calWireTurnos(box, vendedores, turnosPorFecha);
+  }catch(e){
+    box.innerHTML = `<div class="note">No se pudo cargar la semana.</div>`;
   }
 }
 
@@ -6141,14 +6244,22 @@ function abrirAsignarTurno(fecha, turno, vendedoresActivos, asignadosActuales){
       try{
         if(asignadosIds.has(vid)){
           const actual = (asignadosActuales||[]).find(a=>a.vendedorId===vid);
-          await sbAuthed(`/rest/v1/turnos?id=eq.${actual.id}`, { method:'DELETE' });
+          if(actual){
+            await sbAuthed(`/rest/v1/turnos?id=eq.${actual.id}`, { method:'DELETE' });
+            const idx = asignadosActuales.indexOf(actual); if(idx>=0) asignadosActuales.splice(idx,1);
+          }
           asignadosIds.delete(vid);
         } else {
-          await sbAuthed('/rest/v1/turnos', { method:'POST', body: JSON.stringify({ local: calLocal, fecha, turno, vendedor_id: vid }) });
+          // return=representation para conservar el id de la fila nueva y poder
+          // sacarla de nuevo sin recargar (permite cargar 2+ vendedores seguidos).
+          const r = await sbAuthed('/rest/v1/turnos', { method:'POST', headers:{Prefer:'return=representation'}, body: JSON.stringify({ local: calLocal, fecha, turno, vendedor_id: vid }) });
+          if(!r.ok) throw new Error();
+          const fila = (await r.json())[0];
+          (asignadosActuales = asignadosActuales||[]).push({id:fila.id, vendedorId:vid, nombre:(vendedoresActivos.find(v=>v.id===vid)||{}).nombre||'—'});
           asignadosIds.add(vid);
         }
         b.classList.toggle('sel');
-        renderMesCalendario();
+        renderVistaCalendario();
       }catch(e){ err.textContent = 'No se pudo actualizar.'; }
       finally{ b.disabled = false; }
     };
