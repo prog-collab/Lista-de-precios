@@ -220,9 +220,14 @@
   .pos-drawer-panel{background:var(--bg); width:100%; max-width:440px; margin:56px 12px;
     border:1px solid var(--line); border-radius:16px; padding:18px}
   @media (min-width:900px){
-    /* En PC también van pestañas (una sola columna angosta), no 3 columnas */
-    .sheet.sheet-wide .pos-steps,
-    .sheet.sheet-wide .pos-panel{max-width:720px; margin-left:auto; margin-right:auto}
+    /* En PC siguen las pestañas, pero cada paso reparte su contenido en 2
+       columnas para aprovechar el ancho y que entre todo sin scrolear.
+       En el celular .pos-cols es un bloque normal → se apila (vertical). */
+    .pos-cols{display:grid; grid-template-columns:1fr 1fr; gap:24px; align-items:start}
+    .pos-cols > .pos-c{min-width:0}
+    /* stVentaCard reusa la clase .st-col-right (sticky en otras pantallas);
+       en el POS de 2 pasos no la queremos pegajosa. */
+    .sheet.sheet-wide #stPaso2 .st-col-right{position:static; top:auto}
   }
   .box{background:var(--card); border:1px solid var(--line); border-radius:12px; padding:12px}
   .box .t{font-size:12px; color:var(--muted)}
@@ -3340,7 +3345,8 @@ function drawVender(){
       </div>
     </div>
     <div id="stPaso1" class="pos-panel">
-      <div class="st-col-left">
+      <div class="st-col-left pos-cols">
+        <div class="pos-c">
         <div class="label">Local y vendedor</div>
         <div style="display:flex; gap:8px">
           <select id="stLocSel" class="search" style="flex:1 1 0">
@@ -3361,14 +3367,19 @@ function drawVender(){
         <div id="stManualResultados"></div>
         <div id="stProductoManualBox"></div>
         <div id="stCard"></div>
+        </div>
+        <div class="pos-c">
         <div class="label">Carrito de esta venta</div>
         <div id="stCarrito"></div>
         <button class="addcart" id="stIrCobrar" disabled>Cobrar →</button>
+        </div>
       </div>
     </div>
     <div id="stPaso2" class="pos-panel" style="display:none">
       <div class="st-col-right" id="stVentaCard">
         <button class="fbtn" id="stVolverCarrito" style="width:100%; margin-bottom:12px">‹ Volver al carrito</button>
+        <div class="pos-cols">
+        <div class="pos-c">
         <div class="label">Cliente de esta venta (opcional)</div>
         <div class="note">Elegilo para que la compra quede en su historial, tenga o no crédito personal.</div>
         <button class="fbtn" type="button" id="stCvClienteBuscar" style="width:100%; margin-top:4px">👤 Elegir cliente</button>
@@ -3462,6 +3473,8 @@ function drawVender(){
           </div>
         </div>
         <div class="note">Tocá "＝" al lado de un medio de pago para cargarle el total del carrito de una — pone el resto en $0.</div>
+        </div>
+        <div class="pos-c">
         <div class="lista" style="margin-top:8px; text-align:left; padding:10px 14px">
           <div class="l" style="margin:0">Observación</div>
           <input id="stCvNota" class="search" placeholder="Opcional" maxlength="140" autocomplete="off" style="margin-top:4px; font-size:14px; padding:8px 10px">
@@ -3499,6 +3512,8 @@ function drawVender(){
           <div id="stFcResultado" style="flex:2 1 200px"></div>
         </div>
         <div class="note" id="stFcErr"></div>
+        </div>
+        </div>
       </div>
     </div>
     <div id="stResumenDrawer" class="pos-drawer">
