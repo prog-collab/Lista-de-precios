@@ -2488,6 +2488,16 @@ function wireVentaCard(){
     b.classList.add('sel');
     recalcSaldoVenta();
   });
+  [...card.querySelectorAll('#stCvContadoRedondeo [data-red]')].forEach(b=> b.onclick=()=>{
+    [...card.querySelectorAll('#stCvContadoRedondeo [data-red]')].forEach(x=>x.classList.remove('sel'));
+    b.classList.add('sel');
+    const montoInput = card.querySelector('#stCvContadoRedondeoMonto');
+    const activo = Number(b.dataset.red)!==0;
+    montoInput.style.display = activo ? '' : 'none';
+    if(!activo) montoInput.value=''; else montoInput.focus();
+    recalcSaldoVenta();
+  });
+  card.querySelector('#stCvContadoRedondeoMonto').addEventListener('input', recalcSaldoVenta);
   recalcSaldoVenta();
   [...card.querySelectorAll('[data-usar-total]')].forEach(b=> b.onclick=()=>{
     const campo = b.dataset.usarTotal;
@@ -2508,6 +2518,10 @@ function wireVentaCard(){
     card.querySelector('#stCvCFinAutorizacion').value = '';
     [...card.querySelectorAll('#stCvContadoDescuento [data-desc]')].forEach(x=>x.classList.remove('sel'));
     card.querySelector('#stCvContadoDescuento [data-desc="0"]').classList.add('sel');
+    [...card.querySelectorAll('#stCvContadoRedondeo [data-red]')].forEach(x=>x.classList.remove('sel'));
+    card.querySelector('#stCvContadoRedondeo [data-red="0"]').classList.add('sel');
+    const redMonto = card.querySelector('#stCvContadoRedondeoMonto');
+    if(redMonto){ redMonto.value=''; redMonto.style.display='none'; }
     card.querySelector('#stCvTransfDescuento').checked = false;
     card.querySelector('#stCvTransfAlias').value = '';
     card.querySelector('#stCvNota').value = '';
@@ -2758,6 +2772,7 @@ function wireVentaCard(){
     const total = totalConRecargo();
     const contadoDescPct = contadoDescuentoPct();
     const pagoContado = montoFinalContado();
+    const redondeoCont = redondeoContado();
     const transfAlias = card.querySelector('#stCvTransfAlias').value||null;
     const pagoTDeb = Number(card.querySelector('#stCvTDeb').value)||0;
     const pagoCPer = Number(card.querySelector('#stCvCPer').value)||0;
@@ -2806,6 +2821,7 @@ function wireVentaCard(){
           local: localSel, vendedor: sbSession.email||null, vendedor_id: stVendedorSel||null, items: stVentaItems, total,
           fecha: isoLocal(new Date()),
           pago_contado: pagoContado, contado_descuento_pct: contadoDescPct,
+          redondeo_contado: redondeoCont,
           pago_transferencia: pagoTransf, transferencia_alias: transfAlias,
           transferencia_descuento_pct: transfDescuentoPct,
           // Respaldo de la acreditación verificada en MP (si se verificó).
@@ -3409,6 +3425,13 @@ function drawVender(){
               <button class="talle" type="button" data-desc="10">−10%</button>
             </div>
             <div class="note" id="stCvContadoDescuentoInfo" style="margin-top:2px"></div>
+            <div class="talles" id="stCvContadoRedondeo" style="margin-top:6px">
+              <button class="talle sel" type="button" data-red="0">Sin redondeo</button>
+              <button class="talle" type="button" data-red="1">＋ En más</button>
+              <button class="talle" type="button" data-red="-1">− En menos</button>
+            </div>
+            <input id="stCvContadoRedondeoMonto" class="search" type="number" inputmode="decimal" placeholder="Monto del redondeo" style="margin-top:4px; display:none">
+            <div class="note" id="stCvContadoRedondeoInfo" style="margin-top:2px"></div>
           </div>
           <div class="pago-block" data-pago="stCvTransf"><div class="note" style="margin:0 0 4px">Transferencia</div>
             <div style="display:flex; gap:4px">
@@ -6830,7 +6853,22 @@ function contadoDescuentoPct(){
   return el ? Number(el.dataset.desc)||0 : 0;
 }
 function montoBaseContado(){ const el=document.getElementById('stCvContado'); return el ? Number(el.value)||0 : 0; }
-function montoFinalContado(){ return montoBaseContado() * (1 - contadoDescuentoPct()/100); }
+// Redondeo del efectivo: dirección (+1 en más / −1 en menos / 0 sin) × monto.
+function redondeoDireccionContado(){
+  const el = document.querySelector('#stCvContadoRedondeo .talle.sel');
+  return el ? Number(el.dataset.red)||0 : 0;
+}
+function redondeoContado(){
+  const dir = redondeoDireccionContado();
+  if(!dir) return 0;
+  const el = document.getElementById('stCvContadoRedondeoMonto');
+  return dir * (el ? Math.abs(Number(el.value)||0) : 0);
+}
+function montoFinalContado(){
+  const base = montoBaseContado();
+  const conDesc = base * (1 - contadoDescuentoPct()/100);
+  return base>0 ? Math.max(0, conDesc + redondeoContado()) : conDesc;
+}
 
 // El total de la venta sube por el recargo de financiar en cuotas y baja por
 // el descuento de transferencia y el de efectivo — los demás medios de pago
@@ -6936,6 +6974,11 @@ function recalcSaldoVenta(){
   if(descContEl){
     const baseC = montoBaseContado(), finalC = montoFinalContado();
     descContEl.textContent = (contadoDescuentoPct()>0 && baseC>0) ? `Con descuento: ${money(finalC)} (−${money(baseC-finalC)})` : '';
+  }
+  const redInfoEl = document.getElementById('stCvContadoRedondeoInfo');
+  if(redInfoEl){
+    const r = redondeoContado();
+    redInfoEl.textContent = r!==0 ? `Redondeo ${r>0?'en más +':'en menos −'}${money(Math.abs(r))} · efectivo a cobrar ${money(montoFinalContado())}` : '';
   }
   const recargoCFinEl = document.getElementById('stCvCFinRecargoInfo');
   if(recargoCFinEl){
