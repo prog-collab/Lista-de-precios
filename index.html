@@ -5852,8 +5852,10 @@ async function renderDashboardAsoem(){
 // ===== 📋 Reportes (solo lectura, solo gerente) =====
 // Tres pestañas: (1) productos sin stock / a reponer, calculado del catálogo
 // que ya está en memoria; (2) ventas del día por medio de pago, desde la tabla
-// `ventas`; (3) ranking de productos más vendidos, sumando los `items` (jsonb)
-// de las ventas. No escribe nada en ninguna tabla.
+// `ventas`; (2 bis) facturación del mes: qué se facturó y qué no, cortando por
+// fecha de venta; (3) ranking de productos más vendidos, sumando los `items`
+// (jsonb) de las ventas. Solo lectura, salvo el botón de facturar de la
+// pestaña de facturación.
 let _repTab = 'reponer';
 function drawReportes(){
   const sheet = document.getElementById('sheet');
@@ -5912,6 +5914,7 @@ function renderReportesTabs(){
     <div style="display:flex; gap:6px; flex-wrap:wrap; margin:10px 0 4px">
       ${tab('reponer','📦 A reponer')}
       ${tab('dia','💵 Ventas del día')}
+      ${tab('facturacion','🧾 Facturación')}
       ${tab('top','🏆 Más vendidos')}
       ${tab('tendencia','📈 Tendencia')}
       ${tab('inventario','🏦 Inventario')}
@@ -5924,6 +5927,7 @@ function renderReportesTabs(){
   });
   if(_repTab==='reponer') repReponer();
   else if(_repTab==='dia') repVentasDia();
+  else if(_repTab==='facturacion') repFacturacion();
   else if(_repTab==='top') repTopVendidos();
   else if(_repTab==='tendencia') repTendencia();
   else if(_repTab==='inventario') repInventario();
@@ -6010,6 +6014,145 @@ async function repVentasDia(){
   };
   fechaEl.addEventListener('change', ()=> cargar(fechaEl.value));
   cargar(iso);
+}
+
+// (2 bis) Facturación del mes — para controlar cuáles ventas se facturaron.
+// El corte es por FECHA DE LA VENTA, no por la del comprobante: una venta de
+// julio que se facturó en agosto (AFIP emite con fecha de hoy) sigue contando
+// en julio, que es como se controla contra la planilla del local. Solo gerente
+// (drawReportes ya filtra el rol). Es de solo lectura salvo el botón de
+// facturar, que reusa el mismo flujo del POS (armarFacturarVentaExistente).
+let _repFacMes = null;       // 'YYYY-MM'; null = mes en curso
+let _repFacLocal = 'todos';  // 'todos' | 'camerino' | 'giustozzi'
+let _repFacVer = 'sin';      // 'sin' = solo las no facturadas | 'todas'
+function repFacturacion(){
+  const cont = document.getElementById('repContenido');
+  const mesHoy = isoLocal(new Date()).slice(0,7);
+  if(!_repFacMes) _repFacMes = mesHoy;
+  const btnLocal = (val,txt)=> `<button class="fbtn" data-flocal="${val}" style="${_repFacLocal===val?'background:var(--accent); color:#03283a; border-color:var(--accent)':''}">${txt}</button>`;
+  cont.innerHTML = `
+    <div class="label" style="margin-top:8px">Mes (por fecha de la venta)</div>
+    <input id="repFacMes" class="search" type="month" value="${_repFacMes}" max="${mesHoy}" style="margin-bottom:6px">
+    <div style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:8px">
+      ${btnLocal('todos','Ambos locales')}
+      ${btnLocal('camerino',stLocalNombre('camerino'))}
+      ${btnLocal('giustozzi',stLocalNombre('giustozzi'))}
+    </div>
+    <div id="repFacBox"><div class="note">Cargando…</div></div>`;
+  cont.querySelector('#repFacMes').onchange = e=>{ if(e.target.value){ _repFacMes = e.target.value; repFacturacion(); } };
+  [...cont.querySelectorAll('[data-flocal]')].forEach(b=> b.onclick=()=>{ _repFacLocal = b.dataset.flocal; repFacturacion(); });
+  repFacturacionCargar();
+}
+
+async function repFacturacionCargar(){
+  const box = document.getElementById('repFacBox');
+  if(!box) return;
+  box.innerHTML = `<div class="note">Cargando ventas del mes…</div>`;
+  const [y,m] = _repFacMes.split('-').map(Number);
+  const desde = `${_repFacMes}-01`;
+  const hasta = `${_repFacMes}-${String(new Date(y, m, 0).getDate()).padStart(2,'0')}`;
+  try{
+    const filtroLocal = _repFacLocal==='todos' ? '' : `&local=eq.${_repFacLocal}`;
+    const r = await sbAuthed(`/rest/v1/ventas?fecha=gte.${desde}&fecha=lte.${hasta}${filtroLocal}`+
+      `&order=fecha.desc,created_at.desc&select=*,clientes(nombre)&limit=2000`);
+    if(!r.ok) throw new Error('No se pudieron consultar las ventas.');
+    const ventas = await r.json();
+    const suma = arr => arr.reduce((s,v)=> s+(Number(v.total)||0), 0);
+    const facturadas = ventas.filter(v=> v.facturada);
+    const sinFacturar = ventas.filter(v=> !v.facturada);
+    const total = suma(ventas), montoFac = suma(facturadas), montoSin = suma(sinFacturar);
+    const pct = total>0 ? Math.round(montoFac*100/total) : 0;
+    // Desglose por local: solo tiene sentido cuando se están mirando los dos.
+    const porLocal = {};
+    if(_repFacLocal==='todos') ventas.forEach(v=>{
+      const l = porLocal[v.local] || (porLocal[v.local] = { total:0, sin:0, nSin:0 });
+      l.total += Number(v.total)||0;
+      if(!v.facturada){ l.sin += Number(v.total)||0; l.nSin += 1; }
+    });
+    const verBtn = (val,txt)=> `<button class="fbtn" data-fver="${val}" style="${_repFacVer===val?'background:var(--accent); color:#03283a; border-color:var(--accent)':''}">${txt}</button>`;
+    box.innerHTML = `
+      <div class="lista" style="margin-top:6px"><div class="l">Total vendido en el mes</div><div class="v">${money(total)}</div></div>
+      <div class="grid" style="grid-template-columns:1fr 1fr; margin-top:6px">
+        <div class="box green"><div class="t">Facturado</div><div class="p">${money(montoFac)}</div><div class="s">${facturadas.length} venta${facturadas.length!==1?'s':''} · ${pct}%</div></div>
+        <div class="box" style="${montoSin>0?'border-color:var(--warn)':''}"><div class="t">Sin facturar</div><div class="p" style="${montoSin>0?'color:var(--warn)':''}">${money(montoSin)}</div><div class="s">${sinFacturar.length} venta${sinFacturar.length!==1?'s':''}</div></div>
+      </div>
+      ${Object.keys(porLocal).length>1 ? `<div class="label" style="margin-top:14px">Por local</div>`+
+        Object.entries(porLocal).map(([l,d])=>`<div class="lista" style="margin-top:6px; text-align:left">
+          <div style="display:flex; justify-content:space-between; gap:8px">
+            <span class="l">${esc(stLocalNombre(l))}</span><span class="v" style="font-size:16px">${money(d.total)}</span>
+          </div>
+          <div class="note" style="margin-top:2px">${d.nSin ? `⚠ ${d.nSin} sin facturar por ${money(d.sin)}` : 'Todo facturado 👍'}</div>
+        </div>`).join('') : ''}
+      <div style="display:flex; gap:6px; flex-wrap:wrap; margin:14px 0 8px; align-items:center">
+        ${verBtn('sin',`⚠ Sin facturar (${sinFacturar.length})`)}
+        ${verBtn('todas',`Todas (${ventas.length})`)}
+        <button class="fbtn" id="repFacRecargar" title="Volver a leer el mes">🔄</button>
+      </div>
+      <input id="repFacFiltro" class="search" placeholder="Buscar por cliente, código, artículo o N° de factura…" autocomplete="off" style="margin-bottom:8px">
+      <div id="repFacLista"></div>`;
+    [...box.querySelectorAll('[data-fver]')].forEach(b=> b.onclick=()=>{ _repFacVer = b.dataset.fver; repFacturacionCargar(); });
+    box.querySelector('#repFacRecargar').onclick = ()=> repFacturacionCargar();
+    const listaEl = box.querySelector('#repFacLista');
+    const base = _repFacVer==='sin' ? sinFacturar : ventas;
+    const pintar = (q)=>{
+      const qn = norm(q||'');
+      const filas = qn ? base.filter(v=>{
+        const items = (v.items||[]).map(it=> `${it.codigo||''} ${it.nombre||''}`).join(' ');
+        return norm(`${v.clientes&&v.clientes.nombre||''} ${items} ${v.factura_numero||''} ${v.nota||''}`).includes(qn);
+      }) : base;
+      if(!filas.length){
+        listaEl.innerHTML = `<div class="note">${qn?'Sin resultados con ese filtro.':(_repFacVer==='sin'?'No quedó ninguna venta sin facturar este mes. 👍':'No hubo ventas en este mes.')}</div>`;
+        return;
+      }
+      listaEl.innerHTML = filas.slice(0,300).map(v=>{
+        const fechaFmt = v.fecha ? v.fecha.split('-').reverse().join('/') : '—';
+        const items = (v.items||[]).map(it=> `${esc(it.codigo)} ${esc(it.nombre)}${it.talle?` (${esc(it.talle)}${it.color?' · '+esc(it.color):''})`:''}`).join(', ');
+        return `<div class="lista ventaFila" data-venta-id="${v.id}" style="margin-top:6px; text-align:left; cursor:pointer">
+          <div style="display:flex; justify-content:space-between; gap:8px">
+            <span class="l">${esc(fechaFmt)} · ${esc(stLocalNombre(v.local))}${v.facturada
+              ? ` <span class="v" style="font-size:11px; color:var(--accent2)">· Factura ${esc(v.factura_tipo)} N° ${esc(String(v.factura_numero))}</span>`
+              : ` <span class="v sinFacturarMarca" style="font-size:11px; color:var(--warn)">· sin facturar</span>`}</span>
+            <span class="v" style="font-size:16px">${money(v.total)}</span>
+          </div>
+          <div class="note" style="margin-top:2px">${items || '(sin detalle de items)'}</div>
+          <div class="note" style="margin-top:2px">${mediosDePagoVenta(v)}${v.saldo_pendiente>0?` · ⚠ Saldo pendiente: ${money(v.saldo_pendiente)}`:''}</div>
+          ${v.nota ? `<div class="note" style="margin-top:2px">📝 ${esc(v.nota)}</div>` : ''}
+          <div class="ventaDetalle" style="display:none; margin-top:8px; padding-top:8px; border-top:1px solid var(--border)"></div>
+        </div>`;
+      }).join('') + (filas.length>300 ? `<div class="note" style="margin-top:8px">Se muestran las primeras 300 de ${filas.length}.</div>` : '');
+      [...listaEl.querySelectorAll('.ventaFila')].forEach(fila=>{
+        fila.addEventListener('click', (e)=>{
+          if(e.target.closest('.ventaDetalle')) return;  // no recolapsar al tocar el detalle
+          const v = filas.find(x=> x.id===fila.dataset.ventaId);
+          const detBox = fila.querySelector('.ventaDetalle');
+          const abierto = detBox.style.display !== 'none';
+          [...listaEl.querySelectorAll('.ventaDetalle')].forEach(d=>{ if(d!==detBox) d.style.display='none'; });
+          detBox.style.display = abierto ? 'none' : '';
+          if(!abierto && !detBox.dataset.armado){
+            detBox.dataset.armado = '1';
+            // Mismas acciones que en el POS, pero sin editar: acá se factura o
+            // se comparte el comprobante, nada más.
+            detBox.innerHTML = `
+              ${!v.facturada ? `<button class="fbtn" type="button" data-accion="facturar" style="width:100%">🧾 Facturar esta venta</button>` : ''}
+              ${v.facturada ? `<button class="fbtn" type="button" data-accion="ticket" style="width:100%">📤 Compartir / imprimir factura</button>` : ''}
+              <button class="fbtn" type="button" data-accion="recibo" style="width:100%; margin-top:6px">🧾 Compartir / imprimir Recibo X</button>
+              <div class="ventaAccionBox" style="margin-top:8px"></div>`;
+            const accionBox = detBox.querySelector('.ventaAccionBox');
+            const bF = detBox.querySelector('[data-accion="facturar"]');
+            const bT = detBox.querySelector('[data-accion="ticket"]');
+            const bR = detBox.querySelector('[data-accion="recibo"]');
+            if(bF) bF.onclick = ()=> armarFacturarVentaExistente(accionBox, v, v.local);
+            if(bT) bT.onclick = ()=> armarTicketVentaExistente(accionBox, v);
+            if(bR) bR.onclick = ()=> armarReciboVentaExistente(accionBox, v);
+          }
+        });
+      });
+    };
+    pintar('');
+    box.querySelector('#repFacFiltro').addEventListener('input', e=> pintar(e.target.value));
+  }catch(e){
+    box.innerHTML = `<div class="note">${esc(e.message||e)}</div>`;
+  }
 }
 
 // (3) Ranking de productos más vendidos, sumando los items (jsonb) de las ventas
@@ -7063,6 +7206,10 @@ function armarFacturarVentaExistente(box, v, localSel){
       // emitido (que hay que compartir o imprimir). Alcanza con marcar en la
       // fila que esa venta ya quedó facturada.
       const fila = box.closest('.ventaFila');
+      // En el reporte de facturación la fila arranca marcada "sin facturar":
+      // ese cartel se saca antes de pegarle el número de comprobante.
+      const marca = fila && fila.querySelector('.sinFacturarMarca');
+      if(marca) marca.remove();
       const cabecera = fila && fila.querySelector('.l');
       if(cabecera && !/Factura/.test(cabecera.innerHTML)){
         cabecera.innerHTML += ` <span class="v" style="font-size:11px; color:var(--accent2)">· Factura ${esc(d.tipo)} N° ${esc(String(d.numero))}</span>`;
