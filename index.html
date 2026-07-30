@@ -6025,6 +6025,15 @@ async function repVentasDia(){
 let _repFacMes = null;       // 'YYYY-MM'; null = mes en curso
 let _repFacLocal = 'todos';  // 'todos' | 'camerino' | 'giustozzi'
 let _repFacVer = 'sin';      // 'sin' = solo las no facturadas | 'todas'
+// Filtro por medio de pago: botones que se prenden y apagan. Vacío = todos.
+// Una venta entra si tiene monto en ALGUNO de los medios prendidos (las ventas
+// mixtas —parte efectivo, parte tarjeta— aparecen en los dos filtros).
+const REP_FAC_MEDIOS = [
+  ['pago_contado','💵 Efectivo'], ['pago_transferencia','🏦 Transferencia'],
+  ['pago_tarjeta_debito','💳 Débito'], ['pago_tarjeta_credito','💳 Crédito'],
+  ['pago_credito_personal','🤝 Crédito personal'], ['pago_credito_financiero','🏛 ASOEM'],
+];
+let _repFacMediosSel = [];
 function repFacturacion(){
   const cont = document.getElementById('repContenido');
   const mesHoy = isoLocal(new Date()).slice(0,7);
@@ -6087,24 +6096,55 @@ async function repFacturacionCargar(){
         ${verBtn('sin',`⚠ Sin facturar (${sinFacturar.length})`)}
         ${verBtn('todas',`Todas (${ventas.length})`)}
         <button class="fbtn" id="repFacRecargar" title="Volver a leer el mes">🔄</button>
+        <span style="width:1px; align-self:stretch; background:var(--border); margin:0 2px"></span>
+        <span id="repFacMediosBtns" style="display:contents"></span>
       </div>
       <input id="repFacFiltro" class="search" placeholder="Buscar por cliente, código, artículo o N° de factura…" autocomplete="off" style="margin-bottom:8px">
       <div id="repFacLista"></div>`;
     [...box.querySelectorAll('[data-fver]')].forEach(b=> b.onclick=()=>{ _repFacVer = b.dataset.fver; repFacturacionCargar(); });
     box.querySelector('#repFacRecargar').onclick = ()=> repFacturacionCargar();
     const listaEl = box.querySelector('#repFacLista');
+    const filtroEl = box.querySelector('#repFacFiltro');
     const base = _repFacVer==='sin' ? sinFacturar : ventas;
+    // Botones de medio de pago: se prenden y apagan sin volver a consultar la
+    // base (ya están todas las ventas del mes en memoria). El número de cada
+    // uno es cuántas ventas de la vista actual lo usaron.
+    const mediosBox = box.querySelector('#repFacMediosBtns');
+    const pintarMedios = ()=>{
+      mediosBox.innerHTML = REP_FAC_MEDIOS.map(([campo,txt])=>{
+        const n = base.filter(v=> Number(v[campo])>0).length;
+        const on = _repFacMediosSel.includes(campo);
+        return `<button class="fbtn" data-fmedio="${campo}" title="${esc(txt)}"
+          style="${on?'background:var(--accent); color:#03283a; border-color:var(--accent)':(n?'':'opacity:.45')}">${txt} (${n})</button>`;
+      }).join('');
+      [...mediosBox.querySelectorAll('[data-fmedio]')].forEach(b=> b.onclick=()=>{
+        const c = b.dataset.fmedio;
+        _repFacMediosSel = _repFacMediosSel.includes(c)
+          ? _repFacMediosSel.filter(x=> x!==c)
+          : _repFacMediosSel.concat(c);
+        pintarMedios();
+        pintar(filtroEl.value);
+      });
+    };
     const pintar = (q)=>{
       const qn = norm(q||'');
-      const filas = qn ? base.filter(v=>{
+      let filas = base;
+      if(_repFacMediosSel.length) filas = filas.filter(v=> _repFacMediosSel.some(c=> Number(v[c])>0));
+      if(qn) filas = filas.filter(v=>{
         const items = (v.items||[]).map(it=> `${it.codigo||''} ${it.nombre||''}`).join(' ');
         return norm(`${v.clientes&&v.clientes.nombre||''} ${items} ${v.factura_numero||''} ${v.nota||''}`).includes(qn);
-      }) : base;
+      });
+      // Con filtros puestos, los totales de arriba (que son los del mes entero)
+      // dejan de servir para lo que se está mirando: se muestra el subtotal.
+      const resumen = (_repFacMediosSel.length || qn)
+        ? `<div class="lista" style="margin-top:6px"><div class="l">Seleccionadas</div><div class="v">${money(filas.reduce((s,v)=> s+(Number(v.total)||0), 0))}</div>
+             <div class="note" style="margin-top:2px">${filas.length} de ${base.length} venta${base.length!==1?'s':''}${_repFacMediosSel.length?` · ${_repFacMediosSel.map(c=> (REP_FAC_MEDIOS.find(m=>m[0]===c)||[])[1]).join(' o ')}`:''}</div></div>`
+        : '';
       if(!filas.length){
-        listaEl.innerHTML = `<div class="note">${qn?'Sin resultados con ese filtro.':(_repFacVer==='sin'?'No quedó ninguna venta sin facturar este mes. 👍':'No hubo ventas en este mes.')}</div>`;
+        listaEl.innerHTML = resumen + `<div class="note" style="margin-top:6px">${(qn||_repFacMediosSel.length)?'Sin resultados con esos filtros.':(_repFacVer==='sin'?'No quedó ninguna venta sin facturar este mes. 👍':'No hubo ventas en este mes.')}</div>`;
         return;
       }
-      listaEl.innerHTML = filas.slice(0,300).map(v=>{
+      listaEl.innerHTML = resumen + filas.slice(0,300).map(v=>{
         const fechaFmt = v.fecha ? v.fecha.split('-').reverse().join('/') : '—';
         const items = (v.items||[]).map(it=> `${esc(it.codigo)} ${esc(it.nombre)}${it.talle?` (${esc(it.talle)}${it.color?' · '+esc(it.color):''})`:''}`).join(', ');
         return `<div class="lista ventaFila" data-venta-id="${v.id}" style="margin-top:6px; text-align:left; cursor:pointer">
@@ -6148,8 +6188,9 @@ async function repFacturacionCargar(){
         });
       });
     };
+    pintarMedios();
     pintar('');
-    box.querySelector('#repFacFiltro').addEventListener('input', e=> pintar(e.target.value));
+    filtroEl.addEventListener('input', e=> pintar(e.target.value));
   }catch(e){
     box.innerHTML = `<div class="note">${esc(e.message||e)}</div>`;
   }
