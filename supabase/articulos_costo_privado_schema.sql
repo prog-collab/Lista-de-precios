@@ -18,8 +18,10 @@
 --  no carga. El index.html ya arreglado pide el catalogo sin costo y trae los
 --  costos aparte, con sesion, en cargarCostos().
 --
---  Estado: NO aplicada todavia. Aplicar cuando el nuevo index.html este en main
---  y publicado en GitHub Pages.
+--  Estado: YA APLICADA (2026-07-30), despues de que el index.html corregido
+--  quedara publicado en GitHub Pages (commit 06e628d, build de Pages exitoso).
+--  Verificado: con la clave anonima se leen las 8 columnas del catalogo pero
+--  `costo` da 42501; con sesion iniciada se lee todo.
 -- ============================================================
 
 revoke select on public.articulos from anon;
