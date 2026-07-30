@@ -423,11 +423,31 @@ function normArt(p){
       stock: Array.isArray(t.stock) ? t.stock : [] }))
   };
 }
+/* El costo de compra es dato interno: NO se pide con la clave anónima (que es
+   pública, viaja en esta misma página). Se carga aparte, solo con sesión
+   iniciada — ver cargarCostos(). La base tampoco lo deja leer sin sesión. */
+let COSTOS = null;              // {codigo: costo} una vez que hay sesión
+function aplicarCostos(){
+  if(!COSTOS) return;
+  // PRODS comparte los mismos objetos que CATALOG, así que alcanza con tocar CATALOG.
+  CATALOG.forEach(p=>{ if(COSTOS[p.codigo]!=null) p.costo = COSTOS[p.codigo]; });
+}
+async function cargarCostos(){
+  if(!sbSession) return;
+  try{
+    const r = await sbAuthed('/rest/v1/articulos?select=codigo,costo');
+    if(!r.ok) return;
+    const rows = await r.json();
+    COSTOS = {};
+    rows.forEach(x=>{ if(x.costo!=null) COSTOS[String(x.codigo)] = Number(x.costo); });
+    aplicarCostos();
+  }catch(e){}
+}
 async function cargarCatalogo(){
   try{
     const all=[]; const step=1000; let off=0;
     for(;;){
-      const r = await fetch(`${SB_URL}/rest/v1/articulos?select=codigo,nombre,categoria,precio_lista,talles,foto_url,costo&order=codigo.asc&limit=${step}&offset=${off}`,
+      const r = await fetch(`${SB_URL}/rest/v1/articulos?select=codigo,nombre,categoria,precio_lista,talles,foto_url&order=codigo.asc&limit=${step}&offset=${off}`,
         { headers:{ apikey:SB_KEY, Authorization:'Bearer '+SB_KEY }, cache:'no-store' });
       if(!r.ok) throw new Error('HTTP '+r.status);
       const page = await r.json();
@@ -436,7 +456,7 @@ async function cargarCatalogo(){
       off += step;
     }
     if(!all.length) throw new Error('sin datos');
-    CATALOG = all; loadAltas();
+    CATALOG = all; aplicarCostos(); loadAltas();
   }catch(e){
     document.getElementById('list').innerHTML =
       '<div class="empty">No se pudo cargar la lista de precios.<br>Revisá la conexión.</div>';
@@ -1540,6 +1560,10 @@ document.getElementById('scanBtn').onclick = async ()=>{
    Escribir stock exige iniciar sesión con una cuenta del panel (RLS is_admin);
    el PIN del modo editor NO alcanza. */
 let sbSession = getLS('sb_session', null);
+// Si la sesión ya venía guardada, traemos los costos (no vienen en la carga
+// anónima del catálogo). Si CATALOG todavía no terminó de cargar, cargarCatalogo()
+// los aplica al final.
+if(sbSession) cargarCostos();
 let stOpen=false, stStream=null, stStopped=true, stBusy=false, stCount=0, stLast=null, stVentaTotal=0, stVentaItems=[], stZXingReader=null;
 let stVendedorSel = null; // vendedor (persona) elegido para las ventas de este local en Vender (POS)
 let stVentaDevolucionId=null;   // si esta venta viene de cobrar la diferencia de un cambio, id de la devolución que la originó
@@ -1574,6 +1598,7 @@ async function sbLogin(email, pass){
   miRolCache = null;
   miLocalAsignadoCache = undefined;
   actualizarVisibilidadRendimiento();
+  cargarCostos();   // recién ahora se pueden leer los costos
 }
 
 // El botón 📈 Rendimiento por vendedor queda oculto del menú salvo que el
