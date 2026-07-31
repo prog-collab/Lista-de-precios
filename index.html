@@ -6078,6 +6078,21 @@ async function repFacturacionCargar(){
       l.total += Number(v.total)||0;
       if(!v.facturada){ l.sin += Number(v.total)||0; l.nSin += 1; }
     });
+    // Desglose por medio de pago: acá se suma el IMPORTE COBRADO por cada uno
+    // (los campos pago_*), no el total de las ventas que lo tocaron — es el
+    // número que cierra contra el banco o contra la caja. Una venta mixta
+    // aparte su parte en cada medio. La suma de los medios más el saldo
+    // pendiente tiene que dar el total vendido; si no da, se avisa.
+    const sumaCampo = (arr,c) => arr.reduce((s,v)=> s+(Number(v[c])||0), 0);
+    const desglose = REP_FAC_MEDIOS.map(([campo,txt])=>({
+      campo, txt,
+      monto: sumaCampo(ventas, campo),
+      sinFac: sumaCampo(sinFacturar, campo),
+      n: ventas.filter(v=> Number(v[campo])>0).length,
+    })).filter(d=> d.monto>0).sort((a,b)=> b.monto-a.monto);
+    const cobrado = desglose.reduce((s,d)=> s+d.monto, 0);
+    const pendiente = sumaCampo(ventas, 'saldo_pendiente');
+    const descuadre = Math.round(total - cobrado - pendiente);
     const verBtn = (val,txt)=> `<button class="fbtn" data-fver="${val}" style="${_repFacVer===val?'background:var(--accent); color:#03283a; border-color:var(--accent)':''}">${txt}</button>`;
     box.innerHTML = `
       <div class="lista" style="margin-top:6px"><div class="l">Total vendido en el mes</div><div class="v">${money(total)}</div></div>
@@ -6092,6 +6107,18 @@ async function repFacturacionCargar(){
           </div>
           <div class="note" style="margin-top:2px">${d.nSin ? `⚠ ${d.nSin} sin facturar por ${money(d.sin)}` : 'Todo facturado 👍'}</div>
         </div>`).join('') : ''}
+      <div class="label" style="margin-top:14px">Cobrado por medio de pago</div>
+      ${desglose.length ? desglose.map(d=>`<div class="lista" style="margin-top:6px; text-align:left">
+          <div style="display:flex; justify-content:space-between; gap:8px">
+            <span class="l">${d.txt}</span><span class="v" style="font-size:16px">${money(d.monto)}</span>
+          </div>
+          <div class="note" style="margin-top:2px">${cobrado>0?Math.round(d.monto*100/cobrado):0}% de lo cobrado · ${d.n} venta${d.n!==1?'s':''}${d.sinFac>0?` · ⚠ ${money(d.sinFac)} en ventas sin facturar`:''}</div>
+        </div>`).join('') : '<div class="note">Sin cobros registrados este mes.</div>'}
+      ${pendiente>0 ? `<div class="lista" style="margin-top:6px; text-align:left">
+          <div style="display:flex; justify-content:space-between; gap:8px">
+            <span class="l" style="color:var(--warn)">⚠ Saldo pendiente (todavía no cobrado)</span><span class="v" style="font-size:16px; color:var(--warn)">${money(pendiente)}</span>
+          </div></div>` : ''}
+      ${Math.abs(descuadre)>=1 ? `<div class="note" style="margin-top:6px; color:var(--warn)">⚠ Los medios de pago suman ${money(cobrado)} y el saldo pendiente ${money(pendiente)}: ${money(Math.abs(descuadre))} ${descuadre>0?'menos':'más'} que el total vendido. Suele ser una venta con los pagos mal cargados — buscala con los filtros de abajo.</div>` : ''}
       <div style="display:flex; gap:6px; flex-wrap:wrap; margin:14px 0 8px; align-items:center">
         ${verBtn('sin',`⚠ Sin facturar (${sinFacturar.length})`)}
         ${verBtn('todas',`Todas (${ventas.length})`)}
