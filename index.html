@@ -3017,7 +3017,14 @@ function wireVentaCard(){
     const pagoCFin = montoFinalCFin();
     const autorizacionAsoem = (card.querySelector('#stCvCFinAutorizacion').value||'').trim();
     const nota = (card.querySelector('#stCvNota').value||'').trim() || null;
-    const saldoPendiente = Math.max(0, total - (pagoContado+pagoTransf+pagoTCred+pagoTDeb+pagoCPer+pagoCFin));
+    // Diferencia entre lo que hay que cobrar y lo cargado en medios de pago:
+    // positiva = falta cobrar, negativa = se cobró de más. El saldo pendiente
+    // que se guarda nunca puede ser negativo, pero el excedente sí hay que
+    // avisarlo (si no, la venta entra con pagos > total e infla los reportes).
+    // Tolerancia de $1 por los centavos de descuentos y recargos.
+    const pagadoTotal = pagoContado+pagoTransf+pagoTCred+pagoTDeb+pagoCPer+pagoCFin;
+    const difPagos = total - pagadoTotal;
+    const saldoPendiente = Math.max(0, difPagos);
     const cuit = (card.querySelector('#stFcCuit').value||'').replace(/\D/g,'');
     const fecha = card.querySelector('#stFcFecha').value;
     // Aviso bien visible (no solo el texto chico al pie): toast + resaltado
@@ -3032,6 +3039,7 @@ function wireVentaCard(){
     };
     if(!(total>0)){ avisoError('Agregá al menos un producto al carrito.'); return; }
     if(saldoPendiente>0){ avisoError('Falta cargar medios de pago — el saldo pendiente tiene que quedar en $0 para guardar la venta.'); return; }
+    if(difPagos < -1){ avisoError(`Los pagos suman ${money(pagadoTotal)} y la venta es de ${money(total)}: ${money(-difPagos)} de más. Revisá los medios de pago (¿la misma plata anotada dos veces?) antes de guardar.`); return; }
     if(pagoTransf>0 && !transfAlias){ avisoError('Elegí a qué alias se transfirió.'); return; }
     if(pagoCPer>0 && !clienteCreditoId){ avisoError('Elegí un cliente (arriba, junto al total) para el crédito personal.'); return; }
     if(pagoCFin>0 && !clienteCreditoId){ avisoError('Elegí un cliente (arriba, junto al total) para el crédito financiero (ASOEM).'); return; }
@@ -7620,11 +7628,20 @@ function recalcSaldoVenta(){
   }
   const autorizacionBox = document.getElementById('stCvCFinAutorizacionBox');
   if(autorizacionBox) autorizacionBox.style.display = montoBaseCFin()>0 ? '' : 'none';
-  const saldo = Math.max(0, total-pagadoVenta());
-  saldoEl.textContent = money(saldo);
-  saldoEl.style.color = saldo>0 ? 'var(--warn)' : '';
+  // La diferencia también puede quedar negativa (se cargó de más). Antes eso
+  // se mostraba como saldo $0, o sea igual que una venta bien cobrada, y la
+  // venta se guardaba inflada; ahora el cartel dice cuánto sobra. Tolerancia
+  // de $1 por los centavos de descuentos y recargos.
+  const dif = total-pagadoVenta();
+  const sobra = dif < -1;
+  const saldo = Math.max(0, dif);
+  const saldoLabel = saldoEl.parentElement ? saldoEl.parentElement.querySelector('.l') : null;
+  if(saldoLabel) saldoLabel.textContent = sobra ? 'De más' : 'Saldo';
+  saldoEl.textContent = money(sobra ? -dif : saldo);
+  const saldoMal = sobra || saldo>0;
+  saldoEl.style.color = saldoMal ? 'var(--warn)' : '';
   const saldoBox = saldoEl.closest('.lista');
-  if(saldoBox) saldoBox.style.border = saldo>0 ? '1px solid var(--warn)' : '';
+  if(saldoBox) saldoBox.style.border = saldoMal ? '1px solid var(--warn)' : '';
 }
 
 // Vender algo que no está cargado en el catálogo: nombre y precio a mano,
