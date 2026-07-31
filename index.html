@@ -100,6 +100,21 @@
     .sheet.sheet-wide .st-grid-3{display:grid; grid-template-columns:1fr 1fr 1fr; gap:28px; align-items:start}
     .sheet.sheet-wide .st-grid-3 > *{position:sticky; top:18px; max-height:calc(100vh - 36px); overflow-y:auto}
   }
+  /* Reportes → Facturación: el resumen del mes son muchos números chicos, así
+     que van en tarjetas angostas que se acomodan solas en varias columnas —
+     en el celular quedan de a una o dos, y en la PC entran todas en una fila
+     sin tener que scrollear para llegar al listado. */
+  .rep-fac .rf-cards{display:grid; gap:8px; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); margin-bottom:4px}
+  .rep-fac .rf-card{background:var(--card); border:1px solid var(--line); border-radius:12px; padding:10px 12px}
+  .rep-fac .rf-card .t{font-size:12px; color:var(--muted); display:flex; justify-content:space-between; gap:8px}
+  .rep-fac .rf-card .p{font-size:19px; font-weight:800; margin-top:2px}
+  .rep-fac .rf-card .s{font-size:11px; color:var(--muted); margin-top:2px; line-height:1.4}
+  .rep-fac .rf-tot .p{font-size:24px}
+  /* El listado también aprovecha el ancho: dos o tres ventas por fila en PC. */
+  @media (min-width:1100px){
+    .rep-fac .rf-lista{display:grid; gap:6px; grid-template-columns:repeat(auto-fit,minmax(340px,1fr)); align-items:start}
+    .rep-fac .rf-lista > *{margin-top:0}
+  }
   /* Calendario de turnos */
   .cal-grid{display:grid; grid-template-columns:repeat(7,1fr); gap:4px}
   .cal-grid-head{margin-bottom:2px}
@@ -6047,15 +6062,19 @@ function repFacturacion(){
   const mesHoy = isoLocal(new Date()).slice(0,7);
   if(!_repFacMes) _repFacMes = mesHoy;
   const btnLocal = (val,txt)=> `<button class="fbtn" data-flocal="${val}" style="${_repFacLocal===val?'background:var(--accent); color:#03283a; border-color:var(--accent)':''}">${txt}</button>`;
+  // Mes y locales en una sola fila: son dos controles chicos y así no se comen
+  // dos renglones de alto antes de los números.
   cont.innerHTML = `
-    <div class="label" style="margin-top:8px">Mes (por fecha de la venta)</div>
-    <input id="repFacMes" class="search" type="month" value="${_repFacMes}" max="${mesHoy}" style="margin-bottom:6px">
-    <div style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:8px">
-      ${btnLocal('todos','Ambos locales')}
-      ${btnLocal('camerino',stLocalNombre('camerino'))}
-      ${btnLocal('giustozzi',stLocalNombre('giustozzi'))}
-    </div>
-    <div id="repFacBox"><div class="note">Cargando…</div></div>`;
+    <div class="rep-fac">
+      <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin:8px 0">
+        <input id="repFacMes" class="search" type="month" value="${_repFacMes}" max="${mesHoy}"
+               title="Mes, por fecha de la venta" style="width:auto; flex:0 0 auto; margin:0">
+        ${btnLocal('todos','Ambos locales')}
+        ${btnLocal('camerino',stLocalNombre('camerino'))}
+        ${btnLocal('giustozzi',stLocalNombre('giustozzi'))}
+      </div>
+      <div id="repFacBox"><div class="note">Cargando…</div></div>
+    </div>`;
   cont.querySelector('#repFacMes').onchange = e=>{ if(e.target.value){ _repFacMes = e.target.value; repFacturacion(); } };
   [...cont.querySelectorAll('[data-flocal]')].forEach(b=> b.onclick=()=>{ _repFacLocal = b.dataset.flocal; repFacturacion(); });
   repFacturacionCargar();
@@ -6113,32 +6132,33 @@ async function repFacturacionCargar(){
     const pendiente = sumaCampo(ventas, 'saldo_pendiente');
     const descuadre = Math.round(total - cobrado - pendiente);
     const verBtn = (val,txt)=> `<button class="fbtn" data-fver="${val}" style="${_repFacVer===val?'background:var(--accent); color:#03283a; border-color:var(--accent)':''}">${txt}</button>`;
+    // Una sola tira de tarjetas: totales del mes, cada local y cada medio de
+    // pago. Antes era una banda por cada cosa y había que scrollear hasta el
+    // listado; ahora en la PC entra todo arriba de una.
+    const card = (t, p, s, extra)=> `<div class="rf-card${extra&&extra.clase?' '+extra.clase:''}" style="${extra&&extra.borde?`border-color:${extra.borde}`:''}">
+        <div class="t">${t}</div>
+        <div class="p" style="${extra&&extra.color?`color:${extra.color}`:''}">${p}</div>
+        <div class="s">${s||'&nbsp;'}</div>
+      </div>`;
     box.innerHTML = `
-      <div class="lista" style="margin-top:6px"><div class="l">Total vendido en el mes</div><div class="v">${money(total)}</div></div>
-      <div class="grid" style="grid-template-columns:1fr 1fr; margin-top:6px">
-        <div class="box green"><div class="t">Facturado</div><div class="p">${money(montoFac)}</div><div class="s">${facturadas.length} venta${facturadas.length!==1?'s':''} · ${pct}%</div></div>
-        <div class="box" style="${montoSin>0?'border-color:var(--warn)':''}"><div class="t">Sin facturar</div><div class="p" style="${montoSin>0?'color:var(--warn)':''}">${money(montoSin)}</div><div class="s">${sinFacturar.length} venta${sinFacturar.length!==1?'s':''}</div></div>
+      <div class="rf-cards">
+        ${card('Total vendido', money(total), `${ventas.length} venta${ventas.length!==1?'s':''} · ${_repFacMes.split('-').reverse().join('/')}`, {clase:'rf-tot'})}
+        ${card('Facturado', money(montoFac), `${facturadas.length} venta${facturadas.length!==1?'s':''} · ${pct}%`, {color:'var(--accent2)'})}
+        ${card('Sin facturar', money(montoSin), `${sinFacturar.length} venta${sinFacturar.length!==1?'s':''}`, montoSin>0?{color:'var(--warn)', borde:'var(--warn)'}:null)}
+        ${Object.entries(porLocal).length>1 ? Object.entries(porLocal).map(([l,d])=>
+          card(esc(stLocalNombre(l)), money(d.total), d.nSin ? `⚠ ${d.nSin} sin facturar por ${money(d.sin)}` : 'Todo facturado 👍')).join('') : ''}
       </div>
-      ${Object.keys(porLocal).length>1 ? `<div class="label" style="margin-top:14px">Por local</div>`+
-        Object.entries(porLocal).map(([l,d])=>`<div class="lista" style="margin-top:6px; text-align:left">
-          <div style="display:flex; justify-content:space-between; gap:8px">
-            <span class="l">${esc(stLocalNombre(l))}</span><span class="v" style="font-size:16px">${money(d.total)}</span>
-          </div>
-          <div class="note" style="margin-top:2px">${d.nSin ? `⚠ ${d.nSin} sin facturar por ${money(d.sin)}` : 'Todo facturado 👍'}</div>
-        </div>`).join('') : ''}
-      <div class="label" style="margin-top:14px">Cobrado por medio de pago</div>
-      ${desglose.length ? desglose.map(d=>`<div class="lista" style="margin-top:6px; text-align:left">
-          <div style="display:flex; justify-content:space-between; gap:8px">
-            <span class="l">${d.txt}</span><span class="v" style="font-size:16px">${money(d.monto)}</span>
-          </div>
-          <div class="note" style="margin-top:2px">${cobrado>0?Math.round(d.monto*100/cobrado):0}% de lo cobrado · ${d.n} venta${d.n!==1?'s':''}${d.sinFac>0?` · ⚠ ${money(d.sinFac)} en ventas sin facturar`:''}</div>
-        </div>`).join('') : '<div class="note">Sin cobros registrados este mes.</div>'}
-      ${pendiente>0 ? `<div class="lista" style="margin-top:6px; text-align:left">
-          <div style="display:flex; justify-content:space-between; gap:8px">
-            <span class="l" style="color:var(--warn)">⚠ Saldo pendiente (todavía no cobrado)</span><span class="v" style="font-size:16px; color:var(--warn)">${money(pendiente)}</span>
-          </div></div>` : ''}
+      <div class="label" style="margin-top:10px">Cobrado por medio de pago</div>
+      <div class="rf-cards">
+        ${desglose.length ? desglose.map(d=> card(
+            `<span>${d.txt}</span><span>${cobrado>0?Math.round(d.monto*100/cobrado):0}%</span>`,
+            money(d.monto),
+            `${d.n} venta${d.n!==1?'s':''}${d.sinFac>0?` · ⚠ ${money(d.sinFac)} sin facturar`:''}`)).join('')
+          : '<div class="note">Sin cobros registrados este mes.</div>'}
+        ${pendiente>0 ? card('⚠ Saldo pendiente', money(pendiente), 'todavía no cobrado', {color:'var(--warn)', borde:'var(--warn)'}) : ''}
+      </div>
       ${Math.abs(descuadre)>=1 ? `<div class="note" style="margin-top:6px; color:var(--warn)">⚠ Los medios de pago suman ${money(cobrado)} y el saldo pendiente ${money(pendiente)}: ${money(Math.abs(descuadre))} ${descuadre>0?'menos':'más'} que el total vendido${descuadradas.length?`, por ${descuadradas.length} venta${descuadradas.length!==1?'s':''} con los pagos mal cargados — miralas con el botón "⚠ Descuadradas" de abajo`:''}.</div>` : ''}
-      <div style="display:flex; gap:6px; flex-wrap:wrap; margin:14px 0 8px; align-items:center">
+      <div style="display:flex; gap:6px; flex-wrap:wrap; margin:10px 0 8px; align-items:center">
         ${verBtn('sin',`⚠ Sin facturar (${sinFacturar.length})`)}
         ${verBtn('todas',`Todas (${ventas.length})`)}
         ${descuadradas.length ? verBtn('descuadre',`⚠ Descuadradas (${descuadradas.length})`) : ''}
@@ -6147,10 +6167,12 @@ async function repFacturacionCargar(){
         <span id="repFacMediosBtns" style="display:contents"></span>
       </div>
       <input id="repFacFiltro" class="search" placeholder="Buscar por cliente, código, artículo o N° de factura…" autocomplete="off" style="margin-bottom:8px">
-      <div id="repFacLista"></div>`;
+      <div id="repFacResumenSel"></div>
+      <div id="repFacLista" class="rf-lista"></div>`;
     [...box.querySelectorAll('[data-fver]')].forEach(b=> b.onclick=()=>{ _repFacVer = b.dataset.fver; repFacturacionCargar(); });
     box.querySelector('#repFacRecargar').onclick = ()=> repFacturacionCargar();
     const listaEl = box.querySelector('#repFacLista');
+    const resumenEl = box.querySelector('#repFacResumenSel');
     const filtroEl = box.querySelector('#repFacFiltro');
     const base = _repFacVer==='sin' ? sinFacturar : (_repFacVer==='descuadre' ? descuadradas : ventas);
     // Botones de medio de pago: se prenden y apagan sin volver a consultar la
@@ -6183,15 +6205,16 @@ async function repFacturacionCargar(){
       });
       // Con filtros puestos, los totales de arriba (que son los del mes entero)
       // dejan de servir para lo que se está mirando: se muestra el subtotal.
-      const resumen = (_repFacMediosSel.length || qn)
-        ? `<div class="lista" style="margin-top:6px"><div class="l">Seleccionadas</div><div class="v">${money(filas.reduce((s,v)=> s+(Number(v.total)||0), 0))}</div>
-             <div class="note" style="margin-top:2px">${filas.length} de ${base.length} venta${base.length!==1?'s':''}${_repFacMediosSel.length?` · ${_repFacMediosSel.map(c=> (REP_FAC_MEDIOS.find(m=>m[0]===c)||[])[1]).join(' o ')}`:''}</div></div>`
+      resumenEl.innerHTML = (_repFacMediosSel.length || qn)
+        ? `<div class="rf-card" style="margin-bottom:8px"><div class="t"><span>Seleccionadas</span><span>${filas.length} de ${base.length}</span></div>
+             <div class="p">${money(filas.reduce((s,v)=> s+(Number(v.total)||0), 0))}</div>
+             <div class="s">${_repFacMediosSel.length?_repFacMediosSel.map(c=> (REP_FAC_MEDIOS.find(m=>m[0]===c)||[])[1]).join(' o '):'&nbsp;'}</div></div>`
         : '';
       if(!filas.length){
-        listaEl.innerHTML = resumen + `<div class="note" style="margin-top:6px">${(qn||_repFacMediosSel.length)?'Sin resultados con esos filtros.':(_repFacVer==='sin'?'No quedó ninguna venta sin facturar este mes. 👍':'No hubo ventas en este mes.')}</div>`;
+        listaEl.innerHTML = `<div class="note" style="grid-column:1/-1">${(qn||_repFacMediosSel.length)?'Sin resultados con esos filtros.':(_repFacVer==='sin'?'No quedó ninguna venta sin facturar este mes. 👍':'No hubo ventas en este mes.')}</div>`;
         return;
       }
-      listaEl.innerHTML = resumen + filas.slice(0,300).map(v=>{
+      listaEl.innerHTML = filas.slice(0,300).map(v=>{
         const fechaFmt = v.fecha ? v.fecha.split('-').reverse().join('/') : '—';
         const items = (v.items||[]).map(it=> `${esc(it.codigo)} ${esc(it.nombre)}${it.talle?` (${esc(it.talle)}${it.color?' · '+esc(it.color):''})`:''}`).join(', ');
         return `<div class="lista ventaFila" data-venta-id="${v.id}" style="margin-top:6px; text-align:left; cursor:pointer">
@@ -6207,7 +6230,7 @@ async function repFacturacionCargar(){
           ${v.nota ? `<div class="note" style="margin-top:2px">📝 ${esc(v.nota)}</div>` : ''}
           <div class="ventaDetalle" style="display:none; margin-top:8px; padding-top:8px; border-top:1px solid var(--border)"></div>
         </div>`;
-      }).join('') + (filas.length>300 ? `<div class="note" style="margin-top:8px">Se muestran las primeras 300 de ${filas.length}.</div>` : '');
+      }).join('') + (filas.length>300 ? `<div class="note" style="margin-top:8px; grid-column:1/-1">Se muestran las primeras 300 de ${filas.length}.</div>` : '');
       [...listaEl.querySelectorAll('.ventaFila')].forEach(fila=>{
         fila.addEventListener('click', (e)=>{
           if(e.target.closest('.ventaDetalle')) return;  // no recolapsar al tocar el detalle
