@@ -6084,6 +6084,17 @@ async function repFacturacionCargar(){
     // aparte su parte en cada medio. La suma de los medios más el saldo
     // pendiente tiene que dar el total vendido; si no da, se avisa.
     const sumaCampo = (arr,c) => arr.reduce((s,v)=> s+(Number(v[c])||0), 0);
+    // Diferencia de una venta: total menos lo cobrado menos el saldo. Tiene que
+    // dar 0 (así lo calcula el POS al guardar). Cuando no da, es que los pagos
+    // quedaron mal cargados: el caso típico es la misma plata anotada dos veces
+    // (efectivo + transferencia por el total, o una entrega sumada aparte del
+    // crédito personal) o un importe de tarjeta tipeado a mano distinto del
+    // total. Esas ventas inflan lo cobrado, así que hay que poder encontrarlas.
+    const difVenta = v => Math.round((Number(v.total)||0)
+      - REP_FAC_MEDIOS.reduce((s,[c])=> s+(Number(v[c])||0), 0)
+      - (Number(v.saldo_pendiente)||0));
+    const descuadradas = ventas.filter(v=> Math.abs(difVenta(v))>=1);
+    if(_repFacVer==='descuadre' && !descuadradas.length) _repFacVer = 'sin';
     const desglose = REP_FAC_MEDIOS.map(([campo,txt])=>({
       campo, txt,
       monto: sumaCampo(ventas, campo),
@@ -6118,10 +6129,11 @@ async function repFacturacionCargar(){
           <div style="display:flex; justify-content:space-between; gap:8px">
             <span class="l" style="color:var(--warn)">⚠ Saldo pendiente (todavía no cobrado)</span><span class="v" style="font-size:16px; color:var(--warn)">${money(pendiente)}</span>
           </div></div>` : ''}
-      ${Math.abs(descuadre)>=1 ? `<div class="note" style="margin-top:6px; color:var(--warn)">⚠ Los medios de pago suman ${money(cobrado)} y el saldo pendiente ${money(pendiente)}: ${money(Math.abs(descuadre))} ${descuadre>0?'menos':'más'} que el total vendido. Suele ser una venta con los pagos mal cargados — buscala con los filtros de abajo.</div>` : ''}
+      ${Math.abs(descuadre)>=1 ? `<div class="note" style="margin-top:6px; color:var(--warn)">⚠ Los medios de pago suman ${money(cobrado)} y el saldo pendiente ${money(pendiente)}: ${money(Math.abs(descuadre))} ${descuadre>0?'menos':'más'} que el total vendido${descuadradas.length?`, por ${descuadradas.length} venta${descuadradas.length!==1?'s':''} con los pagos mal cargados — miralas con el botón "⚠ Descuadradas" de abajo`:''}.</div>` : ''}
       <div style="display:flex; gap:6px; flex-wrap:wrap; margin:14px 0 8px; align-items:center">
         ${verBtn('sin',`⚠ Sin facturar (${sinFacturar.length})`)}
         ${verBtn('todas',`Todas (${ventas.length})`)}
+        ${descuadradas.length ? verBtn('descuadre',`⚠ Descuadradas (${descuadradas.length})`) : ''}
         <button class="fbtn" id="repFacRecargar" title="Volver a leer el mes">🔄</button>
         <span style="width:1px; align-self:stretch; background:var(--border); margin:0 2px"></span>
         <span id="repFacMediosBtns" style="display:contents"></span>
@@ -6132,7 +6144,7 @@ async function repFacturacionCargar(){
     box.querySelector('#repFacRecargar').onclick = ()=> repFacturacionCargar();
     const listaEl = box.querySelector('#repFacLista');
     const filtroEl = box.querySelector('#repFacFiltro');
-    const base = _repFacVer==='sin' ? sinFacturar : ventas;
+    const base = _repFacVer==='sin' ? sinFacturar : (_repFacVer==='descuadre' ? descuadradas : ventas);
     // Botones de medio de pago: se prenden y apagan sin volver a consultar la
     // base (ya están todas las ventas del mes en memoria). El número de cada
     // uno es cuántas ventas de la vista actual lo usaron.
@@ -6183,6 +6195,7 @@ async function repFacturacionCargar(){
           </div>
           <div class="note" style="margin-top:2px">${items || '(sin detalle de items)'}</div>
           <div class="note" style="margin-top:2px">${mediosDePagoVenta(v)}${v.saldo_pendiente>0?` · ⚠ Saldo pendiente: ${money(v.saldo_pendiente)}`:''}</div>
+          ${difVenta(v)!==0 ? `<div class="note" style="margin-top:2px; color:var(--warn)">⚠ Los pagos suman ${money((Number(v.total)||0)-difVenta(v)-(Number(v.saldo_pendiente)||0))} y la venta es de ${money(v.total)}: ${money(Math.abs(difVenta(v)))} de ${difVenta(v)<0?'más':'menos'}.</div>` : ''}
           ${v.nota ? `<div class="note" style="margin-top:2px">📝 ${esc(v.nota)}</div>` : ''}
           <div class="ventaDetalle" style="display:none; margin-top:8px; padding-top:8px; border-top:1px solid var(--border)"></div>
         </div>`;
