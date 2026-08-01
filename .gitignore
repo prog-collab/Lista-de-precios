@@ -2,12 +2,14 @@
 contactos.csv
 productos-backup-*.json
 
-# Planillas y volcados de la base: se trabajan localmente y no van al repo
-# (es público y GitHub Pages los serviría como archivos descargables).
+# Planillas de precios: se trabajan localmente. Este repo es público y además
+# GitHub Pages sirve todo lo que tenga, así que un .xlsx acá queda descargable
+# desde la web por cualquiera.
 *.xlsx
-supabase/
-ESPECIFICACIONES.md
-PASOS_Stock_Escaner.md
-REVISION_CATEGORIAS.md
-apps-script.gs
-importar_a_supabase.py
+
+# Volcados del catálogo (los seeds con todos los artículos y precios). Los
+# schemas de supabase/ SÍ van al repo — es a propósito que esto sea específico
+# y no un "supabase/" a secas, que taparía los schemas nuevos.
+supabase/articulos_schema.sql
+supabase/articulos_seed_*.sql
+supabase/migracion_foto_articulo.sql
