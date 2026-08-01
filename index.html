@@ -1766,6 +1766,7 @@ const money = n => '$'+Number(n||0).toLocaleString('es-AR');
 const API_FACTURAR = 'https://www.camerino.com.ar/api/facturar';
 const API_CONSULTAR_CUIT = 'https://www.camerino.com.ar/api/consultar-cuit';
 const API_VERIFICAR_TRANSFERENCIA = 'https://www.camerino.com.ar/api/verificar-transferencia';
+const API_AFIP_CONSULTA = 'https://www.camerino.com.ar/api/afip-consulta';
 // Alias de transferencia que son de verdad cuentas de Mercado Pago (tienen
 // Access Token configurado del lado del servidor) — "juan01" es una
 // transferencia bancaria común, no se puede verificar automáticamente.
@@ -6057,6 +6058,9 @@ const REP_FAC_MEDIOS = [
   ['pago_credito_personal','🤝 Crédito personal'], ['pago_credito_financiero','🏛 ASOEM'],
 ];
 let _repFacMediosSel = [];
+// Consulta a AFIP (panel plegable dentro de esta misma pestaña).
+let _repAfipAbierto = false;
+let _repAfipDesde = null;   // 'YYYY-MM-DD'; null = arranca en el 1° del mes elegido
 function repFacturacion(){
   const cont = document.getElementById('repContenido');
   const mesHoy = isoLocal(new Date()).slice(0,7);
@@ -6072,11 +6076,16 @@ function repFacturacion(){
         ${btnLocal('todos','Ambos locales')}
         ${btnLocal('camerino',stLocalNombre('camerino'))}
         ${btnLocal('giustozzi',stLocalNombre('giustozzi'))}
+        <button class="fbtn" id="repAfipBtn" title="Preguntarle a AFIP qué comprobantes tiene registrados"
+                style="${_repAfipAbierto?'background:var(--accent); color:#03283a; border-color:var(--accent)':''}">🔎 Consultar AFIP</button>
       </div>
+      <div id="repAfipBox"></div>
       <div id="repFacBox"><div class="note">Cargando…</div></div>
     </div>`;
   cont.querySelector('#repFacMes').onchange = e=>{ if(e.target.value){ _repFacMes = e.target.value; repFacturacion(); } };
   [...cont.querySelectorAll('[data-flocal]')].forEach(b=> b.onclick=()=>{ _repFacLocal = b.dataset.flocal; repFacturacion(); });
+  cont.querySelector('#repAfipBtn').onclick = ()=>{ _repAfipAbierto = !_repAfipAbierto; repFacturacion(); };
+  repAfipPanel();
   repFacturacionCargar();
 }
 
@@ -6265,6 +6274,105 @@ async function repFacturacionCargar(){
   }catch(e){
     box.innerHTML = `<div class="note">${esc(e.message||e)}</div>`;
   }
+}
+
+// (2 ter) Consulta a AFIP — el número que vale fiscalmente es el que tiene
+// AFIP, no el nuestro. Sirve para dos cosas: saber por qué número va cada
+// talonario (si el POS y AFIP se desincronizaron, acá se ve) y ver qué
+// comprobantes tiene AFIP registrados desde una fecha, marcando los que no
+// quedaron guardados de nuestro lado (ej. emitidos desde el portal de AFIP).
+// Es SOLO LECTURA: pega contra /api/afip-consulta, que no puede emitir nada.
+function repAfipPanel(){
+  const box = document.getElementById('repAfipBox');
+  if(!box) return;
+  if(!_repAfipAbierto){ box.innerHTML = ''; return; }
+  const locales = _repFacLocal==='todos' ? ['camerino','giustozzi'] : [_repFacLocal];
+  if(!_repAfipDesde) _repAfipDesde = _repFacMes+'-01';
+  box.innerHTML = `
+    <div class="lista" style="margin-top:6px; text-align:left">
+      <div class="note" style="margin:0 0 8px">
+        Le pregunta directamente a AFIP qué comprobantes tiene registrados de ${esc(locales.map(stLocalNombre).join(' y '))}.
+        Es solo consulta: no emite ni modifica nada.
+      </div>
+      <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center">
+        <button class="fbtn" id="repAfipUltimo">🧾 Última factura emitida</button>
+        <span style="width:1px; align-self:stretch; background:var(--border); margin:0 2px"></span>
+        <input id="repAfipDesde" class="search" type="date" value="${_repAfipDesde}"
+               title="Desde qué fecha listar los comprobantes de AFIP" style="width:auto; flex:0 0 auto; margin:0">
+        <button class="fbtn" id="repAfipListar">📅 Comprobantes en AFIP desde esa fecha</button>
+      </div>
+      <div id="repAfipRes"></div>
+    </div>`;
+  box.querySelector('#repAfipDesde').onchange = e=>{ if(e.target.value) _repAfipDesde = e.target.value; };
+  box.querySelector('#repAfipUltimo').onclick = ()=> repAfipConsultar('ultimo', locales);
+  box.querySelector('#repAfipListar').onclick = ()=> repAfipConsultar('desde', locales);
+}
+
+async function repAfipConsultar(accion, locales){
+  const res = document.getElementById('repAfipRes');
+  if(!res) return;
+  res.innerHTML = `<div class="note" style="margin-top:8px">Consultando AFIP…</div>`;
+  try{
+    const token = await sbToken();
+    // Un pedido por local: cada marca es un CUIT distinto ante AFIP, con su
+    // propio certificado y punto de venta.
+    const datos = [];
+    for(const local of locales){
+      const r = await fetch(API_AFIP_CONSULTA, {
+        method:'POST',
+        headers:{ 'Content-Type':'application/json', Authorization:'Bearer '+token },
+        body: JSON.stringify({ local, accion, desde: _repAfipDesde }),
+      });
+      const d = await r.json().catch(()=>({}));
+      if(!r.ok) throw new Error(`${stLocalNombre(local)}: ${d.error || 'no se pudo consultar AFIP.'}`);
+      datos.push(d);
+    }
+    res.innerHTML = datos.map(d=> accion==='ultimo' ? repAfipHtmlUltimo(d) : repAfipHtmlListado(d)).join('');
+  }catch(e){
+    res.innerHTML = `<div class="note" style="margin-top:8px; color:var(--warn)">⚠ ${esc(e.message||e)}</div>`;
+  }
+}
+
+const repAfipCabecera = d => `<div class="label" style="margin-top:10px">
+    ${esc(stLocalNombre(d.local))} · CUIT ${esc(String(d.cuit))} · Pto. Vta. ${String(d.ptoVta).padStart(4,'0')}
+    ${d.ambiente!=='produccion' ? ' · ⚠ HOMOLOGACIÓN (sin validez fiscal)' : ''}
+  </div>`;
+const repAfipFecha = f => f ? f.split('-').reverse().join('/') : '—';
+
+function repAfipHtmlUltimo(d){
+  return repAfipCabecera(d) + `<div class="rf-cards">` + d.tipos.map(t=>{
+    const det = t.detalle;
+    return `<div class="rf-card">
+      <div class="t"><span>${esc(t.nombre)}</span></div>
+      <div class="p">${t.ultimoNumero ? 'N° '+String(t.ultimoNumero).padStart(8,'0') : '—'}</div>
+      <div class="s">${t.error ? '⚠ '+esc(t.error)
+        : (det ? `${repAfipFecha(det.fecha)} · ${money(det.monto)} · CAE ${esc(det.cae||'')}` : 'todavía no se emitió ninguna')}</div>
+    </div>`;
+  }).join('') + `</div>`;
+}
+
+function repAfipHtmlListado(d){
+  const faltan = d.comprobantes.filter(c=> !c.enBase).length;
+  const total = d.comprobantes.reduce((s,c)=> s + (c.clase==='nota_credito' ? -c.monto : c.monto), 0);
+  return repAfipCabecera(d) +
+    `<div class="note" style="margin-top:4px">
+       ${d.comprobantes.length} comprobante${d.comprobantes.length!==1?'s':''} en AFIP desde el ${repAfipFecha(d.desde)} ·
+       neto de notas de crédito: ${money(total)}
+       ${faltan ? ` · <span style="color:var(--warn)">⚠ ${faltan} no está${faltan!==1?'n':''} guardado${faltan!==1?'s':''} en el sistema</span>` : ''}
+     </div>` +
+    (d.truncado ? `<div class="note" style="color:var(--warn)">⚠ ${esc(d.truncado)}</div>` : '') +
+    (d.comprobantes.length
+      ? `<div class="rf-lista">` + d.comprobantes.map(c=> `<div class="lista" style="margin-top:6px; text-align:left">
+          <div style="display:flex; justify-content:space-between; gap:8px">
+            <span class="l">${repAfipFecha(c.fecha)} · ${esc(c.nombre)} N° ${String(c.numero).padStart(8,'0')}</span>
+            <span class="v" style="font-size:16px">${money(c.monto)}</span>
+          </div>
+          <div class="note" style="margin-top:2px">
+            ${c.docTipo===80 ? 'CUIT '+esc(c.docNro) : 'Consumidor Final'} · CAE ${esc(c.cae||'')}
+            ${c.enBase ? '' : ' · <span style="color:var(--warn)">⚠ no figura en el sistema</span>'}
+          </div>
+        </div>`).join('') + `</div>`
+      : `<div class="note">AFIP no tiene comprobantes registrados desde esa fecha.</div>`);
 }
 
 // (3) Ranking de productos más vendidos, sumando los items (jsonb) de las ventas
