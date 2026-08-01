@@ -1,3 +1,13 @@
 # Datos de clientes y backups locales — nunca subir a este repo público
 contactos.csv
 productos-backup-*.json
+
+# Planillas y volcados de la base: se trabajan localmente y no van al repo
+# (es público y GitHub Pages los serviría como archivos descargables).
+*.xlsx
+supabase/
+ESPECIFICACIONES.md
+PASOS_Stock_Escaner.md
+REVISION_CATEGORIAS.md
+apps-script.gs
+importar_a_supabase.py
