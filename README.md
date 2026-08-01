@@ -1,5 +1,14 @@
 # Gestión C&G — sistema del negocio
 
+> **MUDADO.** La app ahora vive en **https://www.camerino.com.ar/gestion** y su
+> código está en el repo `camerino-giustozzi-web`, en `web/public/gestion/`.
+> Se mudó para quedar en el mismo dominio que las APIs de AFIP (sin CORS), con
+> rollback en un clic y control del caché del service worker.
+>
+> **No edites el `index.html` de este repo**: acá quedó solo una página que
+> redirige y desinstala el service worker viejo de los celulares. Lo de abajo
+> describe el sistema, que sigue siendo el mismo.
+
 Sistema web de Camerino y Giustozzi. Nació como consulta de precios y hoy es
 todo el sistema de gestión: catálogo y precios, ventas (POS), stock, clientes y
 cuenta corriente, caja, reportes y facturación electrónica ante AFIP.
