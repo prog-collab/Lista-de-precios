@@ -7381,27 +7381,58 @@ async function armarNotaCreditoVentaExistente(box, v){
     return;
   }
   const numeroEsperado = String(f.numero).padStart(8,'0');
+  // La NC puede salir con fecha distinta a la de hoy (ej. la devolución fue
+  // ayer), pero AFIP solo acepta ±5 días.
+  const hoyNC = new Date();
+  const ncMin = new Date(hoyNC); ncMin.setDate(ncMin.getDate()-5);
+  const ncMax = new Date(hoyNC); ncMax.setDate(ncMax.getDate()+5);
   box.innerHTML = `
     <div class="note" style="color:var(--warn)">
       ⚠ Esto emite una Nota de Crédito REAL en AFIP contra la Factura ${esc(f.tipo)} N° ${numeroEsperado},
       por ${money(f.monto)}. Es una acción fiscal: no se puede deshacer.
     </div>
+    <div class="label">Fecha de la Nota de Crédito</div>
+    <input id="ncFecha" class="search" type="date" value="${isoLocal(hoyNC)}" min="${isoLocal(ncMin)}" max="${isoLocal(ncMax)}">
+    <div class="note">AFIP solo acepta hasta 5 días antes o después de hoy.</div>
     <div class="label">Motivo (opcional, queda guardado para adentro)</div>
     <input id="ncMotivo" class="search" placeholder="ej. devolución de mercadería">
     <label style="display:flex; align-items:center; gap:6px; margin:8px 0">
       <input type="checkbox" id="ncStock" checked style="width:auto"> Devolver los artículos al stock
     </label>
     <div class="label">Para confirmar, escribí el número de comprobante (${numeroEsperado})</div>
-    <input id="ncConf" class="search" placeholder="${numeroEsperado}" inputmode="numeric">
+    <input id="ncConf" class="search" placeholder="${numeroEsperado}" inputmode="numeric" autocomplete="off">
+    <div class="note">El número sugerido está en gris — apretá <b>→</b> (flecha derecha) para aceptarlo.</div>
     <button class="addcart" id="ncOk" style="margin-top:10px">Confirmar y emitir Nota de Crédito</button>
     <div class="note" id="ncErr"></div>
     <div class="note">La venta sigue figurando como está en los reportes — la Nota de Crédito es el comprobante que la anula ante AFIP.</div>`;
+  // El número esperado se ve en gris (placeholder) y se acepta con la flecha
+  // derecha, estilo autocompletado de terminal: queda escrito de verdad (en
+  // negro) pero hace falta el gesto, así que sigue siendo una confirmación.
+  const conf = box.querySelector('#ncConf');
+  conf.addEventListener('keydown', (ev)=>{
+    if(ev.key !== 'ArrowRight') return;
+    const val = conf.value || '';
+    if(val === numeroEsperado) return;
+    // Solo completa si lo escrito hasta ahora es el principio del número y el
+    // cursor está al final — si no, la flecha se usa para mover el cursor.
+    if(!numeroEsperado.startsWith(val)) return;
+    if(conf.selectionStart !== val.length || conf.selectionEnd !== val.length) return;
+    ev.preventDefault();
+    conf.value = numeroEsperado;
+    conf.setSelectionRange(numeroEsperado.length, numeroEsperado.length);
+  });
   box.querySelector('#ncOk').onclick = async ()=>{
     const err = box.querySelector('#ncErr');
     const ok = box.querySelector('#ncOk');
-    if((box.querySelector('#ncConf').value||'').trim() !== numeroEsperado){
+    if((conf.value||'').trim() !== numeroEsperado){
       err.style.color = 'var(--warn)';
       err.textContent = `Escribí exactamente ${numeroEsperado} para confirmar.`;
+      return;
+    }
+    const fechaNC = box.querySelector('#ncFecha').value;
+    if(!fechaNC){
+      err.style.color = 'var(--warn)';
+      err.textContent = 'Elegí la fecha de la Nota de Crédito.';
       return;
     }
     err.textContent=''; ok.disabled=true; ok.textContent='Emitiendo…';
@@ -7411,12 +7442,13 @@ async function armarNotaCreditoVentaExistente(box, v){
         method:'POST',
         headers:{ 'Content-Type':'application/json', Authorization:'Bearer '+token },
         body: JSON.stringify({ facturaId: f.id, motivo: (box.querySelector('#ncMotivo').value||'').trim(),
-                               restituirStock: box.querySelector('#ncStock').checked }),
+                               restituirStock: box.querySelector('#ncStock').checked, fecha: fechaNC }),
       });
       const d = await r.json().catch(()=>({}));
       if(!r.ok) throw new Error(d.error || 'No se pudo emitir la Nota de Crédito.');
       box.innerHTML = `<div class="note" style="color:var(--accent2)">
-        ✓ Nota de Crédito ${esc(d.tipo)} N° ${String(d.numero).padStart(8,'0')} emitida — CAE ${esc(d.cae)}
+        ✓ Nota de Crédito ${esc(d.tipo)} N° ${String(d.numero).padStart(8,'0')} emitida
+        con fecha ${esc(String(d.fecha||'').replace(/^(\d{4})(\d{2})(\d{2})$/,'$3/$2/$1'))} — CAE ${esc(d.cae)}
         ${d.stockRestituido ? ' · Stock devuelto.' : ''}
         ${d.ambiente!=='produccion' ? ' (HOMOLOGACIÓN — sin validez fiscal real)' : ''}
       </div>`;
