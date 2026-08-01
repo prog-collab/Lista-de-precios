@@ -1,8 +1,16 @@
-# Lista de Precios — App del negocio
+# Gestión C&G — sistema del negocio
 
-App web para consultar precios al instante desde el celular. Buscás por código,
-nombre o categoría, elegís el talle y la app te muestra el precio de lista,
-contado, cuotas y promociones ya calculados.
+Sistema web de Camerino y Giustozzi. Nació como consulta de precios y hoy es
+todo el sistema de gestión: catálogo y precios, ventas (POS), stock, clientes y
+cuenta corriente, caja, reportes y facturación electrónica ante AFIP.
+
+> El repositorio se sigue llamando `Lista-de-precios` (y la URL de GitHub Pages
+> también) para no romper los accesos ya instalados en los celulares del local.
+> El nombre viejo quedó solo ahí.
+
+La consulta de precios, que es de donde salió todo, funciona así: buscás por
+código, nombre o categoría, elegís el talle y la app te muestra el precio de
+lista, contado, cuotas y promociones ya calculados.
 
 ## Archivos
 

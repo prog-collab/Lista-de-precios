@@ -1,7 +1,7 @@
 {
-  "name": "Lista de Precios",
-  "short_name": "Precios",
-  "description": "Consulta de precios del negocio",
+  "name": "Gestión C&G",
+  "short_name": "Gestión C&G",
+  "description": "Precios, ventas, stock, caja y facturación de Camerino y Giustozzi",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",

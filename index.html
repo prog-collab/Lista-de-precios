@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Lista de Precios</title>
+<title>Gestión C&amp;G</title>
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#0f172a">
 <link rel="icon" href="icon-192.png">
@@ -311,7 +311,7 @@
 </head>
 <body>
 <header>
-  <h1><span class="ttl">Lista de Precios</span>
+  <h1><span class="ttl">Gestión C&amp;G</span>
     <div class="hbtns">
       <button id="fMinus" class="fbtn" title="Achicar letra">A−</button>
       <button id="fPlus" class="fbtn" title="Agrandar letra">A+</button>
@@ -1767,6 +1767,7 @@ const API_FACTURAR = 'https://www.camerino.com.ar/api/facturar';
 const API_CONSULTAR_CUIT = 'https://www.camerino.com.ar/api/consultar-cuit';
 const API_VERIFICAR_TRANSFERENCIA = 'https://www.camerino.com.ar/api/verificar-transferencia';
 const API_AFIP_CONSULTA = 'https://www.camerino.com.ar/api/afip-consulta';
+const API_NOTA_CREDITO = 'https://www.camerino.com.ar/api/nota-credito';
 // Alias de transferencia que son de verdad cuentas de Mercado Pago (tienen
 // Access Token configurado del lado del servidor) — "juan01" es una
 // transferencia bancaria común, no se puede verificar automáticamente.
@@ -6256,14 +6257,17 @@ async function repFacturacionCargar(){
               ${!v.facturada ? `<button class="fbtn" type="button" data-accion="facturar" style="width:100%">🧾 Facturar esta venta</button>` : ''}
               ${v.facturada ? `<button class="fbtn" type="button" data-accion="ticket" style="width:100%">📤 Compartir / imprimir factura</button>` : ''}
               <button class="fbtn" type="button" data-accion="recibo" style="width:100%; margin-top:6px">🧾 Compartir / imprimir Recibo X</button>
+              ${v.facturada ? `<button class="fbtn" type="button" data-accion="nc" style="width:100%; margin-top:6px; color:var(--warn)">⚠ Emitir Nota de Crédito (anular esta factura)</button>` : ''}
               <div class="ventaAccionBox" style="margin-top:8px"></div>`;
             const accionBox = detBox.querySelector('.ventaAccionBox');
             const bF = detBox.querySelector('[data-accion="facturar"]');
             const bT = detBox.querySelector('[data-accion="ticket"]');
             const bR = detBox.querySelector('[data-accion="recibo"]');
+            const bN = detBox.querySelector('[data-accion="nc"]');
             if(bF) bF.onclick = ()=> armarFacturarVentaExistente(accionBox, v, v.local);
             if(bT) bT.onclick = ()=> armarTicketVentaExistente(accionBox, v);
             if(bR) bR.onclick = ()=> armarReciboVentaExistente(accionBox, v);
+            if(bN) bN.onclick = ()=> armarNotaCreditoVentaExistente(accionBox, v);
           }
         });
       });
@@ -6296,7 +6300,7 @@ function repAfipPanel(){
       </div>
       <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center">
         <button class="fbtn" id="repAfipUltimo">🧾 Última factura emitida</button>
-        <span style="width:1px; align-self:stretch; background:var(--border); margin:0 2px"></span>
+        <span style="width:1px; align-self:stretch; background:var(--line); margin:0 2px"></span>
         <input id="repAfipDesde" class="search" type="date" value="${_repAfipDesde}"
                title="Desde qué fecha listar los comprobantes de AFIP" style="width:auto; flex:0 0 auto; margin:0">
         <button class="fbtn" id="repAfipListar">📅 Comprobantes en AFIP desde esa fecha</button>
@@ -7356,6 +7360,73 @@ async function armarTicketVentaExistente(box, v){
   }catch(e){
     box.innerHTML = `<div class="note">No se pudo cargar la factura: ${esc(e.message||e)}</div>`;
   }
+}
+
+// Nota de Crédito contra una factura ya emitida (anula o ajusta el
+// comprobante ante AFIP). Es una acción fiscal real y NO se puede deshacer,
+// así que además del botón pide escribir el número exacto del comprobante:
+// tiene que costar apretarla sin querer. Nunca se dispara sola.
+async function armarNotaCreditoVentaExistente(box, v){
+  box.innerHTML = '<div class="note">Buscando el comprobante…</div>';
+  // La API trabaja con el id de la fila de "facturas" (de ahí saca importes,
+  // items y CUIT emisor para asociar la NC como exige AFIP).
+  let f = null;
+  try{
+    const r = await sbAuthed(`/rest/v1/facturas?local=eq.${v.local}&tipo=eq.${v.factura_tipo}&pto_vta=eq.${v.factura_pto_vta}&numero=eq.${v.factura_numero}&select=*&limit=1`);
+    const rows = r.ok ? await r.json() : [];
+    f = rows[0] || null;
+  }catch(e){}
+  if(!f){
+    box.innerHTML = `<div class="note" style="color:var(--warn)">⚠ No se encontró el comprobante guardado de esta venta, así que no se puede emitir la Nota de Crédito desde acá. Hacela desde el portal de AFIP.</div>`;
+    return;
+  }
+  const numeroEsperado = String(f.numero).padStart(8,'0');
+  box.innerHTML = `
+    <div class="note" style="color:var(--warn)">
+      ⚠ Esto emite una Nota de Crédito REAL en AFIP contra la Factura ${esc(f.tipo)} N° ${numeroEsperado},
+      por ${money(f.monto)}. Es una acción fiscal: no se puede deshacer.
+    </div>
+    <div class="label">Motivo (opcional, queda guardado para adentro)</div>
+    <input id="ncMotivo" class="search" placeholder="ej. devolución de mercadería">
+    <label style="display:flex; align-items:center; gap:6px; margin:8px 0">
+      <input type="checkbox" id="ncStock" checked style="width:auto"> Devolver los artículos al stock
+    </label>
+    <div class="label">Para confirmar, escribí el número de comprobante (${numeroEsperado})</div>
+    <input id="ncConf" class="search" placeholder="${numeroEsperado}" inputmode="numeric">
+    <button class="addcart" id="ncOk" style="margin-top:10px">Confirmar y emitir Nota de Crédito</button>
+    <div class="note" id="ncErr"></div>
+    <div class="note">La venta sigue figurando como está en los reportes — la Nota de Crédito es el comprobante que la anula ante AFIP.</div>`;
+  box.querySelector('#ncOk').onclick = async ()=>{
+    const err = box.querySelector('#ncErr');
+    const ok = box.querySelector('#ncOk');
+    if((box.querySelector('#ncConf').value||'').trim() !== numeroEsperado){
+      err.style.color = 'var(--warn)';
+      err.textContent = `Escribí exactamente ${numeroEsperado} para confirmar.`;
+      return;
+    }
+    err.textContent=''; ok.disabled=true; ok.textContent='Emitiendo…';
+    try{
+      const token = await sbToken();
+      const r = await fetch(API_NOTA_CREDITO, {
+        method:'POST',
+        headers:{ 'Content-Type':'application/json', Authorization:'Bearer '+token },
+        body: JSON.stringify({ facturaId: f.id, motivo: (box.querySelector('#ncMotivo').value||'').trim(),
+                               restituirStock: box.querySelector('#ncStock').checked }),
+      });
+      const d = await r.json().catch(()=>({}));
+      if(!r.ok) throw new Error(d.error || 'No se pudo emitir la Nota de Crédito.');
+      box.innerHTML = `<div class="note" style="color:var(--accent2)">
+        ✓ Nota de Crédito ${esc(d.tipo)} N° ${String(d.numero).padStart(8,'0')} emitida — CAE ${esc(d.cae)}
+        ${d.stockRestituido ? ' · Stock devuelto.' : ''}
+        ${d.ambiente!=='produccion' ? ' (HOMOLOGACIÓN — sin validez fiscal real)' : ''}
+      </div>`;
+      toast('Nota de Crédito emitida — CAE '+d.cae, 6000);
+    }catch(e){
+      ok.disabled=false; ok.textContent='Confirmar y emitir Nota de Crédito';
+      err.style.color = 'var(--warn)';
+      err.textContent = e.message||e;
+    }
+  };
 }
 
 // Facturar una venta ya guardada (no facturada todavía) — mismo flujo de
